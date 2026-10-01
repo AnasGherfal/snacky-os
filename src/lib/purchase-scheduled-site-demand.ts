@@ -105,6 +105,7 @@ export function computeScheduledSiteDemand({
   currentPeriod,
   now = new Date(),
   minimumCompletedOperatingDays = 2,
+  maxCompletedOperatingDays = 10,
 }: {
   siteName: string;
   openDays: number[];
@@ -115,6 +116,7 @@ export function computeScheduledSiteDemand({
   currentPeriod?: ScheduledSitePeriod | null;
   now?: Date;
   minimumCompletedOperatingDays?: number;
+  maxCompletedOperatingDays?: number;
 }): ScheduledSiteDemandRow[] {
   const today = datePartsInTripoli(now);
   const open = normalizedOpenDays(openDays);
@@ -147,7 +149,8 @@ export function computeScheduledSiteDemand({
   const eligibleDays = Array.from(machineDaySpan.entries())
     .filter(([, span]) => (span.last - span.first) / 3_600_000 >= 6)
     .map(([day]) => day)
-    .sort();
+    .sort()
+    .slice(-Math.max(1, Math.floor(maxCompletedOperatingDays)));
 
   if (eligibleDays.length < Math.max(1, minimumCompletedOperatingDays)) return [];
 
