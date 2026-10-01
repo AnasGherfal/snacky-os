@@ -33,11 +33,13 @@ test('all active operators receive the available visit and queue access disappea
  assert.match(migration,/event_kind='available'/);
  assert.match(migration,/dispatch_state'='available'/);
  assert.match(migration,/snacky_operator_field_queue_v1/);
+ assert.match(migration,/event_kind='ack_overdue'/);
+ assert.match(migration,/snacky_crm_collaboration_workspace_v1/);
  assert.match(queue,/Machine issues available to claim/);
 });
 
 test('CRM does not assign operators from CRM forms',()=>{
- assert.match(forms,/context\.directory\.filter\(p=>p\.role!=='operator'\)/);
+ assert.match(forms,/\['owner','admin','supervisor','crm'\]\.includes\(String\(p\.role\)\)/);
  assert.doesNotMatch(forms,/Operator field action/);
  assert.match(workspace,/Send machine visit to operators/);
  assert.doesNotMatch(workspace,/Assign operator action \/ customer follow-up/);
