@@ -373,7 +373,7 @@ $$;
 revoke all on function snacky_private.record_standalone_cash_removal_group_v1_impl(jsonb,timestamptz,text,text[],text,uuid)
   from public,anon,authenticated;
 grant execute on function snacky_private.record_standalone_cash_removal_group_v1_impl(jsonb,timestamptz,text,text[],text,uuid)
-  to service_role;
+  to authenticated,service_role;
 
 create or replace function public.record_standalone_cash_removal_group_v1(
   p_boxes jsonb,
@@ -458,7 +458,7 @@ $$;
 revoke all on function snacky_private.cash_collection_machine_lines_v1_impl(uuid)
   from public,anon,authenticated;
 grant execute on function snacky_private.cash_collection_machine_lines_v1_impl(uuid)
-  to service_role;
+  to authenticated,service_role;
 
 create or replace function public.snacky_cash_collection_machine_lines_v1(p_collection_id uuid)
 returns jsonb
