@@ -6,7 +6,7 @@ type Context={me:string;manager:boolean;owner_admin:boolean;staff:boolean;today:
 export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:any;context:Context;userId:string;ar:boolean}){
  const tr=(en:string,arabic:string)=>ar?arabic:en,d=row?.data??{},relation=d.relationship??{};
  const f=(name:string,en:string,arabic:string,extra:Partial<CrmField>={}):CrmField=>({name,label:tr(en,arabic),value:String(d[name]??''),...extra});
- const people=()=>context.directory.filter(p=>p.role!=='operator').map(p=>({value:p.id,label:p.name}));
+ const people=()=>context.directory.filter(p=>['owner','admin','supervisor','crm'].includes(String(p.role))).map(p=>({value:p.id,label:p.name}));
  const assignee=f('assigned_to','Responsible employee','الموظف المسؤول',{type:'select',value:row?.assigned_to??context.me,options:people(),required:true});
  const next=[f('next_action','Next action','الخطوة القادمة'),f('next_action_date','Next follow-up date','تاريخ المتابعة القادمة',{type:'date'}),f('next_action_time','Time (optional)','الوقت (اختياري)',{type:'time',advanced:true})];
  const locationOptions=[{value:'',label:tr('Choose location','اختر الموقع')},...(context.options.locations??[]).map((x:any)=>({value:x.id,label:x.name}))];
@@ -61,7 +61,7 @@ export function CrmFollowupForm({kind,id,context,userId,ar,priority='normal'}:{k
  return <CrmForm action="task.save" userId={userId} hidden={{kind,related_id:id}} fields={[
   {name:'title',label:tr('Next action','الخطوة القادمة'),required:true},
   {name:'task_type',label:tr('Type','النوع'),type:'select',value:'follow_up',options:crmOptionRows(kind==='issue'?[['follow_up','Customer follow-up','متابعة العميل'],['admin','Management approval','موافقة الإدارة']]:[['follow_up','Follow-up','متابعة'],['meeting','Meeting / visit','موعد / زيارة'],['admin','Administrative task','مهمة إدارية']],ar)},
-  {name:'assigned_to',label:tr('Assigned to','المسؤول'),type:'select',required:true,value:context.me,options:context.directory.filter(p=>p.role!=='operator').map(p=>({value:p.id,label:p.name}))},
+  {name:'assigned_to',label:tr('Assigned to','المسؤول'),type:'select',required:true,value:context.me,options:context.directory.filter(p=>['owner','admin','supervisor','crm'].includes(String(p.role))).map(p=>({value:p.id,label:p.name}))},
   {name:'due_date',label:tr('Due date','تاريخ الاستحقاق'),type:'date',required:true,value:context.today},
   {name:'due_time',label:tr('Time (optional)','الوقت (اختياري)'),type:'time'},
   ...(kind==='issue'?[{name:'priority',label:tr('Urgency','درجة الاستعجال'),type:'select' as const,value:priority==='critical'?'urgent':priority,options:crmOptionRows([['low','Low','منخفضة'],['normal','Normal','عادية'],['high','High','عالية'],['urgent','Urgent','عاجلة']],ar)}]:[]),
