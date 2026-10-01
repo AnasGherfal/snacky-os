@@ -114,6 +114,7 @@ export default function PickListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [locked, setLocked] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [remainingPickupMode, setRemainingPickupMode] = useState(false);
   const [supplementalMode, setSupplementalMode] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -122,10 +123,12 @@ export default function PickListPage() {
     () =>
       isArabic
         ? {
-            title: supplementalMode ? "استلام إضافي للمسار" : "استلام منتجات المسار",
+            title: supplementalMode ? "استلام إضافي للمسار" : remainingPickupMode ? "متابعة استلام المسار" : "استلام منتجات المسار",
             subtitle: supplementalMode
               ? "هذه فقط الكميات التي أضيفت بعد الاستلام السابق. الكميات التي أخذتها سابقًا لن تتكرر."
-              : "راجع الكميات، علّم ما تم أخذه، ثم أكّد الاستلام مرة واحدة.",
+              : remainingPickupMode
+                ? "هذه محطات المسار الأصلية التي لم يتم استلام منتجاتها بعد. الكميات المستلمة للمحطات الأخرى لن تتكرر."
+                : "راجع الكميات، علّم ما تم أخذه، ثم أكّد الاستلام مرة واحدة.",
             back: "العودة للمسار",
             retry: "إعادة المحاولة",
             loading: "جارٍ تحميل قائمة الاستلام…",
@@ -148,8 +151,8 @@ export default function PickListPage() {
             remove: "حذف",
             summary: "ملخص الاستلام",
             units: "وحدة",
-            confirm: supplementalMode ? "تأكيد الاستلام الإضافي" : "تأكيد الاستلام",
-            confirming: supplementalMode ? "جارٍ تأكيد الإضافة…" : "جارٍ التأكيد…",
+            confirm: supplementalMode ? "تأكيد الاستلام الإضافي" : remainingPickupMode ? "تأكيد الاستلام المتبقي" : "تأكيد الاستلام",
+            confirming: supplementalMode ? "جارٍ تأكيد الإضافة…" : remainingPickupMode ? "جارٍ تأكيد الاستلام المتبقي…" : "جارٍ التأكيد…",
             picked: "تم أخذه",
             progress: "تم أخذ",
             chooseStop: "اختر محطة واحدة على الأقل.",
@@ -162,15 +165,19 @@ export default function PickListPage() {
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
             directNote: supplementalMode
               ? "سيتم خصم الكمية الإضافية فقط من المخزن وإضافتها لحقيبتك. الاستلام السابق وحالة الجولة لن يتغيرا."
-              : "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
+              : remainingPickupMode
+                ? "سيتم خصم منتجات المحطات المتبقية المحددة فقط من المخزن. الاستلام السابق لن يتكرر."
+                : "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
             extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
           }
         : {
-            title: supplementalMode ? "Additional route pickup" : "Route pickup",
+            title: supplementalMode ? "Additional route pickup" : remainingPickupMode ? "Continue route pickup" : "Route pickup",
             subtitle: supplementalMode
               ? "These are only the quantities added after your earlier pickup. Previously picked stock will not be duplicated."
-              : "Review quantities, mark what you physically picked, then confirm once.",
+              : remainingPickupMode
+                ? "These are the original route stops still waiting for pickup. Stock already picked for other stops will not be duplicated."
+                : "Review quantities, mark what you physically picked, then confirm once.",
             back: "Back to route",
             retry: "Retry",
             loading: "Loading pickup list…",
@@ -193,8 +200,8 @@ export default function PickListPage() {
             remove: "Remove",
             summary: "Pickup summary",
             units: "units",
-            confirm: supplementalMode ? "Confirm additional pickup" : "Confirm pickup",
-            confirming: supplementalMode ? "Confirming additional pickup…" : "Confirming…",
+            confirm: supplementalMode ? "Confirm additional pickup" : remainingPickupMode ? "Confirm remaining pickup" : "Confirm pickup",
+            confirming: supplementalMode ? "Confirming additional pickup…" : remainingPickupMode ? "Confirming remaining pickup…" : "Confirming…",
             picked: "Picked",
             progress: "Picked",
             chooseStop: "Select at least one stop.",
@@ -207,11 +214,13 @@ export default function PickListPage() {
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
             directNote: supplementalMode
               ? "Only the added quantity will leave storage and enter your operator bag. The earlier pickup and route state stay unchanged."
-              : "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
+              : remainingPickupMode
+                ? "Only the selected remaining stops will leave storage and enter your operator bag. Earlier pickup stays unchanged."
+                : "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
             extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
           },
-    [isArabic, supplementalMode],
+    [isArabic, remainingPickupMode, supplementalMode],
   );
 
   const selectedStopSet = useMemo(() => new Set(selectedStopIds), [selectedStopIds]);
@@ -263,6 +272,7 @@ export default function PickListPage() {
       if (!response.ok) throw new Error(textOrFallback(payload.error, "Could not load pickup list."));
 
       const nextSupplementalMode = Boolean(payload.supplementalMode);
+      const nextRemainingPickupMode = Boolean(payload.remainingPickupMode);
       const groups: PickStopGroup[] = asRows(payload.stopGroups)
         .map((group): PickStopGroup | null => {
           const routeStopId = optionalText(group.route_stop_id);
@@ -280,7 +290,7 @@ export default function PickListPage() {
               const requestedQty = nextSupplementalMode
                 ? unitQuantity(item.additional_pickup_qty)
                 : totalPlannedQty;
-              const availableStorageQty = nextSupplementalMode
+              const availableStorageQty = nextSupplementalMode || nextRemainingPickupMode
                 ? unitQuantity(item.physical_storage_available_qty)
                 : unitQuantity(item.available_storage_qty);
               const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
@@ -348,7 +358,8 @@ export default function PickListPage() {
       const requestedGroup = requestedStopId ? groups.find((group) => group.routeStopId === requestedStopId) : null;
       setSelectedStopIds(requestedGroup ? [requestedGroup.routeStopId] : groups.map((group) => group.routeStopId));
       setProductOptions(products);
-      setExtras(nextSupplementalMode ? [] : loadedExtras);
+      setExtras(nextSupplementalMode || nextRemainingPickupMode ? [] : loadedExtras);
+      setRemainingPickupMode(nextRemainingPickupMode);
       setSupplementalMode(nextSupplementalMode);
       setLocked(Boolean(payload.locked));
       setConfirmed(Boolean(payload.confirmed));
