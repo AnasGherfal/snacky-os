@@ -20,11 +20,12 @@ test("pickup confirmation requires the operator's real checklist", () => {
   assert.doesNotMatch(action, /isChecked: true/);
 });
 
-test("Pick this stop focuses the checklist without narrowing pickup scope", () => {
+test("viewing one stop focuses the checklist without narrowing pickup scope", () => {
   const routePage = read("src/app/operator/routes/[id]/page.tsx");
   const pickupPage = read("src/app/operator/routes/[id]/pick-list/page.tsx");
 
   assert.match(routePage, /pick-list\?stop=\$\{stop\.id\}/);
+  assert.match(routePage, /t\("View items"\)/);
   assert.match(pickupPage, /const requestedStopId = searchParams\.get\("stop"\)/);
   assert.match(pickupPage, /setSelectedStopIds\(groups\.map\(\(group\) => group\.routeStopId\)\)/);
   assert.match(pickupPage, /setFocusedStopId\(requestedGroup\?\.routeStopId \?\? null\)/);
