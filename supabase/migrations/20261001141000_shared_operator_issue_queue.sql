@@ -75,6 +75,8 @@ begin
 end
 $function$;
 
+alter table public.crm_tasks alter column assigned_to drop not null;
+
 create or replace function public.snacky_crm_validate_record()
 returns trigger
 language plpgsql
