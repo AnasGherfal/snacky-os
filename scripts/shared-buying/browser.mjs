@@ -108,7 +108,7 @@ try{
   await crm.goto(app+'/buying-lists/'+listId);await crm.waitForURL(/\/unauthorized/);
   await crm.goto(app+'/purchases/new');await crm.waitForURL(/\/unauthorized/);assert.equal(ledger(),baseline);
  });
- await check('reassignment gives the eligible purchasing buyer access and removes the previous warehouse access',async()=>{
+ await check('reassignment gives purchasing buyer access while warehouse keeps planner access and operator stays blocked',async()=>{
   const list=(await record('owner',listId)).record;await command('owner','assign',listId,list.revision,{assigned_to:accounts.purchasing.member});
   assert.equal((await accounts.warehouse.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error?.code,'42501');
   assert.equal((await buyer.request.get(app+'/api/buying-lists?id='+listId)).status(),403);
