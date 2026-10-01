@@ -298,6 +298,7 @@ export const ar: TranslationDictionary = {
     "Pick any prepared machine below. The default stop order is only a suggestion, so you can fill stops in the order that works best": "اختر أي جهاز جاهز أدناه. ترتيب المواقع الافتراضي مجرد اقتراح ويمكنك التعبئة بالترتيب الأنسب لك",
     "Pick list": "قائمة التحميل",
     "Pick this stop": "تحميل هذا الموقع",
+    "View items": "عرض المنتجات",
     "Picked": "تم التحميل",
     "returned": "تم الإرجاع",
     "remaining in operator bag": "متبقي في حقيبة المشغل",
