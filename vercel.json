@@ -8,5 +8,11 @@
   ],
   "regions": [
     "dub1"
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "master": true,
+      "*": false
+    }
+  }
 }
