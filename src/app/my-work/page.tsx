@@ -4,11 +4,13 @@ import {CrmQuickIssueAction} from '@/components/CrmQuickIssueAction';
 import {CrmLeadFocusOverview} from '@/components/CrmLeadFocusOverview';
 import {CrmRelationshipOverview} from '@/components/CrmRelationshipOverview';
 import {CrmNotesSummary} from '@/components/CrmNotesSummary';
+import {CrmOperatorIssueQueue} from '@/components/CrmOperatorIssueQueue';
 export const dynamic='force-dynamic';
 export default async function Page({searchParams}:{searchParams:Promise<CrmSearchParams>}) {
   const params=await searchParams;
   return <>
     <CrmQuickIssueAction/>
+    <Suspense fallback={null}><CrmOperatorIssueQueue/></Suspense>
     <Suspense fallback={null}><CrmNotesSummary/></Suspense>
     <Suspense fallback={null}><CrmLeadFocusOverview/></Suspense>
     <Suspense fallback={null}><CrmWorkspace section="work" searchParams={params}/></Suspense>

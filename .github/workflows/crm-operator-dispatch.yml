@@ -5,13 +5,21 @@ on:
   pull_request:
     paths:
       - 'src/lib/crm-dispatch.ts'
+      - 'src/lib/crm-field-broadcast.ts'
       - 'src/lib/crm-workspace.ts'
       - 'src/components/CrmDispatchPanel.tsx'
+      - 'src/components/CrmFieldBroadcastForm.tsx'
+      - 'src/components/CrmOperatorIssueQueue.tsx'
+      - 'src/components/CrmQuickIssueAction.tsx'
+      - 'src/app/my-work/page.tsx'
       - 'src/components/CrmWorkspace.tsx'
       - 'src/components/CrmRecordForms.tsx'
       - 'src/app/api/crm/dispatch/**'
+      - 'src/app/api/crm/field-broadcast/**'
       - 'supabase/migrations/*crm_operator_dispatch*'
+      - 'supabase/migrations/*crm_operator_claim_queue*'
       - 'scripts/test-crm-operator-dispatch.mjs'
+      - 'scripts/test-crm-operator-claim-queue.mjs'
       - 'scripts/test-crm-dispatch-version.mjs'
       - 'scripts/crm-operator-dispatch-db-acceptance.sql'
       - '.github/workflows/crm-operator-dispatch.yml'
@@ -56,13 +64,13 @@ jobs:
 
       - name: Dispatch contracts and existing CRM/notification regressions
         run: |
-          node --experimental-strip-types --test scripts/test-crm-operator-dispatch.mjs scripts/test-crm-dispatch-version.mjs
+          node --experimental-strip-types --test scripts/test-crm-operator-dispatch.mjs scripts/test-crm-dispatch-version.mjs scripts/test-crm-operator-claim-queue.mjs
           node --experimental-strip-types --test scripts/test-connected-relations.mjs scripts/test-assignment-notifications.mjs scripts/test-authz-permissions.mjs
 
       - name: TypeScript and focused lint
         run: |
           npm run typecheck
-          npx eslint src/lib/crm-dispatch.ts src/lib/crm-workspace.ts src/components/CrmDispatchPanel.tsx src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx src/app/api/crm/dispatch/route.ts
+          npx eslint src/lib/crm-dispatch.ts src/lib/crm-field-broadcast.ts src/lib/crm-workspace.ts src/components/CrmDispatchPanel.tsx src/components/CrmFieldBroadcastForm.tsx src/components/CrmOperatorIssueQueue.tsx src/components/CrmQuickIssueAction.tsx src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx src/app/my-work/page.tsx src/app/api/crm/dispatch/route.ts src/app/api/crm/field-broadcast/route.ts
 
       - name: Build isolated CRM schema plus dispatch migration
         run: |
