@@ -18,7 +18,7 @@ const lib=read('src/lib/crm-dispatch.ts');
 test('machine field work is broadcast unassigned and first operator claims it',()=>{
  assert.match(migration,/dispatch_state.*available/s);
  assert.match(migration,/snacky_issue_field_broadcast_v1/);
- assert.match(migration,/values\(title,issue_id,'field_action',null/);
+ assert.match(migration,/values\\(title,v_issue_id,'field_action',null/);
  assert.match(migration,/v_action='claim'/);
  assert.match(migration,/assigned_to=v_actor_member,dispatch_state='accepted'/);
  assert.match(migration,/This visit was already claimed/);
