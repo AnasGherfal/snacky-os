@@ -29,6 +29,13 @@ export async function GET(request: Request) {
     const { data, error } = await ctx.db.rpc('snacky_cash_handover_workspace_v1', { p_id: id, p_status: status, p_offset: id ? 0 : Number(offset) });
     if (error || !data) return rpcFailure(error ?? {}, true);
     const view = data as CashWorkspace;
+    if (id && view.rows[0]) {
+      const machineLines = await ctx.db.rpc('snacky_cash_collection_machine_lines_v1', { p_collection_id: id });
+      if (machineLines.error) return rpcFailure(machineLines.error, true);
+      if (Array.isArray(machineLines.data)) {
+        view.rows[0].machines = machineLines.data as CashWorkspace['rows'][number]['machines'];
+      }
+    }
     // The database has already scoped each record. Sign only paths returned by
     // that projection, never a client-supplied path or a broader table query.
     for (const row of view.rows) {
