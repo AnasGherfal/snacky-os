@@ -111,6 +111,20 @@ test("partial route continuation respects independent stop statuses", () => {
       routeId,
       status: "in_progress",
       hasPickup: true,
+      stops: [
+        { id: "stop-a", status: "picked", stop_order: 1 },
+        { id: "stop-b", status: "pending", stop_order: 2 },
+      ],
+    }),
+    "/operator/routes/route-1/pick-list",
+    "remaining original pickup must win over an already-picked active stop",
+  );
+
+  assert.equal(
+    nextOperatorRouteHref({
+      routeId,
+      status: "in_progress",
+      hasPickup: true,
       stops: [{ id: "stop-c", status: "picked", stop_order: 3 }, ...stops.slice(0, 2)],
     }),
     "/operator/routes/route-1/stops/stop-c",
