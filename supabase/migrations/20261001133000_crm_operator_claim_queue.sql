@@ -21,7 +21,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path=public,pg_catalog
-as $
+as $validator$
 declare a jsonb:=to_jsonb(new);b jsonb:=case when tg_op='UPDATE' then to_jsonb(old) end;assignee uuid;
 begin
  if tg_table_name='location_pipeline_leads' then
@@ -52,7 +52,7 @@ begin
  end if;
  return new;
 end;
-$;
+$validator$;
 
 create or replace function crm_dispatch_private.guard_task()
 returns trigger
