@@ -12,7 +12,7 @@ export type CashBox = {
   deposited_at: string | null; depositor: string | null; picked_up_at: string | null; custodian: string | null;
   cash_location: string | null; counted_at: string | null; counter: string | null; amount: string | null;
   seal_exception: boolean; evidence_path?: string | null; evidence_url?: string | null;
-  machines: { name: string; location: string | null }[]; actions: CashAction[];
+  machines: { id?: string; name: string; location: string | null; removed_amount_lyd?: string | null; removal_type?: string | null }[]; actions: CashAction[];
   events: { id: string; action: CashAction; at: string; by: string; detail: { location?: string; seal?: string; notes?: string } }[];
 };
 /** Older records remain reviewable, never actionable without a physical reference. */
