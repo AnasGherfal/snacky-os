@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canRecordCashRemoval, hasAnyRole } from "@/lib/authz";
-import { cashHandlingRoles } from "@/lib/cash-handover";
+import { cashHandlingRoles, cashUuid } from "@/lib/cash-handover";
 import { CashHandlingWorkspace } from "@/components/CashHandlingWorkspace";
 import { CashRemovalForm } from "@/components/CashRemovalForm";
 import { ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function CashHandlingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ collect?: string; error?: string; success?: string; machine_id?: string; id?: string }>;
+  searchParams: Promise<{ collect?: string; error?: string; success?: string; machine_id?: string; id?: string; submission_id?: string }>;
 }) {
   const profile = await getCurrentProfile();
   if (!profile || profile.active_status !== "active" || !hasAnyRole(profile, cashHandlingRoles)) {
@@ -76,7 +76,7 @@ export default async function CashHandlingPage({
             label: formatMachineDisplayName(machine, { includeArea: true }),
           }))}
           selectedMachineId={params.machine_id}
-          clientSubmissionId={crypto.randomUUID()}
+          clientSubmissionId={params.submission_id && cashUuid.test(params.submission_id) ? params.submission_id : crypto.randomUUID()}
           cancelHref="/cash-handling"
         />
       </div>
