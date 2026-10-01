@@ -444,25 +444,39 @@ returns void
 language plpgsql
 security definer
 set search_path=public,pg_catalog
-as $$
-declare path text:=coalesce(current_setting('request.path',true),'');method text:=upper(coalesce(current_setting('request.method',true),''));
+as $guard$
+declare path text:=coalesce(current_setting('request.path',true),'');
+ method text:=upper(coalesce(current_setting('request.method',true),''));
 begin
  if not public.snacky_crm_is_limited() then return;end if;
- if path in ('/rpc/snacky_buying_sources_v1','/rest/v1/rpc/snacky_buying_sources_v1') and buying_private.member() is not null then return;end if;
- if path in ('/rpc/snacky_buying_workspace_v1','/rpc/snacky_buying_command_v1','/rest/v1/rpc/snacky_buying_workspace_v1','/rest/v1/rpc/snacky_buying_command_v1') and buying_private.member() is not null then return;end if;
- if not public.snacky_current_profile_has_any_role(array['crm']) then raise exception 'This account is inactive' using errcode='42501';end if;
+ if path in ('/rpc/snacky_buying_sources_v1','/rest/v1/rpc/snacky_buying_sources_v1')
+   and buying_private.member() is not null then return;end if;
+ if path in ('/rpc/snacky_buying_workspace_v1','/rpc/snacky_buying_command_v1',
+             '/rest/v1/rpc/snacky_buying_workspace_v1','/rest/v1/rpc/snacky_buying_command_v1')
+   and buying_private.member() is not null then return;end if;
+ if not public.snacky_current_profile_has_any_role(array['crm']) then
+  raise exception 'This account is inactive' using errcode='42501';
+ end if;
  path:=regexp_replace(path,'^/rest/v1','');
  if path in (
-  '/rpc/snacky_crm_workspace_v1','/rpc/snacky_crm_command_v1','/rpc/snacky_crm_timeline_v1','/rpc/snacky_crm_allowed',
-  '/rpc/snacky_current_team_member_id','/rpc/snacky_current_profile_has_any_role','/rpc/snacky_company_workspace_v1',
-  '/rpc/snacky_company_command_v1','/rpc/snacky_company_notices_v1','/rpc/snacky_company_file_v1','/rpc/snacky_company_file_access',
-  '/rpc/snacky_crm_lead_desk_v1','/rpc/snacky_crm_lead_focus_command_v1','/rpc/snacky_issue_dispatch_command_v1',
+  '/rpc/snacky_crm_collaboration_workspace_v1','/rpc/snacky_crm_collaboration_command_v1',
+  '/rpc/snacky_crm_workspace_v1','/rpc/snacky_crm_command_v1',
+  '/rpc/snacky_crm_timeline_v1','/rpc/snacky_crm_allowed',
+  '/rpc/snacky_current_team_member_id','/rpc/snacky_current_profile_has_any_role',
+  '/rpc/snacky_company_workspace_v1','/rpc/snacky_company_command_v1',
+  '/rpc/snacky_company_notices_v1','/rpc/snacky_company_file_v1',
+  '/rpc/snacky_company_file_access','/rpc/snacky_crm_lead_desk_v1',
+  '/rpc/snacky_crm_lead_focus_command_v1','/rpc/snacky_issue_dispatch_command_v1',
   '/rpc/snacky_issue_field_broadcast_v1'
  ) then return;end if;
- if method in ('GET','HEAD') and path in ('/profiles','/team_members','/crm_documents','/investor_agreements','/investor_monthly_statements','/investor_payments','/investor_contributions','/investor_historical_months') then return;end if;
+ if method in ('GET','HEAD') and path in (
+  '/profiles','/team_members','/crm_documents',
+  '/investor_agreements','/investor_monthly_statements','/investor_payments',
+  '/investor_contributions','/investor_historical_months'
+ ) then return;end if;
  raise exception 'Use the assigned Customer Relations workspace for this account' using errcode='42501';
 end;
-$$;
+$guard$;
 
 revoke all on all functions in schema snacky_notice_private from public,anon,authenticated;
 select pg_notify('pgrst','reload schema');
