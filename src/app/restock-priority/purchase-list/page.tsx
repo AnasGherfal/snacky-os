@@ -9,7 +9,7 @@ import type { BoxPurchaseListItem } from "@/lib/purchase-boxes";
 import type { RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
 export const dynamic = "force-dynamic";
-const coverageChoices = [7, 14, 30] as const;
+const coverageChoices = [7, 14, 22, 30] as const;
 const integer = (value: number) => Math.max(0,Math.round(value)).toLocaleString("en-US");
 const oneDecimal = (value: number) => value.toLocaleString("en-US",{maximumFractionDigits:1});
 function formatPeriod(period: PurchaseListPeriod | null) { return period ? `${period.start} — ${period.end}` : "—"; }
@@ -22,10 +22,20 @@ function BuyQuantity({item,ar}: {item:BoxPurchaseListItem;ar:boolean}) {
   return <div><strong className="text-lg text-orange-700">{integer(item.suggestedBoxesQty)} {ar ? "صندوق" : "boxes"}</strong><div className="text-xs text-slate-600">{integer(item.caseQuantity!)} {ar ? "وحدة/صندوق" : "units/box"} · {integer(item.purchaseUnits!)} {ar ? "وحدة إجمالاً" : "total units"}</div></div>;
 }
 function DemandBadge({item,ar,available}: {item:BoxPurchaseListItem;ar:boolean;available:boolean}) {
-  if (!available) return null;
   const faster = item.currentDailyRate > item.previousDailyRate * 1.05;
   const slower = item.previousDailyRate > 0 && item.currentDailyRate < item.previousDailyRate * 0.8;
-  return <span className="text-xs text-slate-500">{faster ? (ar ? "أسرع هذا الشهر" : "Faster this month") : slower ? (ar ? "أبطأ هذا الشهر" : "Slower this month") : (ar ? "طلب مستقر" : "Steady demand")}</span>;
+  const monthly = available
+    ? faster ? (ar ? "أسرع هذا الشهر" : "Faster this month")
+      : slower ? (ar ? "أبطأ هذا الشهر" : "Slower this month")
+      : (ar ? "طلب مستقر" : "Steady demand")
+    : null;
+  const scheduled = item.scheduledSiteProjectedUnits > 0
+    ? ar
+      ? `يشمل ${item.scheduledSiteProjectedUnits} وحدة متوقعة للموقع الجديد خلال ${item.scheduledSiteCoverageOperatingDays} يوم عمل`
+      : `Includes ${item.scheduledSiteProjectedUnits} new-site units across ${item.scheduledSiteCoverageOperatingDays} operating days`
+    : null;
+  if (!monthly && !scheduled) return null;
+  return <div className="space-y-0.5 text-xs text-slate-500">{monthly ? <div>{monthly}</div> : null}{scheduled ? <div className="font-medium text-emerald-700">{scheduled}</div> : null}</div>;
 }
 function PurchaseCard({item,ar,previousAvailable,currentAvailable}: {item:BoxPurchaseListItem;ar:boolean;previousAvailable:boolean;currentAvailable:boolean}) {
   const tr = (en:string,arabic:string) => ar ? arabic : en;
@@ -44,14 +54,14 @@ function PurchaseCard({item,ar,previousAvailable,currentAvailable}: {item:BoxPur
 export default async function PurchaseListPage({searchParams}: {searchParams:Promise<{days?:string|string[]}>}) {
   await requireCurrentProfileForPath("/restock-priority/purchase-list");
   const params = await searchParams;
-  const requested = Number(Array.isArray(params.days) ? params.days[0] : params.days ?? 7);
-  const days = coverageChoices.includes(requested as 7|14|30) ? requested : 7;
+  const requested = Number(Array.isArray(params.days) ? params.days[0] : params.days ?? 22);
+  const days = coverageChoices.includes(requested as 7|14|22|30) ? requested : 22;
   const db = await getAuthenticatedSupabaseServerClient();
   const {locale,direction} = await getServerI18n(), ar = locale === "ar";
   const tr = (en:string,arabic:string) => ar ? arabic : en;
   if (!db) return <ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not connect to the database.","تعذر الاتصال بقاعدة البيانات.")}/>;
   const result = await loadPurchaseListData(db,days);
-  const sourceFailed = Boolean(result.errors.sales || result.errors.salesBatches || result.errors.products);
+  const sourceFailed = Boolean(result.errors.sales || result.errors.salesBatches || result.errors.products || result.errors.scheduledSiteDemand);
   if (sourceFailed) return <div dir={direction}><ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not verify sales or products. No zero sales or covered stock has been assumed. Reload to retry.","تعذر التحقق من المبيعات أو المنتجات. لم يتم افتراض مبيعات صفرية أو مخزون كافٍ. أعد التحميل.")}/><Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Retry","إعادة المحاولة")}</Link></div>;
   const salesUnavailable = !result.previousPeriod && !result.currentPeriod;
   const buyItems = result.items.filter(item => item.suggestedBuyQty > 0);
@@ -65,14 +75,18 @@ export default async function PurchaseListPage({searchParams}: {searchParams:Pro
   const estimatedCost = knownCosts.reduce((sum,item) => sum + Number(item.estimatedBuyCost),0);
   const action = result.storageLoaded && !salesUnavailable && draftItems.length ? <CreatePurchaseListButton items={draftItems} destination="review"/> : undefined;
   return <div className="space-y-5" dir={direction}>
-    <PageHeader title={tr("Purchase List","قائمة الشراء")} subtitle={tr("Recent sales and current storage, with whole boxes to buy.","المبيعات الحديثة والمخزون الحالي مع كمية الشراء بصناديق كاملة.")} action={action}/>
+    <PageHeader title={tr("Purchase List","قائمة الشراء")} subtitle={tr("22-day stock cover by default, using recent sales, current Storage, and Elite School operating-day demand.","تغطية مخزون افتراضية لمدة 22 يوماً باستخدام المبيعات الحديثة والمخزون الحالي وطلب مدرسة إيليت حسب أيام عملها.")} action={action}/>
     <section className="surface-card space-y-3">
-      <p className="text-sm text-slate-600">{tr("Only products sold last month or this month appear here. Current storage is subtracted first, then the shortage is rounded UP to whole boxes. No individual items or partial boxes are recommended.","تظهر فقط المنتجات المباعة الشهر الماضي أو الحالي. يُخصم المخزون أولاً ثم يُقرب النقص لأعلى إلى صناديق كاملة، دون شراء وحدات مفردة أو أجزاء من صندوق.")}</p>
+      <p className="text-sm text-slate-600">{tr("Purchase quantities cover the selected calendar window. Current Storage is subtracted first, then shortages are rounded UP to whole boxes. Elite Future School is forecast separately from its observed operating-day demand so its short history is not diluted by a monthly average.","تغطي كميات الشراء الفترة المحددة بالأيام. يُخصم المخزون الحالي أولاً ثم يُقرب النقص لأعلى إلى صناديق كاملة. تُحسب مدرسة إيليت للمستقبل بشكل منفصل من استهلاك أيام العمل المرصود حتى لا يقل تقديرها بسبب قصر تاريخها.")}</p>
       <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{tr("Stock coverage:","تغطية المخزون:")}</span>{coverageChoices.map(value => <Link key={value} href={`/restock-priority/purchase-list?days=${value}`} className={value===days ? "btn-primary" : "btn-secondary"}>{value} {tr("days","أيام")}</Link>)}</div>
       <div className="grid gap-2 text-sm sm:grid-cols-2"><p>{tr("Last month:","الشهر الماضي:")} {formatPeriod(result.previousPeriod)}</p><p>{tr("This month:","هذا الشهر:")} {formatPeriod(result.currentPeriod)}</p></div>
-      <p className="text-xs text-slate-500">{tr("Daily demand uses the higher of the two reports’ daily rates. Sales and storage columns show units; buying quantities show boxes. Pending orders and machine stock are not deducted.","يُستخدم الأعلى من معدلي المبيعات اليوميين للتقريرين. المبيعات والمخزون بالوحدات والشراء بالصناديق. لا تُخصم الطلبات المنتظرة أو مخزون الماكينات.")}</p>
+      <p className="text-xs text-slate-500">{tr("Base demand uses the higher of the two monthly daily rates. Elite School demand is added using completed operating days only (Monday-Friday); any overlapping Elite demand is removed from the aggregate report first to avoid double-counting. Storage is then subtracted. Pending orders and machine stock are not deducted.","يستخدم الطلب الأساسي الأعلى من معدلي التقريرين الشهريين. يُضاف طلب مدرسة إيليت اعتماداً على أيام العمل المكتملة فقط (الإثنين–الجمعة)، ويُزال أي طلب متداخل لإيليت من التقرير الإجمالي أولاً لتجنب التكرار، ثم يُخصم المخزون. لا تُخصم الطلبات المنتظرة أو مخزون الماكينات.")}</p>
       <Link href="/restock-priority/shopping-list" className="text-sm font-medium underline">{tr("Open saved Buying List","فتح قائمة الشراء المحفوظة")}</Link>
     </section>
+    {result.scheduledSiteDemand ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><strong>{tr("Elite Future School demand is included","تم احتساب طلب مدرسة إيليت للمستقبل")}</strong><p className="mt-1">{tr(
+      `Snacky learned from ${result.scheduledSiteDemand.observedOperatingDays} completed school days and is projecting ${result.scheduledSiteDemand.coverageOperatingDays} Monday-Friday operating days inside this ${days}-day purchase window. The product-level Elite forecast adds ${integer(result.scheduledSiteDemand.projectedUnits)} units before current Storage is subtracted.`,
+      `تعلّم سناكي من ${result.scheduledSiteDemand.observedOperatingDays} أيام دراسية مكتملة ويحسب ${result.scheduledSiteDemand.coverageOperatingDays} أيام عمل من الإثنين إلى الجمعة داخل فترة الشراء البالغة ${days} يوماً. يضيف توقع إيليت على مستوى المنتجات ${integer(result.scheduledSiteDemand.projectedUnits)} وحدة قبل خصم المخزون الحالي.`
+    )}</p></div> : null}
     {!result.currentPeriod && result.previousPeriod ? <p className="rounded-lg bg-amber-50 p-3 text-sm">{tr("Current-month sales are unavailable; recommendations use last month only.","مبيعات الشهر الحالي غير متاحة؛ تستخدم الاقتراحات الشهر الماضي فقط.")}</p> : null}
     {!result.previousPeriod && result.currentPeriod ? <p className="rounded-lg bg-amber-50 p-3 text-sm">{tr("Last month is unavailable; using this month’s report only.","الشهر الماضي غير متاح؛ نستخدم تقرير هذا الشهر فقط.")}</p> : null}
     {!result.storageLoaded ? <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{tr("Current storage could not be verified. Buying quantities and draft actions are hidden; reload before purchasing.","تعذر التحقق من المخزون الحالي. تم إخفاء كميات الشراء والمسودة؛ أعد التحميل قبل الشراء.")}</p> : null}

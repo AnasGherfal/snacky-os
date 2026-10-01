@@ -5,6 +5,7 @@ import { register } from "node:module";
 
 register("./ts-alias-loader.mjs", import.meta.url);
 const { computePurchaseList } = await import("../src/lib/purchase-list.ts");
+const { computeScheduledSiteDemand, countOperatingDays } = await import("../src/lib/purchase-scheduled-site-demand.ts");
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const products = [
@@ -50,6 +51,75 @@ test("only previous/current-month sellers qualify and highest demand ranks first
   assert.equal(rows[0].demandBasis, "current");
 });
 
+test("22 calendar days contain 16 Elite Monday-Friday operating days from 2026-10-01", () => {
+  assert.equal(countOperatingDays("2026-10-01", 22, [1,2,3,4,5]), 16);
+});
+
+test("Elite demand learns from completed operating days and corrects for recorded fills", () => {
+  const stockRows = [];
+  for (const [day,start,end] of [
+    ["2026-09-28",30,20],
+    ["2026-09-29",20,25],
+    ["2026-09-30",25,15],
+  ]) {
+    stockRows.push(
+      { product_id:"fast", current_qty:start, captured_at:`${day}T06:00:00.000Z`, sync_run_id:`${day}-start` },
+      { product_id:"fast", current_qty:end, captured_at:`${day}T16:00:00.000Z`, sync_run_id:`${day}-end` },
+    );
+  }
+  const rows = computeScheduledSiteDemand({
+    siteName:"Elite Future School",
+    openDays:[1,2,3,4,5],
+    coverageDays:22,
+    stockRows,
+    fillRows:[{ product_id:"fast", actual_qty:15, created_at:"2026-09-29T12:00:00.000Z" }],
+    previousPeriod:{start:"2026-09-01",end:"2026-09-30"},
+    currentPeriod:{start:"2026-10-01",end:"2026-10-31"},
+    now:new Date("2026-10-01T08:00:00.000Z"),
+  });
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].observed_operating_days,3);
+  assert.equal(rows[0].coverage_operating_days,16);
+  assert.equal(rows[0].observed_units,30);
+  assert.equal(rows[0].daily_rate,10);
+  assert.equal(rows[0].projected_units,160);
+  assert.equal(rows[0].previous_period_units,30);
+  assert.equal(rows[0].current_period_units,0);
+});
+
+test("scheduled-site forecast is added after removing overlapping site demand from monthly totals", () => {
+  const [row] = computePurchaseList({
+    products:[{id:"fast",name:"Fast",active:true}],
+    storageRows:[{product_id:"fast",quantity_on_hand:5}],
+    salesRows:[
+      {product_id:"fast",month:"previous",units_sold:310},
+      {product_id:"fast",month:"current",units_sold:240},
+    ],
+    scheduledDemandRows:[{
+      product_id:"fast",
+      site_name:"Elite Future School",
+      observed_operating_days:3,
+      coverage_operating_days:16,
+      observed_units:45,
+      projected_units:160,
+      daily_rate:10,
+      previous_period_units:0,
+      current_period_units:45,
+    }],
+    previousPeriod,
+    currentPeriod,
+    coverageTargetDays:22,
+  });
+  assert.equal(row.scheduledSiteProjectedUnits,160);
+  assert.equal(row.scheduledSiteCoverageOperatingDays,16);
+  assert.equal(row.scheduledSiteObservedOperatingDays,3);
+  assert.deepEqual(row.scheduledSiteNames,["Elite Future School"]);
+  assert.equal(row.targetStockQty,429);
+  assert.equal(row.suggestedBuyQty,424);
+  assert.equal(row.baseDemandDailyRate,12.19);
+  assert.equal(row.demandDailyRate,19.46);
+});
+
 test("current storage is subtracted before suggesting a purchase", () => {
   const byId = new Map(calculate().map((row) => [row.productId, row]));
   assert.equal(byId.get("fast")?.targetStockQty, 105);
@@ -91,11 +161,13 @@ test("purchase list reads active monthly product imports and live storage, not t
   assert.doesNotMatch(source, /kpi_product_monthly/);
 });
 
-test("UI explains recent-only logic, supports 7/14/30 days, and creates a purchase draft", () => {
+test("UI defaults to 22 days, keeps other coverage choices, explains Elite demand, and creates a purchase draft", () => {
   const page = read("src/app/restock-priority/purchase-list/page.tsx");
   const tabs = read("src/components/module-tabs-config.ts");
-  assert.match(page, /coverageChoices = \[7, 14, 30\]/);
-  assert.match(page, /Only products sold last month or this month appear here/);
+  assert.match(page, /coverageChoices = \[7, 14, 22, 30\]/);
+  assert.match(page, /params\.days \?\? 22/);
+  assert.match(page, /Elite Future School demand is included/);
+  assert.match(page, /22-day stock cover by default/);
   assert.match(page, /Current storage could not be verified/);
   assert.match(page, /CreatePurchaseListButton/);
   assert.match(page, /b\.demandDailyRate - a\.demandDailyRate|Buy these first/);
