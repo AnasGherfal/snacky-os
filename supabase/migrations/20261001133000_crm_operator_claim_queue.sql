@@ -363,19 +363,47 @@ $$;
 create or replace function snacky_notice_private.eligible(n public.notifications)
 returns boolean
 language plpgsql volatile security definer set search_path=''
-as $$
+as $eligible$
 declare s jsonb;roles text[];creator uuid;
 begin
  if snacky_notice_private.member_user(n.recipient_member_id) is distinct from n.user_id then return false;end if;
  select array[p.role::text]||coalesce(p.roles::text[],'{}') into roles from public.profiles p where id=n.user_id;
  s:=snacky_notice_private.source(n.source_kind,n.source_id);if s is null then return false;end if;
+
+ -- Shared machine-issue offer: recipient is an active operator, while the task
+ -- deliberately remains unassigned until the first operator claims it.
  if n.event_kind='available' then
   return n.source_kind='task' and roles&&array['operator'] and (s->>'active')::boolean
-   and s->>'member' is null and s->'row'->>'task_type'='field_action' and s->'row'->>'dispatch_state'='available';
+   and s->>'member' is null and s->'row'->>'task_type'='field_action'
+   and s->'row'->>'dispatch_state'='available';
  end if;
+
  if n.source_kind='company' then return (s->>'active')::boolean and roles&&array(select jsonb_array_elements_text(s->'row'->'audience'));end if;
  if not (roles&&case when n.source_kind in ('route','instruction') then array['owner','admin','supervisor','operator'] when n.source_kind in ('lead','location','obligation','routine') then array['owner','admin','supervisor','crm'] else array['owner','admin','supervisor','crm','operator'] end) then return false;end if;
  if coalesce(s->'row'->>'is_practice','false')='true' or coalesce(s->'row'->>'is_archived','false')='true' or s->'row'->>'archived_at' is not null then return false;end if;
+
+ -- Preserve the currently deployed urgent-dispatch escalation eligibility.
+ if n.event_kind='ack_overdue' then
+  if not snacky_notice_private.escalation_generation_current(n) then return false;end if;
+  if n.source_kind<>'task' or not (roles&&array['owner','admin','supervisor','crm']) then return false;end if;
+  return exists(
+   select 1
+   from public.crm_tasks t
+   join public.issues i on i.id=t.issue_id
+   where t.id=n.source_id
+     and t.task_type='field_action'
+     and t.assigned_to is not null
+     and t.priority in ('urgent','critical')
+     and t.status='open'
+     and t.dispatch_state='assigned'
+     and t.ack_due_at is not null and t.ack_due_at<=clock_timestamp()
+     and t.archived_at is null and coalesce(t.is_practice,false)=false
+     and i.assigned_to=n.recipient_member_id
+     and i.status::text not in ('resolved','closed','cancelled','canceled')
+     and i.archived_at is null and coalesce(i.is_practice,false)=false
+  );
+ end if;
+
  if n.event_kind='removed' then return s->>'member' is distinct from n.recipient_member_id::text;end if;
  if n.event_kind='critical' then return (s->>'active')::boolean and s->>'member' is null and roles&&array['owner','admin'];end if;
  if n.event_kind='completed' then
@@ -385,7 +413,7 @@ begin
  if n.event_kind='cancelled' then return s->>'member'=n.recipient_member_id::text and s->'row'->>'status' in ('cancelled','canceled');end if;
  return s->>'member'=n.recipient_member_id::text and (s->>'active')::boolean;
 end;
-$$;
+$eligible$;
 
 create or replace function snacky_notice_private.field_available()
 returns trigger
