@@ -110,7 +110,7 @@ test('unidentified records stay visible and never substitute a generated ID for 
 test('cash box detail exposes machine removal amounts without changing Finance permissions', () => {
   const api = read('src/app/api/cash-handling/route.ts');
   const ui = read('src/components/CashHandlingWorkspace.tsx');
-  assert.match(groupedCashSql, /snacky_cash_collection_machine_lines_v1_impl/);
+  assert.match(groupedCashSql, /cash_collection_machine_lines_v1_impl/);
   assert.match(groupedCashSql, /removed_amount_lyd/);
   assert.match(api, /snacky_cash_collection_machine_lines_v1/);
   assert.match(ui, /Amounts recorded at removal/);
@@ -131,5 +131,7 @@ test('operator sees one Cash workflow instead of duplicate cash menus', () => {
   assert.doesNotMatch(workspace, /href="\/cash-collections\/new"/);
   assert.match(unifiedPage, /<CashRemovalForm/);
   assert.match(legacyRemoval, /redirect\(\`\/cash-handling\?\$\{params\.toString\(\)\}\`\)/);
-  assert.match(actions, /redirect\(\`\/cash-handling\?id=\$\{collectionId\}/);
+  assert.match(actions, /const target = isOperatorRole/);
+  assert.match(actions, /\/cash-handling\?id=\$\{collectionIds\[0\]\}/);
+  assert.match(actions, /redirect\(target\)/);
 });
