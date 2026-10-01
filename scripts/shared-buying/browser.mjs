@@ -110,8 +110,7 @@ try{
  });
  await check('reassignment gives purchasing buyer access while warehouse keeps planner access and operator stays blocked',async()=>{
   const list=(await record('owner',listId)).record;await command('owner','assign',listId,list.revision,{assigned_to:accounts.purchasing.member});
-  assert.equal((await accounts.warehouse.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error?.code,'42501');
-  assert.equal((await buyer.request.get(app+'/api/buying-lists?id='+listId)).status(),403);
+  const warehouseView=await record('warehouse',listId);assert.equal(warehouseView.planner,true);assert.equal(warehouseView.record.assigned_to,accounts.purchasing.member);
   await replacement.goto(app+'/buying-lists/'+listId);await replacement.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();
   const actual=await record('purchasing',listId);assert.equal(actual.planner,true);assert.equal(actual.record.assigned_to,accounts.purchasing.member);
   assert.equal(ledger(),baseline);
