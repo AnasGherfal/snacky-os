@@ -1,0 +1,50 @@
+name: One-time prebuilt production deploy
+
+on:
+  push:
+    branches:
+      - deploy-master-prebuilt-20261001
+    paths:
+      - .github/workflows/deploy-master-prebuilt-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify Vercel CI credentials are configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is missing"
+              missing=1
+            else
+              echo "$name is configured"
+            fi
+          done
+          test "$missing" = "0"
+      - name: Install app dependencies
+        run: npm ci
+      - name: Pull production Vercel environment
+        run: npx vercel@58.9.3 pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - name: Build locally in Actions
+        run: npx vercel@58.9.3 build --prod --token="$VERCEL_TOKEN"
+      - name: Deploy prebuilt output to production
+        run: npx vercel@58.9.3 deploy --prebuilt --prod --token="$VERCEL_TOKEN"
