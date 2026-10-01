@@ -46,7 +46,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   }
   const { data: team, count, error: teamError } = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, roles, can_add_products, active, active_status, auth_user_id, must_change_password", { count: "exact" })
+    .select("id, full_name, email, phone, role, roles, can_add_products, crm_focus, active, active_status, auth_user_id, must_change_password", { count: "exact" })
     .order("full_name")
     .range(from, to);
   const memberIds = (team ?? []).map((member: any) => member.id).filter(Boolean);
@@ -105,7 +105,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
         <EmptyState title="No team members" body="Add admins, supervisors, warehouse users, and operators before assigning routes." />
       ) : (
         <>
-          <DataTable headers={["Full name", "Email", "Phone", "Roles", "Effective permissions", "Product add", "Status", "Last login", "Actions"]}>
+          <DataTable headers={["Full name", "Email", "Phone", "Roles", "CRM focus", "Effective permissions", "Product add", "Status", "Last login", "Actions"]}>
             {team.map((member: any) => {
               const profile = profileByTeamId.get(member.id) ?? profileByEmail.get(String(member.email ?? "").toLowerCase());
               const roles = normalizeRoles(member.roles, member.role);
@@ -117,6 +117,13 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                   <td>{member.email ?? "-"}</td>
                   <td>{member.phone ?? "-"}</td>
                   <td><div className="flex flex-wrap gap-1">{roles.map((role) => <StatusBadge key={role} status={role} />)}</div></td>
+                  <td>
+                    {roles.includes("crm") ? (
+                      member.crm_focus === "office" ? <span className="font-medium text-slate-900">Office CRM</span>
+                      : member.crm_focus === "field" ? <span className="font-medium text-slate-900">Field CRM</span>
+                      : <span className="text-slate-500">Not set</span>
+                    ) : <span className="text-slate-400">-</span>}
+                  </td>
                   <td>
                     <div className="grid gap-1 text-xs">
                       {permissionDebugItems.map((item) => (
