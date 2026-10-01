@@ -227,15 +227,15 @@ security definer
 set search_path=public,pg_catalog
 as $$
 declare
- me uuid:=public.snacky_current_team_member_id();rid uuid;issue_id uuid;title text;due_date date;priority text;notes text;
+ me uuid:=public.snacky_current_team_member_id();rid uuid;v_issue_id uuid;title text;due_date date;priority text;notes text;
  issue public.issues%rowtype;task public.crm_tasks%rowtype;receipt public.crm_command_receipts;req jsonb;answer jsonb;
 begin
  if me is null or not public.snacky_crm_staff() then raise exception 'Customer relations access required' using errcode='42501';end if;
  if p_request is null or jsonb_typeof(p_request)<>'object' or octet_length(p_request::text)>12000 then raise exception 'Invalid field broadcast' using errcode='22023';end if;
- begin rid:=(p_request->>'request_id')::uuid;issue_id:=(p_request->>'issue_id')::uuid;due_date:=(p_request->>'due_date')::date;
+ begin rid:=(p_request->>'request_id')::uuid;v_issue_id:=(p_request->>'issue_id')::uuid;due_date:=(p_request->>'due_date')::date;
  exception when others then raise exception 'Valid request, issue and date are required' using errcode='22023';end;
  title:=trim(coalesce(p_request->>'title',''));priority:=lower(trim(coalesce(p_request->>'priority','normal')));notes:=nullif(trim(coalesce(p_request->>'notes','')),'');
- if rid is null or issue_id is null or length(title)<3 or length(title)>300 or priority not in ('low','normal','high','urgent') or length(coalesce(notes,''))>3000
+ if rid is null or v_issue_id is null or length(title)<3 or length(title)>300 or priority not in ('low','normal','high','urgent') or length(coalesce(notes,''))>3000
  then raise exception 'Invalid field broadcast' using errcode='22023';end if;
  req:=p_request;
  perform pg_advisory_xact_lock(hashtext('crm-field-broadcast'),hashtext(rid::text));
@@ -245,17 +245,17 @@ begin
   then raise exception 'Saved request does not match' using errcode='23505';end if;
   return receipt.response;
  end if;
- select * into issue from public.issues where id=issue_id for update;
+ select * into issue from public.issues where id=v_issue_id for update;
  if not found or issue.archived_at is not null or issue.status::text in ('resolved','closed')
  then raise exception 'Customer issue is not open' using errcode='23514';end if;
- if not public.snacky_crm_allowed('issue',issue_id,true) then raise exception 'This issue belongs to another employee' using errcode='42501';end if;
- if exists(select 1 from public.crm_tasks t where t.issue_id=issue_id and t.task_type='field_action' and t.archived_at is null and t.status<>'completed' and coalesce(t.dispatch_state,'')<>'fixed')
+ if not public.snacky_crm_allowed('issue',v_issue_id,true) then raise exception 'This issue belongs to another employee' using errcode='42501';end if;
+ if exists(select 1 from public.crm_tasks t where t.issue_id=v_issue_id and t.task_type='field_action' and t.archived_at is null and t.status<>'completed' and coalesce(t.dispatch_state,'')<>'fixed')
  then raise exception 'A field visit is already active for this issue' using errcode='23505';end if;
  insert into public.crm_tasks(title,issue_id,task_type,assigned_to,due_date,priority,notes,created_by,updated_by,is_practice)
- values(title,issue_id,'field_action',null,due_date,priority,notes,me,me,issue.is_practice) returning * into task;
- perform public.snacky_crm_emit('issue',issue_id,'field_broadcast','Field visit sent to all operators',null,
+ values(title,v_issue_id,'field_action',null,due_date,priority,notes,me,me,issue.is_practice) returning * into task;
+ perform public.snacky_crm_emit('issue',v_issue_id,'field_broadcast','Field visit sent to all operators',null,
   jsonb_build_object('task_id',task.id,'priority',priority,'due_date',due_date));
- answer:=jsonb_build_object('ok',true,'request_id',rid,'issue_id',issue_id,'task_id',task.id,'version',task.updated_at::text);
+ answer:=jsonb_build_object('ok',true,'request_id',rid,'issue_id',v_issue_id,'task_id',task.id,'version',task.updated_at::text);
  insert into public.crm_command_receipts(id,actor_user_id,action,request,response) values(rid,auth.uid(),'field.broadcast',req,answer);
  return answer;
 end;
