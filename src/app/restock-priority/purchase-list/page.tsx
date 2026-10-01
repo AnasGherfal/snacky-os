@@ -62,7 +62,12 @@ export default async function PurchaseListPage({searchParams}: {searchParams:Pro
   if (!db) return <ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not connect to the database.","تعذر الاتصال بقاعدة البيانات.")}/>;
   const result = await loadPurchaseListData(db,days);
   const sourceFailed = Boolean(result.errors.sales || result.errors.salesBatches || result.errors.products || result.errors.scheduledSiteDemand);
-  if (sourceFailed) return <div dir={direction}><ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not verify sales or products. No zero sales or covered stock has been assumed. Reload to retry.","تعذر التحقق من المبيعات أو المنتجات. لم يتم افتراض مبيعات صفرية أو مخزون كافٍ. أعد التحميل.")}/><Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Retry","إعادة المحاولة")}</Link></div>;
+  if (sourceFailed) {
+    const eliteFailed = Boolean(result.errors.scheduledSiteDemand);
+    return <div dir={direction}><ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={eliteFailed
+      ? tr("Elite Future School demand could not be verified, so Snacky stopped the automatic purchase recommendation instead of under-buying. Reload to retry.","تعذر التحقق من طلب مدرسة إيليت للمستقبل، لذلك أوقف سناكي توصية الشراء التلقائية بدلاً من تقليل الكمية المطلوبة. أعد التحميل للمحاولة.")
+      : tr("Could not verify sales or products. No zero sales or covered stock has been assumed. Reload to retry.","تعذر التحقق من المبيعات أو المنتجات. لم يتم افتراض مبيعات صفرية أو مخزون كافٍ. أعد التحميل.")}/><Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Retry","إعادة المحاولة")}</Link></div>;
+  }
   const salesUnavailable = !result.previousPeriod && !result.currentPeriod;
   const buyItems = result.items.filter(item => item.suggestedBuyQty > 0);
   const readyItems = buyItems.filter(item => !item.boxSizeMissing && Number(item.suggestedBoxesQty) > 0 && Number(item.purchaseUnits) > 0);
