@@ -45,6 +45,16 @@
 .facts dd { margin: 0; font-size: .87rem; overflow-wrap: anywhere; }
 .detail { display: grid; gap: 16px; max-width: 840px; }
 .detail h2 { font-size: 1.4rem; }
+.machineAmounts { border: 1px solid #dbe8de; border-radius: 14px; background: #f8fbf9; padding: 14px; display: grid; gap: 12px; }
+.machineAmountsHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.machineAmountsHeader h3 { margin: 0; font-size: .95rem; }
+.machineAmountsHeader > strong { white-space: nowrap; color: #1f6b3f; font-size: .95rem; }
+.machineAmountRows { display: grid; gap: 8px; }
+.machineAmountRow { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px solid #e2ebe5; padding-top: 8px; font-size: .86rem; }
+.machineAmountRow:first-child { border-top: 0; padding-top: 0; }
+.machineAmountRow > div { min-width: 0; display: grid; gap: 2px; }
+.machineAmountRow span { color: #6a786f; font-size: .76rem; }
+.machineAmountRow bdi { white-space: nowrap; font-weight: 750; color: #24392e; }
 .form { border-top: 1px solid #dce5de; padding-top: 22px; }
 .form fieldset { border: 0; padding: 0; margin: 16px 0 0; display: grid; gap: 16px; min-width: 0; }
 .workspace label { display: grid; gap: 8px; font-size: .9rem; font-weight: 600; }
@@ -57,4 +67,4 @@
 .timeline li { border-inline-start: 2px solid #d7e3d9; padding: 0 18px 18px; font-size: .87rem; }
 .timeline li:last-child { padding-bottom: 0; }
 .timeline p { margin: 4px 0 0; color: #65756b; font-size: .8rem; }
-@media (max-width: 700px) { .workspace { gap: 16px; } .grid { grid-template-columns: 1fr; } .card, .detail { padding: 17px; } .header .buttons { width: 100%; } .header .buttons > * { flex: 1; } .facts { gap: 12px; } .tabs button { flex: 1; padding-inline: 10px; } }
+@media (max-width: 700px) { .workspace { gap: 16px; } .grid { grid-template-columns: 1fr; } .card, .detail { padding: 17px; } .header .buttons { width: 100%; } .header .buttons > * { flex: 1; } .facts { gap: 12px; } .tabs button { flex: 1; padding-inline: 10px; } .machineAmountsHeader, .machineAmountRow { align-items: flex-start; } .machineAmountRow { flex-direction: column; gap: 4px; } }

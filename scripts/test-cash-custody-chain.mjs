@@ -12,8 +12,10 @@ const simplificationMigration = read("supabase/migrations/20260907144816_simplif
 const ownerSelfHandoffMigration = read("supabase/migrations/20260908120000_owner_admin_self_cash_handoff.sql");
 const simpleCountMigration = read("supabase/migrations/20260910001500_simplify_cash_count_to_total_and_period.sql");
 const autoPeriodMigration = read("supabase/migrations/20260918211800_cash_period_from_last_removal.sql");
+const machineAmountMigration = read("supabase/migrations/20261001090000_cash_removal_machine_amounts_multi_box.sql");
 const actions = read("src/lib/cash-actions.ts");
 const removalForm = read("src/components/CashRemovalForm.tsx");
+const removalPlanner = read("src/components/CashRemovalBoxPlanner.tsx");
 const custodyForms = read("src/components/CashCustodyForms.tsx");
 const detailPage = read("src/app/cash-collections/[id]/page.tsx");
 const editPage = read("src/app/cash-collections/[id]/edit/page.tsx");
@@ -26,16 +28,18 @@ function tableDefinition(tableName) {
   return migration.slice(start, end + 1);
 }
 
-test("removal is sealed, evidenced, route-independent, and has no amount", () => {
+test("removal is sealed, evidenced, route-independent, and records machine amounts without posting a counted total", () => {
   assert.match(migration, /record_standalone_cash_removal_impl/);
-  assert.match(migration, /A unique tamper-evident bag or seal ID is required/);
-  assert.match(migration, /A sealed-bag removal photo is required/);
   assert.match(migration, /route_id,[\s\S]*?values \(\s*null,/i);
   assert.match(migration, /actual_cash_collected,[\s\S]*?null,[\s\S]*?'collected_pending_count'/i);
-  assert.match(removalForm, /name="cash_bag_id" required/);
+  assert.match(machineAmountMigration, /record_standalone_cash_removal_group_v1_impl/);
+  assert.match(machineAmountMigration, /removed_amount_lyd numeric\(12,2\)/);
+  assert.match(removalPlanner, /Amount removed · LYD/);
+  assert.match(removalPlanner, /Box {index \+ 1\}/);
+  assert.match(removalPlanner, /box_evidence_/);
   assert.match(removalForm, /name="compartments"/);
-  assert.match(removalForm, /name="evidence_file"[\s\S]*?required/);
   assert.doesNotMatch(removalForm, /counted_amount_lyd|name="route_id"/);
+  assert.doesNotMatch(machineAmountMigration, /actual_cash_collected\s*=\s*removed_amount_lyd/);
 });
 
 test("storage handoff allows an audited owner/admin self-receipt but keeps operators independent", () => {
@@ -51,11 +55,13 @@ test("storage handoff allows an audited owner/admin self-receipt but keeps opera
   assert.match(detailPage, /!isOwnCollection \|\| isOwnerOrAdmin/);
 });
 
-test("operational receipt tables contain no financial amounts", () => {
+test("operational receipt tables keep declared machine amounts separate from Finance totals", () => {
   const receipt = tableDefinition("cash_removal_receipts");
   const receiptMachines = tableDefinition("cash_removal_receipt_machines");
   assert.doesNotMatch(receipt, /numeric|actual_cash|expected_cash|variance|amount_lyd/);
   assert.doesNotMatch(receiptMachines, /numeric|actual_cash|expected_cash|variance|amount_lyd/);
+  assert.match(machineAmountMigration, /alter table public\.cash_removal_receipt_machines[\s\S]*add column if not exists removed_amount_lyd numeric\(12,2\)/);
+  assert.doesNotMatch(machineAmountMigration, /add column if not exists actual_cash_collected|add column if not exists expected_cash_lyd|insert into public\.financial_transactions/);
   assert.match(migration, /revoke all on table public\.cash_collections from public, anon, authenticated/);
   assert.match(migration, /create policy "snacky_cash_collection_machines_manager_read"[\s\S]*?owner'[\s\S]*?'finance'[\s\S]*?\);/);
   const machineManagerPolicy = migration.match(/create policy "snacky_cash_collection_machines_manager_read"[\s\S]*?\);/)?.[0] ?? "";

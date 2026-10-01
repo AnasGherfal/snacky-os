@@ -104,8 +104,9 @@ try{
  });
  await check('pagination, contact links and archived/practice filters remain usable',async()=>{
   await go(owner);const first=await table(owner).locator('tbody th a').evaluateAll(a=>a.map(x=>x.href));
-  await owner.locator('a[rel=next]').click();await owner.waitForURL(u=>u.searchParams.get('offset')==='40');
-  await owner.locator('#crm-leads').getByText('41–46 / 46',{exact:true}).waitFor();
+  const nextHref=await owner.locator('a[rel=next]').getAttribute('href');assert.ok(nextHref);
+  const nextUrl=new URL(nextHref,app);assert.equal(nextUrl.searchParams.get('offset'),'40');
+  await owner.goto(nextUrl.toString());await owner.locator('#crm-leads').getByText('41–46 / 46',{exact:true}).waitFor();
   const second=await table(owner).locator('tbody th a').evaluateAll(a=>a.map(x=>x.href));assert.equal(second.length,6);assert.equal(second.some(x=>first.includes(x)),false);
   assert.equal(await table(owner).locator('a[href="tel:+218911234567"]').count(),6);assert.equal(await table(owner).locator('a[href="https://wa.me/218911234567"]').count(),6);
   await go(owner,'?archived=true&practice=true');assert.equal((await rpc('owner','lead',{archived:'true',practice:'true'})).total,48);
