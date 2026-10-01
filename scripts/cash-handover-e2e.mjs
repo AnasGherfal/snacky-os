@@ -42,8 +42,10 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR
 const bucket = await admin.storage.getBucket('cash-evidence');
 if (bucket.error) { const c = await admin.storage.createBucket('cash-evidence', { public: false }); assert.equal(c.error, null, c.error?.message); }
 async function photo(path) { const r = await admin.storage.from('cash-evidence').upload(path, png, { contentType: 'image/png' }); assert.equal(r.error, null, r.error?.message); return path; }
-const machine = randomUUID();
-sql(`insert into public.machines(id,machine_code,name) values('${machine}','CASH-QA','QA Vending Location');`);
+const machine = randomUUID(), machine2 = randomUUID();
+sql(`insert into public.machines(id,machine_code,name) values
+  ('${machine}','CASH-QA','QA Vending Location'),
+  ('${machine2}','CASH-QA-2','QA Vending Location 2');`);
 const originalOperationalPosition = sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements))::text");
 async function rpc(key, name, args = {}) { const r = await accounts[key].client.rpc(name, args); assert.equal(r.error, null, `${name}: ${r.error?.message}`); return r.data; }
 async function workspace(key, id = null, status = 'open') { return rpc(key, 'snacky_cash_handover_workspace_v1', { p_id: id, p_status: status }); }
@@ -59,6 +61,54 @@ async function removal(key = 'operator', partial = false) {
   const id = await rpc(key, 'record_standalone_cash_removal', { p_machine_ids: [machine], p_removed_at: new Date().toISOString(), p_removal_type: partial ? 'partial' : 'full', p_cash_bag_id: bag, p_compartments: ['notes'], p_removal_evidence_path: path, p_removal_evidence_file_name: 'qa.png', p_notes: partial ? 'Change float intentionally left in the machine' : null, p_client_submission_id: request });
   return { id, bag, path };
 }
+await check('multi-machine removals keep machine amounts separate while custody follows physical boxes', async () => {
+  const sameGroup = randomUUID(), sameBag = 'QA-SAME-' + randomUUID().slice(0, 8).toUpperCase();
+  const samePath = await photo(`qa-removals/${sameGroup}-same.png`);
+  const sameArgs = {
+    p_boxes: [{
+      box_key: 'box-1',
+      cash_bag_id: sameBag,
+      removal_evidence_path: samePath,
+      removal_evidence_file_name: 'same.png',
+      machines: [
+        { machine_id: machine, removed_amount_lyd: '120.50' },
+        { machine_id: machine2, removed_amount_lyd: '80.25' },
+      ],
+    }],
+    p_removed_at: new Date().toISOString(),
+    p_removal_type: 'full',
+    p_compartments: ['notes'],
+    p_notes: null,
+    p_client_submission_id: sameGroup,
+  };
+  const same = await rpc('operator', 'record_standalone_cash_removal_group_v1', sameArgs);
+  assert.equal(same.replayed, false); assert.equal(same.collection_ids.length, 1);
+  const sameId = same.collection_ids[0];
+  const sameLines = await rpc('operator', 'snacky_cash_collection_machine_lines_v1', { p_collection_id: sameId });
+  assert.deepEqual(sameLines.map(row => [row.id, row.removed_amount_lyd]).sort(), [[machine, '120.50'], [machine2, '80.25']].sort());
+  assert.equal(sql(`select sum(removed_amount_lyd)::text from public.cash_collection_machines where cash_collection_id='${sameId}'`), '200.75');
+  assert.equal(sql(`select sum(removed_amount_lyd)::text from public.cash_removal_receipt_machines where cash_collection_id='${sameId}'`), '200.75');
+  const replay = await rpc('operator', 'record_standalone_cash_removal_group_v1', sameArgs);
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.collection_ids, same.collection_ids);
+
+  const splitGroup = randomUUID();
+  const bagA = 'QA-A-' + randomUUID().slice(0, 8).toUpperCase(), bagB = 'QA-B-' + randomUUID().slice(0, 8).toUpperCase();
+  const pathA = await photo(`qa-removals/${splitGroup}-a.png`), pathB = await photo(`qa-removals/${splitGroup}-b.png`);
+  const split = await rpc('operator', 'record_standalone_cash_removal_group_v1', {
+    p_boxes: [
+      { box_key: 'box-1', cash_bag_id: bagA, removal_evidence_path: pathA, removal_evidence_file_name: 'a.png', machines: [{ machine_id: machine, removed_amount_lyd: '33.00' }] },
+      { box_key: 'box-2', cash_bag_id: bagB, removal_evidence_path: pathB, removal_evidence_file_name: 'b.png', machines: [{ machine_id: machine2, removed_amount_lyd: '44.50' }] },
+    ],
+    p_removed_at: new Date().toISOString(),
+    p_removal_type: 'full',
+    p_compartments: ['notes'],
+    p_notes: null,
+    p_client_submission_id: splitGroup,
+  });
+  assert.equal(split.collection_ids.length, 2);
+  assert.equal(sql(`select count(distinct cash_bag_id) from public.cash_collections where removal_group_id='${splitGroup}'`), '2');
+  assert.equal(sql(`select count(*) from public.cash_collection_machines cm join public.cash_collections c on c.id=cm.cash_collection_id where c.removal_group_id='${splitGroup}' and cm.removed_amount_lyd is not null`), '2');
+});
 async function assign(box, key = 'warehouse') {
   const row = (await workspace('owner', box.id)).rows[0];
   return execute('owner', command('assign', box.id, row.revision, { assigned_to: accounts[key].id }));
