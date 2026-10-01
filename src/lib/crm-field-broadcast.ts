@@ -12,7 +12,7 @@ export function validateCrmFieldBroadcast(value:unknown):CrmFieldBroadcastReques
  const raw=value as Record<string,unknown>;
  const request_id=String(raw.request_id??''),issue_id=String(raw.issue_id??''),title=String(raw.title??'').trim(),due_date=String(raw.due_date??''),priority=String(raw.priority??'normal') as CrmFieldBroadcastRequest['priority'];
  const notes=raw.notes===undefined?undefined:String(raw.notes);
- if(!uuid.test(request_id)||!uuid.test(issue_id)||title.length<3||title.length>300||!/^(20\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(due_date)||!['low','normal','high','urgent'].includes(priority))throw Error('invalid');
+ if(!uuid.test(request_id)||!uuid.test(issue_id)||title.length<3||title.length>240||!/^(20\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(due_date)||!['low','normal','high','urgent'].includes(priority))throw Error('invalid');
  if(notes!==undefined&&notes.length>3000)throw Error('invalid');
  return {request_id,issue_id,title,due_date,priority,...(notes===undefined?{}:{notes})};
 }
