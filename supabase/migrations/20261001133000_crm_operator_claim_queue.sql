@@ -13,6 +13,47 @@ create index if not exists crm_tasks_available_dispatch_idx
  on public.crm_tasks(priority,due_date,created_at)
  where task_type='field_action' and assigned_to is null and dispatch_state='available' and archived_at is null;
 
+
+-- Preserve the existing CRM validator, with one narrow exception:
+-- an issue field_action may be unassigned only while it is in the available claim queue.
+create or replace function public.snacky_crm_validate_record()
+returns trigger
+language plpgsql
+security definer
+set search_path=public,pg_catalog
+as $
+declare a jsonb:=to_jsonb(new);b jsonb:=case when tg_op='UPDATE' then to_jsonb(old) end;assignee uuid;
+begin
+ if tg_table_name='location_pipeline_leads' then
+  if length(trim(a->>'place_name')) not between 1 and 200 then raise exception 'Place name must be 1–200 characters';end if;
+  if tg_op='UPDATE' and (a->>'id' is distinct from b->>'id' or a->>'created_by_member_id' is distinct from b->>'created_by_member_id') then raise exception 'Original lead identity and creator cannot be changed';end if;
+  if coalesce((a->>'is_practice')::boolean,false) and a->>'converted_location_id' is not null then raise exception 'Practice leads cannot become real locations';end if;
+ elsif tg_table_name='crm_tasks' then
+  assignee:=nullif(a->>'assigned_to','')::uuid;
+  if assignee is null then
+   if a->>'task_type'<>'field_action' or a->>'issue_id' is null or a->>'dispatch_state'<>'available' then
+    raise exception 'Choose an active team member who can perform this work';
+   end if;
+  else
+   if not exists(select 1 from public.team_members t where t.id=assignee and t.active and t.active_status='active' and (t.role::text in ('owner','admin','supervisor','crm','operator') or t.roles::text[]&&array['owner','admin','supervisor','crm','operator'])) then raise exception 'Choose an active team member who can perform this work';end if;
+   if not exists(select 1 from public.team_members t where t.id=assignee and (t.role::text in ('owner','admin','supervisor','crm') or coalesce(t.roles::text[],'{}')&&array['owner','admin','supervisor','crm'])) and (a->>'task_type'<>'field_action' or a->>'issue_id' is null) then raise exception 'Operators may only receive issue field actions';end if;
+  end if;
+  if a->>'status'='completed' and nullif(trim(a->>'result'),'') is null then raise exception 'Write the result before completing the task';end if;
+  if b is not null and (a->>'created_by' is distinct from b->>'created_by' or a->>'issue_id' is distinct from b->>'issue_id' or a->>'lead_id' is distinct from b->>'lead_id' or a->>'location_id' is distinct from b->>'location_id' or a->>'obligation_id' is distinct from b->>'obligation_id') then raise exception 'Work history cannot be moved to an unrelated record';end if;
+ elsif tg_table_name='crm_lead_bonus' then
+  if a->>'status' in ('approved','paid') and not exists(select 1 from public.location_pipeline_leads l where l.id=(a->>'lead_id')::uuid and l.status in ('accepted','machine_placed') and not l.is_practice) then raise exception 'Approve bonuses only for accepted real locations';end if;
+ elsif tg_table_name='location_admin_obligations' then
+  assignee:=(a->>'assigned_to')::uuid;
+  if not exists(select 1 from public.team_members t where t.id=assignee and t.active and t.active_status='active' and (t.role::text in ('owner','admin','supervisor','crm') or t.roles::text[]&&array['owner','admin','supervisor','crm'])) then raise exception 'Choose an active customer-relations employee for the obligation';end if;
+  if a->>'finance_transaction_id' is not null and (b is null or a->>'finance_transaction_id' is distinct from b->>'finance_transaction_id') then
+   perform 1 from public.financial_transactions f where f.id=(a->>'finance_transaction_id')::uuid and f.direction='money_out' and f.currency='LYD' and f.amount=(a->>'amount_lyd')::numeric and f.related_location_id=(a->>'location_id')::uuid and f.transaction_date=(a->>'payment_date')::date and f.transaction_status='active' and not coalesce(f.is_void,false) and f.voided_at is null and not coalesce(f.needs_review,true) for update;
+   if not found then raise exception 'Matching Finance payment changed; verification stopped';end if;
+  end if;
+ end if;
+ return new;
+end;
+$;
+
 create or replace function crm_dispatch_private.guard_task()
 returns trigger
 language plpgsql
