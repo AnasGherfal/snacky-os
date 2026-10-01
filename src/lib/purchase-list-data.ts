@@ -109,7 +109,10 @@ export async function loadPurchaseListData(supabase: SupabaseLike, coverageTarge
   let scheduledDemandRows: PurchaseListScheduledDemandRow[] = [];
   let scheduledSiteDemand: PurchaseListLoadResult["scheduledSiteDemand"] = null;
   try {
-    const scheduled = await readClient.rpc("snacky_purchase_scheduled_site_demand_v1", {
+    // This RPC deliberately checks the signed-in user's purchasing role.
+    // Keep it on the authenticated client even though bulk product/storage reads
+    // use the admin client to avoid RLS paging overhead.
+    const scheduled = await supabase.rpc("snacky_purchase_scheduled_site_demand_v1", {
       p_vms_machine_id: "2511001702",
       p_coverage_days: coverageTargetDays,
       p_previous_start: previousPeriod?.start ?? null,
