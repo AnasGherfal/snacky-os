@@ -47,12 +47,27 @@ test("retries are idempotent by pickup batch and payload hash", () => {
   assert.match(source, /route-supplemental:%s:%s:%s/i);
 });
 
-test("operator API exposes the additional delta separately from prior pickup", () => {
+test("operator API exposes only true post-pickup plan increases as supplemental", () => {
   assert.match(api, /already_picked_qty/);
   assert.match(api, /additional_pickup_qty/);
   assert.match(api, /physical_storage_available_qty/);
-  assert.match(api, /supplementalMode/);
-  assert.match(api, /plannedQty - alreadyPickedQty/);
+  assert.match(api, /originalPlannedQuantity/);
+  assert.match(api, /originalPickedQuantity/);
+  assert.match(api, /originalShortfallQty/);
+  assert.match(api, /pickupCoveredPlanQty = alreadyPickedQty \+ originalShortfallQty/);
+  assert.match(api, /plannedQty - pickupCoveredPlanQty/);
+});
+
+test("partial original pickup stays in the normal remaining-pickup flow", () => {
+  assert.match(api, /remainingPickupMode = pendingStopCount > 0 && hasAnyConfirmedPickup/);
+  assert.match(api, /supplementalMode = pendingStopCount === 0 && hasAnyConfirmedPickup && supplementalPendingItems\.length > 0/);
+  assert.match(api, /stopGroups\.filter\(\(group: any\) => String\(group\.stop_status \?\? ""\) === ROUTE_STOP_PENDING_STATUS\)/);
+  assert.match(api, /stopGroups: visibleStopGroups/);
+  assert.match(api, /extraItems: remainingPickupMode \? \[\] : extraItems/);
+  assert.match(ui, /remainingPickupMode/);
+  assert.match(ui, /Continue route pickup/);
+  assert.match(ui, /Confirm remaining pickup/);
+  assert.match(ui, /nextSupplementalMode \|\| nextRemainingPickupMode/);
 });
 
 test("operator UI confirms supplemental quantities through the isolated action", () => {
