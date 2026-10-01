@@ -105,7 +105,44 @@ export function CashRemovalBoxPlanner({
 
   return (
     <div className="space-y-5">
-      <input type="hidden" name="cash_removal_plan" value={JSON.stringify(plan)} />
+      <textarea
+        hidden
+        aria-hidden="true"
+        tabIndex={-1}
+        name="cash_removal_plan"
+        value={JSON.stringify(plan)}
+        onChange={(event) => {
+          try {
+            const parsed = JSON.parse(event.target.value) as {
+              boxes?: Array<{
+                box_key?: string;
+                cash_bag_id?: string;
+                machines?: Array<{ machine_id?: string; removed_amount_lyd?: string }>;
+              }>;
+            };
+            if (!Array.isArray(parsed.boxes) || parsed.boxes.length < 1) return;
+            const nextBoxes: CashBoxDraft[] = [];
+            const nextSelected: Record<string, SelectedMachine> = {};
+            for (const candidate of parsed.boxes) {
+              const key = String(candidate.box_key ?? "").trim();
+              if (!key || nextBoxes.some((box) => box.key === key) || !Array.isArray(candidate.machines)) return;
+              nextBoxes.push({ key, bagId: String(candidate.cash_bag_id ?? "").trim().toUpperCase() });
+              for (const machine of candidate.machines) {
+                const machineId = String(machine.machine_id ?? "").trim();
+                if (!machineId || nextSelected[machineId]) return;
+                nextSelected[machineId] = {
+                  amountLyd: String(machine.removed_amount_lyd ?? "").trim(),
+                  boxKey: key,
+                };
+              }
+            }
+            setBoxes(nextBoxes);
+            setSelected(nextSelected);
+          } catch {
+            // Ignore malformed local draft text; the server validates the submitted plan.
+          }
+        }}
+      />
 
       <div>
         <div className="text-sm font-semibold text-slate-900">Machines and removed amounts</div>
