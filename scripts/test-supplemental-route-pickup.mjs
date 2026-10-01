@@ -64,6 +64,7 @@ test("partial original pickup stays in the normal remaining-pickup flow", () => 
   assert.match(api, /stopGroups\.filter\(\(group: any\) => String\(group\.stop_status \?\? ""\) === ROUTE_STOP_PENDING_STATUS\)/);
   assert.match(api, /stopGroups: visibleStopGroups/);
   assert.match(api, /extraItems: remainingPickupMode \? \[\] : extraItems/);
+  assert.match(api, /availableStorageQty: remainingPickupMode \|\| supplementalMode/);
   assert.match(ui, /remainingPickupMode/);
   assert.match(ui, /Continue route pickup/);
   assert.match(ui, /Confirm remaining pickup/);
