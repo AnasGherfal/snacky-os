@@ -50,8 +50,8 @@ export async function setXySlotProduct(args: {
   vmsMachineId: string;
   slotCode: string;
   vmsProductId: string;
-  productName: string;
   priceLyd: number;
+  stockQty: number;
 }) {
   const config = getXyVmsConfig();
   if (!config.ready) throw new Error(`XY VMS API is not ready: ${config.missing.join(", ")}.`);
@@ -61,8 +61,8 @@ export async function setXySlotProduct(args: {
     vmsMachineId: args.vmsMachineId,
     slotCode: args.slotCode,
     vmsProductId: args.vmsProductId,
-    productName: args.productName,
     priceLyd: args.priceLyd,
+    stockQty: args.stockQty,
   });
   const timestamp = Date.now().toString().padStart(13, "0");
   const body = config.includeAuthFields
@@ -107,6 +107,7 @@ export async function verifyXySlot(args: {
   slotCode: string;
   expectedVmsProductId: string;
   expectedPriceLyd: number;
+  expectedStockQty: number;
 }) {
   let lastState: XySlotState | null = null;
   for (const delayMs of [0, 800, 1600, 2600]) {
@@ -117,7 +118,8 @@ export async function verifyXySlot(args: {
 
     const productMatches = String(lastState.vmsProductId ?? "") === String(args.expectedVmsProductId);
     const priceMatches = lastState.priceLyd !== null && Math.abs(lastState.priceLyd - args.expectedPriceLyd) < 0.001;
-    if (productMatches && priceMatches) return { verified: true, state: lastState };
+    const stockMatches = lastState.currentQty !== null && Number(lastState.currentQty) === Number(args.expectedStockQty);
+    if (productMatches && priceMatches && stockMatches) return { verified: true, state: lastState };
   }
   return { verified: false, state: lastState };
 }

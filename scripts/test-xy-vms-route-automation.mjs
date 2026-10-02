@@ -95,8 +95,8 @@ test("XY slot writes use the vendor-verified signed fields and fail closed on re
   assert.match(xyControlSource, /vmsMachineId: args\.vmsMachineId/);
   assert.match(xyControlSource, /slotCode: args\.slotCode/);
   assert.match(xyControlSource, /vmsProductId: args\.vmsProductId/);
-  assert.match(xyControlSource, /productName: args\.productName/);
   assert.match(xyControlSource, /priceLyd: args\.priceLyd/);
+  assert.match(xyControlSource, /stockQty: args\.stockQty/);
   assert.match(xyControlSource, /XY_SLOT_PRODUCT_WRITE_ENDPOINT/);
   assert.match(xyControlSource, /accepted: response\.ok && String\(code \?\? ""\) === "1"/);
   assert.match(xySlotProductRouteSource, /if \(!write\.accepted\)/);

@@ -116,13 +116,20 @@ export async function POST(
   if (!slotA.priceLyd || !slotB.priceLyd) {
     return NextResponse.json({ success: false, error: "Both slots need a valid XY selling price before they can be swapped." }, { status: 409 });
   }
+  if (
+    slotA.currentQty === null || slotB.currentQty === null
+    || !Number.isSafeInteger(Number(slotA.currentQty)) || Number(slotA.currentQty) < 0
+    || !Number.isSafeInteger(Number(slotB.currentQty)) || Number(slotB.currentQty) < 0
+  ) {
+    return NextResponse.json({ success: false, error: "Both slots need a reliable current XY stock quantity before they can be swapped." }, { status: 409 });
+  }
 
   const firstWrite = await setXySlotProduct({
     vmsMachineId,
     slotCode: slotCodeA,
     vmsProductId: slotB.vmsProductId,
-    productName: slotB.productName ?? slotB.vmsProductId,
     priceLyd: slotB.priceLyd,
+    stockQty: Number(slotA.currentQty),
   });
   if (!firstWrite.accepted) {
     await writeAudit({
@@ -162,6 +169,7 @@ export async function POST(
     slotCode: slotCodeA,
     expectedVmsProductId: slotB.vmsProductId,
     expectedPriceLyd: slotB.priceLyd,
+    expectedStockQty: Number(slotA.currentQty),
   });
 
   if (!firstVerification.verified) {
@@ -196,8 +204,8 @@ export async function POST(
     vmsMachineId,
     slotCode: slotCodeB,
     vmsProductId: slotA.vmsProductId,
-    productName: slotA.productName ?? slotA.vmsProductId,
     priceLyd: slotA.priceLyd,
+    stockQty: Number(slotB.currentQty),
   });
   const secondVerification = secondWrite.accepted
     ? await verifyXySlot({
@@ -205,6 +213,7 @@ export async function POST(
         slotCode: slotCodeB,
         expectedVmsProductId: slotA.vmsProductId,
         expectedPriceLyd: slotA.priceLyd,
+        expectedStockQty: Number(slotA.currentQty),
       })
     : { verified: false, state: slotB };
 

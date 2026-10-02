@@ -12,8 +12,8 @@ async function probe(path: string) {
     vmsMachineId: "SNACKY_CONTRACT_PROBE_INVALID_MACHINE",
     slotCode: "SNACKY_PROBE_INVALID_SLOT",
     vmsProductId: "SNACKY_PROBE_INVALID_PRODUCT",
-    productName: "SNACKY CONTRACT PROBE",
     priceLyd: 0.01,
+    stockQty: 0,
   });
   const body = config.includeAuthFields
     ? {
