@@ -16,7 +16,7 @@ test('quick issue intake checks likely duplicates and requires an explicit separ
  assert.match(form,/issueIntake = action === 'issue\.save' && !recordId/);
  assert.match(form,/\/api\/crm\/issue-duplicates/);
  assert.match(form,/Possible existing issue/);
- assert.match(form,/Create another issue anyway/);
+ assert.match(form,/This is separate — create another issue/);
  assert.match(form,/duplicateBlocked/);
  assert.match(duplicateApi,/not\('status','in','\(resolved,closed\)'\)/);
  assert.match(duplicateApi,/gte\('created_at',since24\)/);
