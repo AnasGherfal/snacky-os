@@ -39,7 +39,16 @@ test('XY slot product writes use the Swagger slot-product/price endpoint',()=>{
 test('product change and swap both share the corrected fail-closed writer',()=>{
  assert.match(productRoute,/setXySlotProduct/);
  assert.match(productRoute,/XY_WRITE_REJECTED/);
- assert.match(swapRoute,/setXySlotProduct/);
+ assert.equal((productRoute.match(/stockQty:/g)??[]).length,1);
+ assert.equal((productRoute.match(/expectedStockQty:/g)??[]).length,1);
+ assert.equal((swapRoute.match(/setXySlotProduct\(/g)??[]).length,3);
+ assert.equal((swapRoute.match(/stockQty:/g)??[]).length,3);
+ assert.equal((swapRoute.match(/verifyXySlot\(/g)??[]).length,3);
+ assert.equal((swapRoute.match(/expectedStockQty:/g)??[]).length,3);
+ assert.doesNotMatch(swapRoute,/productName:/);
+ assert.match(swapRoute,/slotCode: slotCodeA,[\s\S]{0,160}stockQty: Number\(slotA\.currentQty\)/);
+ assert.match(swapRoute,/slotCode: slotCodeB,[\s\S]{0,160}stockQty: Number\(slotB\.currentQty\)/);
+ assert.match(swapRoute,/rollbackWrite[\s\S]{0,220}stockQty: Number\(slotA\.currentQty\)/);
  assert.match(swapRoute,/rollback/);
 });
 

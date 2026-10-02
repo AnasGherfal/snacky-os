@@ -213,7 +213,7 @@ export async function POST(
         slotCode: slotCodeB,
         expectedVmsProductId: slotA.vmsProductId,
         expectedPriceLyd: slotA.priceLyd,
-        expectedStockQty: Number(slotA.currentQty),
+        expectedStockQty: Number(slotB.currentQty),
       })
     : { verified: false, state: slotB };
 
@@ -225,8 +225,8 @@ export async function POST(
         vmsMachineId,
         slotCode: slotCodeA,
         vmsProductId: slotA.vmsProductId,
-        productName: slotA.productName ?? slotA.vmsProductId,
         priceLyd: slotA.priceLyd,
+        stockQty: Number(slotA.currentQty),
       });
       if (!rollbackWrite.accepted) throw new Error("XY rejected rollback");
       const rollback = await verifyXySlot({
@@ -234,6 +234,7 @@ export async function POST(
         slotCode: slotCodeA,
         expectedVmsProductId: slotA.vmsProductId,
         expectedPriceLyd: slotA.priceLyd,
+        expectedStockQty: Number(slotA.currentQty),
       });
       rollbackVerified = rollback.verified;
       rollbackState = rollback.state;
