@@ -236,6 +236,7 @@ export default async function VmsProductMappingPage({
     suggestedResult,
     ignoredResult,
     mappingsResult,
+    currentXyProductsResult,
   ] = await Promise.all([
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }),
     countByStatus("needs_review"),
@@ -243,6 +244,7 @@ export default async function VmsProductMappingPage({
     countByStatus("suggested"),
     countByStatus("ignored"),
     query.range(from, to),
+    supabase.from("latest_vms_stock_by_slot").select("vms_product_id").eq("source_provider","xy").not("vms_product_id","is",null).limit(5000),
   ]);
 
   const loadIssues: Array<[string, unknown]> = [
@@ -252,6 +254,7 @@ export default async function VmsProductMappingPage({
     ["vms_product_mappings.suggested_count", suggestedResult.error],
     ["vms_product_mappings.ignored_count", ignoredResult.error],
     ["vms_product_mappings.load_page", mappingsResult.error],
+    ["latest_vms_stock_by_slot.current_xy_products", currentXyProductsResult.error],
   ];
   const loadIssue = loadIssues.find(([, issue]) => Boolean(issue));
 
@@ -269,15 +272,18 @@ export default async function VmsProductMappingPage({
     return <ErrorState title="Could not load VMS mappings" body={mappingLoadErrorMessage(issue, queryName)} />;
   }
 
+  const currentXyProductIds=new Set((currentXyProductsResult.data??[]).map((row:any)=>String(row.vms_product_id??"").trim()).filter(Boolean));
   const rows = ((mappingsResult.data ?? []) as unknown as VmsProductMappingRow[]).map((row) => {
     const normalized=normalizeMappingRow(row,productById);
-    const suggestion=normalized.status==="needs_review"?suggestVmsProduct({
+    const isCurrentXyProduct=currentXyProductIds.has(String(normalized.vms_product_id??normalized.vms_product_code??"").trim());
+    const isPlaceholder=String(normalized.vms_product_id??normalized.vms_product_code??"").trim()==="0000";
+    const suggestion=normalized.status==="needs_review"&&isCurrentXyProduct&&!isPlaceholder?suggestVmsProduct({
       vmsProductId:normalized.vms_product_id??normalized.vms_product_code,
       vmsProductName:normalized.vms_product_name,
       thirdPartyProductId:normalized.vms_third_party_product_id,
       barcode:normalized.vms_barcode,
     },productRows):null;
-    return {...normalized,suggestion};
+    return {...normalized,suggestion,isCurrentXyProduct,isPlaceholder};
   });
   const count = mappingsResult.count ?? 0;
   const totalMappings = totalMappingsResult.count ?? 0;
@@ -285,6 +291,8 @@ export default async function VmsProductMappingPage({
   const confirmedCount = confirmedResult.count ?? 0;
   const suggestedCount = suggestedResult.count ?? 0;
   const ignoredCount = ignoredResult.count ?? 0;
+  const currentNeedsReviewCount=rows.filter((row:any)=>row.status==="needs_review"&&row.isCurrentXyProduct&&!row.isPlaceholder).length;
+  const catalogOnlyNeedsReviewCount=Math.max(0,needsReviewCount-currentNeedsReviewCount);
 
   logMappingLoadDebug({
     queryName: "loadVmsProductMappings",
@@ -303,7 +311,7 @@ export default async function VmsProductMappingPage({
       />
 
       <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-        Unmapped VMS products will not appear correctly in sales or refill recommendations.
+        Only unmapped XY products that are currently loaded in machine lanes need operational attention. Catalog-only products can stay unmapped until they are used again.
       </div>
 
       {error ? (
@@ -348,8 +356,9 @@ export default async function VmsProductMappingPage({
             <p className="text-sm text-slate-600">Suggested mappings are likely matches that still need a quick review.</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="needs_review" /><span className="text-lg font-semibold text-slate-900">{needsReviewCount ?? 0}</span></div>
-            <p className="text-sm text-slate-600">Needs Review entries are created from imported VMS product IDs or names that could not be matched.</p>
+            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="needs_review" /><span className="text-lg font-semibold text-slate-900">{currentNeedsReviewCount}</span></div>
+            <p className="text-sm text-slate-600">Current XY lane products that still need a Snacky mapping.</p>
+            {catalogOnlyNeedsReviewCount>0?<p className="mt-1 text-xs text-slate-500">{catalogOnlyNeedsReviewCount} additional catalog-only/unused entries are not blocking operations.</p>:null}
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="ignored" /><span className="text-lg font-semibold text-slate-900">{ignoredCount ?? 0}</span></div>
@@ -370,7 +379,7 @@ export default async function VmsProductMappingPage({
                 <td>{mapping.vms_product_code ?? mapping.vms_product_id ?? "-"}</td>
                 <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
                 <td>{mapping.product?.name ?? mapping.snacky_product_name ?? <span className="text-slate-400">Unmapped</span>}</td>
-                <td>{(mapping as any).suggestion?<div><div className="font-medium text-slate-900">{(mapping as any).suggestion.product.name}</div><div className="text-xs text-slate-500">{(mapping as any).suggestion.confidence}% · {(mapping as any).suggestion.reason}</div><Link className="mt-1 inline-block text-xs text-sky-800 underline" href={"/vms-mappings/"+mapping.id+"/edit?suggest="+(mapping as any).suggestion.product.id}>Review suggestion</Link></div>:mapping.status==="needs_review"?<span className="text-slate-400">No confident match</span>:"-"}</td>
+                <td>{(mapping as any).isPlaceholder?<span className="text-slate-400">XY placeholder — ignore</span>:!(mapping as any).isCurrentXyProduct&&mapping.status==="needs_review"?<span className="text-slate-400">Not in current machine lanes</span>:(mapping as any).suggestion?<div><div className="font-medium text-slate-900">{(mapping as any).suggestion.product.name}</div><div className="text-xs text-slate-500">{(mapping as any).suggestion.confidence}% · {(mapping as any).suggestion.reason}</div><Link className="mt-1 inline-block text-xs text-sky-800 underline" href={"/vms-mappings/"+mapping.id+"/edit?suggest="+(mapping as any).suggestion.product.id}>Review suggestion</Link></div>:mapping.status==="needs_review"?<span className="text-slate-400">No confident match</span>:"-"}</td>
                 <td>{formatMoney(mapping.vms_selling_price_lyd)}</td>
                 <td>{formatMoney(mapping.vms_cost_price_lyd, 4)}</td>
                 <td>{mapping.latest_machine_name ?? "-"}</td>

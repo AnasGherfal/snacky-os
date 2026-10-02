@@ -177,6 +177,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     needsReviewCount,
     mappedMachinesResult,
     liveStockMachinesResult,
+    currentUnmappedRowsResult,
   ] = await Promise.all([
     supabase
       .from("vms_sync_runs")
@@ -196,6 +197,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
     supabase.from("machines").select("id,name,machine_code,vms_machine_id,status,vms_last_synced_at,vms_online_status").not("vms_machine_id","is",null).order("name"),
     supabase.from("latest_vms_stock_by_slot").select("machine_id,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
+    supabase.from("latest_vms_stock_by_slot").select("vms_product_id").eq("source_provider","xy").not("vms_product_id","is",null).limit(5000),
   ]);
 
   const loadError =
@@ -206,7 +208,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     statusSnapshotCount.error ??
     needsReviewCount.error ??
     mappedMachinesResult.error ??
-    liveStockMachinesResult.error;
+    liveStockMachinesResult.error ??
+    currentUnmappedRowsResult.error;
 
   if (loadError) {
     console.error("[xy-vms-admin] Failed to load XY sync dashboard", loadError);
@@ -235,6 +238,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     return "Returned by XY but no usable configured stock lanes were present in the active snapshot.";
   };
   const latestXyStockAt=liveStockRows[0]?.captured_at??null;
+  const currentXyProductIds=Array.from(new Set((currentUnmappedRowsResult.data??[]).map((row:any)=>String(row.vms_product_id??"").trim()).filter(Boolean)));
+  const {count:currentUnmappedCount}=currentXyProductIds.length?await supabase.from("vms_product_mappings").select("id",{count:"exact",head:true}).eq("match_status","needs_review").in("vms_product_id",currentXyProductIds):{count:0};
   const machineCoverageLabel=`${liveStockMachineIds.size}/${mappedMachines.length}`;
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
   const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
@@ -315,7 +320,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div><div className="mt-2 text-xs font-medium text-amber-800">{diagnoseMissingStock(machine)}</div></div>)}</div>
           <p className="mt-3 text-xs text-amber-800">Check whether these machines are newly added/empty, no longer present in XY, or returning only unconfigured lanes before changing their Snacky status.</p>
         </div>:null}
-        {(needsReviewCount.count??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>{needsReviewCount.count} XY products need mapping</strong><p className="mt-1 text-xs text-amber-800">Unmapped XY products are not silently created in Snacky.</p></div><a className="btn-secondary" href="/vms-mappings">Review mappings</a></div>:null}
+        {(currentUnmappedCount??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>{currentUnmappedCount} current XY lane product{currentUnmappedCount===1?"":"s"} need mapping</strong><p className="mt-1 text-xs text-amber-800">{Math.max(0,(needsReviewCount.count??0)-(currentUnmappedCount??0))} catalog-only/unused mapping entries are not blocking current operations.</p></div><a className="btn-secondary" href="/vms-mappings?status=needs_review">Review current mappings</a></div>:null}
       </section>
 
       {!config.ready ? (
