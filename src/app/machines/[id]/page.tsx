@@ -97,9 +97,13 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
   const repeatTypes=[...repeatCounts.entries()].filter(([,count])=>count>=3).sort((a,b)=>b[1]-a[1]);
   const maintenanceIssues=openMachineIssues.filter((issue:any)=>["needs_technician","needs_part","machine_offline"].includes(String(latestFieldByIssue.get(String(issue.id))?.dispatch_state??"")));
   const lastFixed=fieldTasks.find((task:any)=>task.dispatch_state==="fixed"&&task.completed_at);
+  const xyOnline=String(machine.vms_online_status??"")==="1";
+  const xyConnected=Boolean(machine.vms_machine_id);
+  const xyLastContact=machine.last_vms_status_at??machine.vms_last_synced_at??null;
 
   return <div className="space-y-6">
     <PageHeader title={formatMachineDisplayName(machine, { includeArea: true })} subtitle={`${machine.machine_code} · ${formatSiteLabel(machine.location, { includeArea: true, fallback: "No site" })}`} breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: machine.machine_code }]} action={<div className="flex flex-wrap gap-2"><SecondaryButton href={`/cash-collections/new?machine_id=${id}`}>Remove cash</SecondaryButton><SecondaryButton href={`/machines/${id}/edit`}>Edit machine</SecondaryButton><SecondaryButton href="/machines">Back</SecondaryButton></div>} />
+    {xyConnected?<section className={"rounded-xl border p-4 "+(xyOnline?"border-emerald-200 bg-emerald-50":"border-amber-200 bg-amber-50")}><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">XY connection</h2><p className="mt-1 text-sm">{xyOnline?"Machine is reporting online to XY.":"Machine is currently reported offline by XY."}</p><p className="mt-1 text-xs text-slate-600">XY ID {machine.vms_machine_id} · Last status {time(xyLastContact)}</p></div><StatusBadge status={xyOnline?"active":"offline"} label={xyOnline?"XY Online":"XY Offline"}/></div>{machine.vms_temperature_raw?<p className="mt-2 text-xs text-slate-600">Temperature: {machine.vms_temperature_raw}{machine.vms_humidity_raw?" · Humidity: "+machine.vms_humidity_raw:""}</p>:null}</section>:null}
     {(stopsError || routesResult.error) ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some machine history could not load.</div> : null}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Routes</div><div className="mt-1 text-2xl font-semibold">{routes.length}</div></div></SectionCard>

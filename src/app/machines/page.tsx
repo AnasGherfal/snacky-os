@@ -34,6 +34,13 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
 
   const missingSiteCount=(data??[]).filter((m:any)=>!m.location_id).length;
 
+  const xyState=(m:any)=>{
+    if(!m.vms_machine_id)return {label:"No XY",status:"not_connected"};
+    if(!m.last_vms_status_at&&!m.vms_last_synced_at)return {label:"Never synced",status:"needs_review"};
+    const online=String(m.vms_online_status??"")==="1";
+    return {label:online?"XY Online":"XY Offline",status:online?"active":"offline"};
+  };
+
   return <><PageHeader title="Machines" subtitle="Machine master records, targets, and installation context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{"Machine setup"+(missingSiteCount?" · "+missingSiteCount+" missing site":"")}</SecondaryButton><PrimaryButton href="/machines/new">Add machine</PrimaryButton></div>} />
     <form className="mb-4 flex flex-wrap gap-2">
       <input type="hidden" name="pageSize" value={pageSize} />
@@ -42,7 +49,7 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
     </form>
     {!data?.length ? <EmptyState title="No machines yet" body="Create your first machine to start refill and route planning." /> :
       <>
-        <DataTable headers={["Code","Machine","Type","Site","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium"><div>{formatMachineDisplayName(m, { includeArea: false })}</div><div className="text-xs text-slate-500">{m.vms_machine_id || "No VMS ID"}</div></td><td>{m.machine_type}</td><td>{formatSiteLabel(m.locations, { includeArea: true, fallback: "-" })}</td><td><StatusBadge status={m.status} /></td><td><div className="flex flex-wrap gap-2"><Link href={`/machines/${m.id}`} className="link-secondary">History</Link><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></div></td></tr>)}</DataTable>
+        <DataTable headers={["Code","Machine","Type","Site","Snacky","XY status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium"><div>{formatMachineDisplayName(m, { includeArea: false })}</div><div className="text-xs text-slate-500">{m.vms_machine_id || "No VMS ID"}</div></td><td>{m.machine_type}</td><td>{formatSiteLabel(m.locations, { includeArea: true, fallback: "-" })}</td><td><StatusBadge status={m.status} /></td><td><div><StatusBadge status={xyState(m).status} label={xyState(m).label}/><div className="mt-1 text-xs text-slate-500">{m.last_vms_status_at?new Date(m.last_vms_status_at).toLocaleString("en-US"):(m.vms_last_synced_at?new Date(m.vms_last_synced_at).toLocaleString("en-US"):"No XY contact")}</div></div></td><td><div className="flex flex-wrap gap-2"><Link href={`/machines/${m.id}`} className="link-secondary">History</Link><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></div></td></tr>)}</DataTable>
         <PaginationControls basePath="/machines" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="machines" />
       </>}
   </>;

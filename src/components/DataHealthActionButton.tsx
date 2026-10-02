@@ -3,7 +3,7 @@
 import {useState} from 'react';
 import {useRouter} from 'next/navigation';
 
-type ActionName='scan_negative_inventory'|'cancel_stale_refill'|'archive_vms_batch'|'classify_legacy_cash'|'unclassify_legacy_cash'|'resolve_inventory_case';
+type ActionName='scan_negative_inventory'|'cancel_stale_refill'|'archive_vms_batch'|'classify_legacy_cash'|'unclassify_legacy_cash'|'resolve_inventory_case'|'bulk_cancel_stale_refills'|'bulk_archive_vms_batches';
 
 export function DataHealthActionButton({action,targetId,label,defaultReason='',requiresReason=true,tone='secondary'}:{
  action:ActionName;targetId?:string|null;label:string;defaultReason?:string;requiresReason?:boolean;tone?:'primary'|'secondary';

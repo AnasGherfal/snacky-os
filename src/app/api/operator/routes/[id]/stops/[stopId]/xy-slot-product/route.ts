@@ -101,6 +101,15 @@ export async function POST(
     return NextResponse.json({ success: false, error: "XY no longer reports that slot. Refresh the machine layout." }, { status: 409 });
   }
 
+  const currentStockQty = beforeSlot.currentQty;
+  if (currentStockQty === null || !Number.isSafeInteger(Number(currentStockQty)) || Number(currentStockQty) < 0) {
+    return NextResponse.json({
+      success: false,
+      code: "MISSING_XY_STOCK_QTY",
+      error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
+    }, { status: 409 });
+  }
+
   const targetVmsProductId = String(mapping.vms_product_id);
   const machinePrices = Array.from(new Set(
     beforeLayout
@@ -145,6 +154,7 @@ export async function POST(
     slotCode,
     vmsProductId: targetVmsProductId,
     priceLyd,
+    stockQty: Number(currentStockQty),
   });
 
   if (!write.accepted) {
@@ -169,6 +179,7 @@ export async function POST(
         xy_http_status: write.httpStatus,
         xy_code: write.code,
         xy_message: write.message,
+        xy_stock_qty_sent: Number(currentStockQty),
         accepted: false,
       },
       summary: `XY rejected slot ${slotCode} product change before machine verification`,
@@ -193,6 +204,7 @@ export async function POST(
     slotCode,
     expectedVmsProductId: targetVmsProductId,
     expectedPriceLyd: priceLyd,
+    expectedStockQty: Number(currentStockQty),
   });
 
   await admin.from("system_activity_logs").insert({
@@ -221,6 +233,7 @@ export async function POST(
       xy_http_status: write.httpStatus,
       xy_code: write.code,
       xy_message: write.message,
+      xy_stock_qty_sent: Number(currentStockQty),
       verified: verification.verified,
     },
     summary: `XY slot ${slotCode}: ${beforeSlot.productName ?? beforeSlot.vmsProductId ?? "empty"} → ${product.name}`,

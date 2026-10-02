@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
+import { ensureFreshXyRoutePlanningData, syncXyMachineStatus } from "@/lib/xy-vms-sync";
 import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +46,16 @@ async function refreshXy(request: NextRequest) {
 
   try {
     const result = await ensureFreshXyRoutePlanningData();
+    let machineStatusSync:{status?:string;error?:string;skipped?:boolean;reason?:string}={skipped:true,reason:"Planning refresh still running."};
+    if(result.outcome!=="in_progress"){
+      try{
+        const statusResult=await syncXyMachineStatus();
+        machineStatusSync={status:statusResult.status};
+      }catch(error){
+        console.warn("[xy-cron] Machine status refresh failed; stock refresh result remains valid.",error);
+        machineStatusSync={error:error instanceof Error?error.message:"Machine status refresh failed."};
+      }
+    }
     const automation = ["refreshed", "already_fresh"].includes(result.outcome)
       ? await runRefillRouteAutomation()
       : { skipped: true, reason: `XY planning data is ${result.outcome}.` };
@@ -64,6 +74,7 @@ async function refreshXy(request: NextRequest) {
       skipped: result.skipped,
       results: result.results,
       refillRouteAutomation: automation,
+      machineStatusSync,
     }, {
       status,
       headers: { "Cache-Control": "no-store" },
