@@ -1,5 +1,6 @@
 import "server-only";
-import { buildXySign, callXyApi, getXyVmsConfig, normalizeXyApiResponse, type XyVmsParams } from "@/lib/xy-vms-api";
+import { buildXySign, callXyApi, getXyVmsConfig, normalizeXyApiResponse } from "@/lib/xy-vms-api";
+import { buildXySlotProductWriteParams, XY_SLOT_PRODUCT_WRITE_ENDPOINT } from "@/lib/xy-slot-write-contract";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -12,12 +13,6 @@ export type XySlotState = {
   capacity: number | null;
 };
 
-function cleanParams(params: XyVmsParams) {
-  return Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== null && value !== undefined && !(typeof value === "string" && value.trim() === "")),
-  ) as Record<string, string | number | boolean>;
-}
-
 function rowsFromData(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((row) => row && typeof row === "object") as JsonRecord[];
   if (value && typeof value === "object") {
@@ -27,10 +22,6 @@ function rowsFromData(value: unknown): JsonRecord[] {
     }
   }
   return [];
-}
-
-function toMinorUnits(priceLyd: number) {
-  return Math.round(priceLyd * 100);
 }
 
 export async function readXyMachineLayout(vmsMachineId: string): Promise<XySlotState[]> {
@@ -65,13 +56,13 @@ export async function setXySlotProduct(args: {
   const config = getXyVmsConfig();
   if (!config.ready) throw new Error(`XY VMS API is not ready: ${config.missing.join(", ")}.`);
 
-  const businessParams = cleanParams({
-    shbh: config.merchantId,
-    jqbh: args.vmsMachineId,
-    hdbh: args.slotCode,
-    spbh: args.vmsProductId,
-    spmc: args.productName,
-    spjg: toMinorUnits(args.priceLyd),
+  const businessParams = buildXySlotProductWriteParams({
+    merchantId: config.merchantId,
+    vmsMachineId: args.vmsMachineId,
+    slotCode: args.slotCode,
+    vmsProductId: args.vmsProductId,
+    productName: args.productName,
+    priceLyd: args.priceLyd,
   });
   const timestamp = Date.now().toString().padStart(13, "0");
   const body = config.includeAuthFields
@@ -83,7 +74,7 @@ export async function setXySlotProduct(args: {
       }
     : businessParams;
 
-  const response = await fetch(`${config.baseUrl}/addInstructionSpxxByApi`, {
+  const response = await fetch(`${config.baseUrl}/${XY_SLOT_PRODUCT_WRITE_ENDPOINT}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
