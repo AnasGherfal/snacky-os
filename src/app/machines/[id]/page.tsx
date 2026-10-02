@@ -50,16 +50,26 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
     }
   }
   const routeIds = Array.from(new Set(stops.map((row: any) => row.route_id).filter(Boolean)));
-  const [routesResult, fillsResult, salesResult, adjustmentsResult, cashResult, movementsResult] = await Promise.all([
+  const [routesResult, fillsResult, salesResult, adjustmentsResult, cashResult, movementsResult, issuesResult] = await Promise.all([
     routeIds.length ? client.from("routes").select("id, route_date, status, operator_id, created_at, started_at, completed_at").in("id", routeIds).order("route_date", { ascending: false }).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
     client.from("route_stop_fill_lines").select("id, route_id, product_id, substitute_product_id, missing_product_name, actual_qty, action_type, created_at, product:products!route_stop_fill_lines_product_id_fkey(name)").eq("machine_id", id).order("created_at", { ascending: false }).limit(500),
     client.from("route_manual_sales").select("id, route_id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status").eq("machine_id", id).order("sale_time", { ascending: false }).limit(500),
     client.from("inventory_adjustments").select("id, route_id, adjustment_type, product_name, quantity, reason, notes, status, created_at").eq("machine_id", id).neq("status", "cancelled").order("created_at", { ascending: false }).limit(500),
     loadMachineCashHistory(client, id),
     client.from("inventory_movements").select("id, related_route_id, quantity, reason, movement_type, from_entity_type, to_entity_type, created_at, product:products(name)").eq("related_machine_id", id).order("created_at", { ascending: false }).limit(500),
+    client.from("issues").select("id, issue_type, priority, status, description, created_at, resolved_at, resolution").eq("machine_id", id).is("archived_at", null).order("created_at", { ascending: false }).limit(250),
   ]);
   const routes = routesResult.data ?? [];
-  const operatorIds = Array.from(new Set(routes.map((route: any) => route.operator_id).filter(Boolean)));
+  const machineIssues = issuesResult.error ? [] : (issuesResult.data ?? []);
+  const issueIds = machineIssues.map((issue: any) => issue.id).filter(Boolean);
+  const fieldTasksResult = issueIds.length
+    ? await client.from("crm_tasks").select("id,issue_id,assigned_to,completed_by,dispatch_state,status,created_at,work_started_at,completed_at,result").in("issue_id",issueIds).eq("task_type","field_action").is("archived_at",null).order("created_at",{ascending:false}).limit(500)
+    : {data:[],error:null};
+  const fieldTasks = fieldTasksResult.error ? [] : (fieldTasksResult.data ?? []);
+  const operatorIds = Array.from(new Set([
+    ...routes.map((route: any) => route.operator_id),
+    ...fieldTasks.flatMap((task: any) => [task.assigned_to,task.completed_by]),
+  ].filter(Boolean)));
   const { data: operators } = operatorIds.length ? await client.from("team_members").select("id, full_name").in("id", operatorIds) : { data: [] };
   const operatorById = new Map((operators ?? []).map((row: any) => [row.id, row]));
   const stopByRouteId = new Map((stops ?? []).map((row: any) => [row.route_id, row]));
@@ -79,6 +89,14 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
   });
   const filledByProduct = new Map<string, number>();
   fills.forEach((row: any) => { const name = row.product?.name ?? row.missing_product_name ?? "Unknown product"; filledByProduct.set(name, (filledByProduct.get(name) ?? 0) + Number(row.actual_qty ?? 0)); });
+  const latestFieldByIssue = new Map<string, any>();
+  for(const task of fieldTasks){const key=String(task.issue_id??"");if(key&&!latestFieldByIssue.has(key))latestFieldByIssue.set(key,task);}
+  const openMachineIssues=machineIssues.filter((issue:any)=>!["resolved","closed"].includes(String(issue.status??"")));
+  const repeatCounts=new Map<string,number>();
+  for(const issue of machineIssues){const key=String(issue.issue_type??"other");repeatCounts.set(key,(repeatCounts.get(key)??0)+1);}
+  const repeatTypes=[...repeatCounts.entries()].filter(([,count])=>count>=3).sort((a,b)=>b[1]-a[1]);
+  const maintenanceIssues=openMachineIssues.filter((issue:any)=>["needs_technician","needs_part","machine_offline"].includes(String(latestFieldByIssue.get(String(issue.id))?.dispatch_state??"")));
+  const lastFixed=fieldTasks.find((task:any)=>task.dispatch_state==="fixed"&&task.completed_at);
 
   return <div className="space-y-6">
     <PageHeader title={formatMachineDisplayName(machine, { includeArea: true })} subtitle={`${machine.machine_code} · ${formatSiteLabel(machine.location, { includeArea: true, fallback: "No site" })}`} breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: machine.machine_code }]} action={<div className="flex flex-wrap gap-2"><SecondaryButton href={`/cash-collections/new?machine_id=${id}`}>Remove cash</SecondaryButton><SecondaryButton href={`/machines/${id}/edit`}>Edit machine</SecondaryButton><SecondaryButton href="/machines">Back</SecondaryButton></div>} />
@@ -90,6 +108,28 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Damaged / returned</div><div className="mt-1 text-2xl font-semibold">{sum(damaged, "quantity")} / {sum(returned, "quantity")}</div></div></SectionCard>
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Machine storage</div><div className="mt-1 text-2xl font-semibold">{sum(machineStorage, "quantity")}</div></div></SectionCard>
     </div>
+
+    <section className="surface-card p-4">
+      <div className="mb-4"><h2 className="text-lg font-semibold">Machine service history</h2><p className="mt-1 text-sm text-slate-500">Customer-reported machine problems, operator visits, diagnoses, repairs and unresolved maintenance stay attached to this physical machine.</p></div>
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Open issues</div><strong className="mt-1 block text-2xl">{openMachineIssues.length}</strong></div>
+        <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Repeated problem types</div><strong className="mt-1 block text-2xl">{repeatTypes.length}</strong>{repeatTypes.length?<p className="mt-1 text-xs text-amber-700">{repeatTypes.slice(0,2).map(([type,count])=>`${type} ×${count}`).join(" · ")}</p>:null}</div>
+        <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Waiting technician / part</div><strong className="mt-1 block text-2xl">{maintenanceIssues.length}</strong></div>
+        <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Last repair</div><strong className="mt-1 block text-sm">{lastFixed?.completed_at?time(lastFixed.completed_at):"No completed repair yet"}</strong></div>
+      </div>
+      {!machineIssues.length?<EmptyState title="No machine issues yet" body="Customer and field issue history will appear here."/>:
+       <DataTable headers={["Reported","Problem","Operator","Outcome","Completed","Result","Issue"]}>
+        {machineIssues.map((issue:any)=>{const task=latestFieldByIssue.get(String(issue.id));const operator=operatorById.get(task?.completed_by??task?.assigned_to);return <tr key={issue.id}>
+         <td>{time(issue.created_at)}</td>
+         <td><div className="font-medium">{issue.issue_type}</div><div className="max-w-xs text-xs text-slate-500">{issue.description??"-"}</div></td>
+         <td>{operator?.full_name??"-"}</td>
+         <td><StatusBadge status={task?.dispatch_state??issue.status}/></td>
+         <td>{time(task?.completed_at??issue.resolved_at)}</td>
+         <td><div className="max-w-xs text-sm">{task?.result??issue.resolution??"-"}</div></td>
+         <td><Link className="link-secondary" href={`/issues/${issue.id}`}>Open</Link></td>
+        </tr>})}
+       </DataTable>}
+    </section>
 
     <section className="surface-card p-4"><h2 className="text-lg font-semibold">Route history</h2>{!routes.length ? <EmptyState title="No routes" body="No route has visited this machine yet." /> : <DataTable headers={["Date & time", "Operator", "Stop", "Status", "Route"]}>{routes.map((route: any) => <tr key={route.id}><td><div>{route.route_date}</div><div className="text-xs text-slate-500">{time(route.created_at)}</div></td><td>{operatorById.get(route.operator_id)?.full_name ? <Link className="link-secondary" href={`/team/${route.operator_id}`}>{operatorById.get(route.operator_id)?.full_name}</Link> : "-"}</td><td>{stopByRouteId.get(route.id)?.stop_order ?? "-"}</td><td><StatusBadge status={route.status} /></td><td><Link className="link-secondary" href={`/routes/${route.id}`}>Open route</Link></td></tr>)}</DataTable>}</section>
 

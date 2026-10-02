@@ -41,3 +41,28 @@ export function OperatorIssueClaimButton({taskId,ar=false}:{taskId:string;ar?:bo
  }
  return <div className="space-y-2"><button className="btn-primary min-h-11" disabled={busy} onClick={()=>void claim()}>{busy?(ar?'جارٍ الاستلام…':'Claiming…'):(ar?'استلام البلاغ':'Claim issue')}</button>{error?<p role="alert" className="text-xs text-rose-700">{error}</p>:null}</div>;
 }
+
+
+export function OperatorIssueReleaseButton({taskId,ar=false}:{taskId:string;ar?:boolean}){
+ const router=useRouter();
+ const [open,setOpen]=useState(false),[reason,setReason]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ async function release(){
+  if(busy||reason.trim().length<3)return;
+  setBusy(true);setError('');
+  try{
+   const response=await fetch('/api/crm/field-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'release',task_id:taskId,payload:{reason:reason.trim()}})});
+   const result=await response.json();
+   if(!response.ok||result?.ok!==true){setError(result?.message||(ar?'تعذر إعادة البلاغ للقائمة.':'Could not return the issue to the shared queue.'));return;}
+   setReason('');setOpen(false);router.refresh();
+  }catch{setError(ar?'تعذر الاتصال حالياً.':'Could not connect right now.');}
+  finally{setBusy(false);}
+ }
+ return <div className="space-y-2">
+  {!open?<button type="button" className="btn-secondary min-h-11" disabled={busy} onClick={()=>{setError('');setOpen(true);}}>{ar?'إرجاع البلاغ للقائمة':'Release back to queue'}</button>:
+   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+    <label className="block text-sm font-medium text-amber-950">{ar?'لماذا لا يمكنك إكمال هذه الزيارة؟':'Why can’t you handle this visit?'}<textarea className="field-input mt-1" rows={2} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)} placeholder={ar?'مثال: لدي بلاغ عاجل آخر أو الموقع بعيد عن مساري الحالي':'Example: another urgent issue is active or the site is outside my current route'}/></label>
+    <div className="mt-2 flex flex-wrap gap-2"><button type="button" className="btn-primary" disabled={busy||reason.trim().length<3} onClick={()=>void release()}>{busy?(ar?'جارٍ الإرجاع…':'Releasing…'):(ar?'تأكيد الإرجاع':'Confirm release')}</button><button type="button" className="btn-secondary" disabled={busy} onClick={()=>{setOpen(false);setReason('');setError('');}}>{ar?'إلغاء':'Cancel'}</button></div>
+   </div>}
+  {error?<p role="alert" className="text-xs text-rose-700">{error}</p>:null}
+ </div>;
+}

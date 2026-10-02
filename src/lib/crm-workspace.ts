@@ -14,7 +14,24 @@ export const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 export function crmHref(kind:string,id?:string|null):string {const base=crmPaths[kind as CrmSection]??crmPaths.work;return id&&uuidPattern.test(id)?`${base}/${id}`:base;}
 export function crmPhone(value:unknown):string {let digits=String(value??'').replace(/[^0-9]/g,'');if(digits.startsWith('00'))digits=digits.slice(2);if(digits.length===10&&digits.startsWith('0'))digits=`218${digits.slice(1)}`;return digits;}
 export function crmContactLink(kind:'phone'|'whatsapp'|'email',value:unknown):string|null {const text=String(value??'').trim();if(!text)return null;if(kind==='email')return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)?`mailto:${encodeURIComponent(text)}`:null;const digits=crmPhone(text);return digits.length>=7&&digits.length<=15?(kind==='phone'?`tel:+${digits}`:`https://wa.me/${digits}`):null;}
-export function crmStatus(status:string,ar:boolean):string {const row=[...leadStatuses,...issueStatuses,...taskStatuses].find(r=>r[0]===status);if(row)return row[ar?2:1];const legacy:Record<string,[string,string]>={machine_placed:['Installed / operating','تم التركيب / التشغيل'],meeting_needed:['Meeting needed','يحتاج موعداً'],visited:['Visited','تمت الزيارة'],trial_contract:['Trial / contract','تجربة / عقد'],paid:['Reported paid','مسجّل كمدفوع'],not_applicable:['Not applicable','لا ينطبق'],cancelled:['Cancelled','ملغى'],active:['Active','فعّال'],closed:['Resolved','تم الحل']};return legacy[status]?.[ar?1:0]??status;}
+export function crmStatus(status:string,ar:boolean):string {const row=[...leadStatuses,...issueStatuses,...taskStatuses].find(r=>r[0]===status);if(row)return row[ar?2:1];const legacy:Record<string,[string,string]>={machine_placed:['Installed / operating','تم التركيب / التشغيل'],meeting_needed:['Meeting needed','يحتاج موعداً'],visited:['Visited','تمت الزيارة'],trial_contract:['Trial / contract','تجربة / عقد'],paid:['Reported paid','مسجّل كمدفوع'],not_applicable:['Not applicable','لا ينطبق'],cancelled:['Cancelled','ملغى'],active:['Active','فعّال'],closed:['Resolved','تم الحل'],waiting_operator:['Waiting for operator','بانتظار مشغّل'],claimed:['Claimed by operator','استلمها مشغّل'],on_the_way:['Operator on the way','المشغّل في الطريق'],working:['Operator working','المشغّل يعمل عليها'],blocked:['Field work blocked','العمل الميداني متوقف'],needs_technician:['Needs technician','تحتاج فني'],needs_part:['Needs spare part','تحتاج قطعة غيار'],machine_offline:['Machine offline','الماكينة خارج الخدمة'],waiting_crm:['Waiting for CRM verification','بانتظار تحقق علاقات العملاء']};return legacy[status]?.[ar?1:0]??status;}
+export function crmIssueOperationalStatus(issueStatus:string|null|undefined,dispatchState:string|null|undefined):string {
+ const issue=String(issueStatus??'open');
+ if(['resolved','closed'].includes(issue))return issue;
+ switch(String(dispatchState??'')){
+  case 'available': return 'waiting_operator';
+  case 'assigned':
+  case 'accepted': return 'claimed';
+  case 'en_route': return 'on_the_way';
+  case 'working': return 'working';
+  case 'blocked': return 'blocked';
+  case 'needs_technician': return 'needs_technician';
+  case 'needs_part': return 'needs_part';
+  case 'machine_offline': return 'machine_offline';
+  case 'fixed': return 'waiting_crm';
+  default: return issue;
+ }
+}
 export function crmOptionRows(rows:readonly (readonly [string,string,string])[],ar:boolean):CrmOption[]{return rows.map(row=>({value:row[0],label:row[ar?2:1]}));}
 const numericFields=new Set(['estimated_traffic','rent_expectation','amount_involved_lyd','refund_amount_lyd','amount_lyd']);
 const nullableFields=new Set(['machine_id','product_id','due_time','next_action_time','next_action_date','happened_at','existing_location_id','related_id','finance_transaction_id','google_maps_url','website',...numericFields]);

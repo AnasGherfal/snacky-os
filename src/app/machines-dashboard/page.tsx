@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ChartCard, HorizontalBarChart } from "@/components/DecisionCharts";
 import { KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
@@ -12,7 +13,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 export default async function MachinesDashboardPage() {
   await requireCurrentProfileForPath("/machines-dashboard");
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
-  const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult, batchResult] = supabase
+  const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult, batchResult, maintenanceResult] = supabase
     ? await Promise.all([
         safeSupabaseQuery<any>({
           label: "machines-dashboard.vms_sales_clean",
@@ -46,8 +47,12 @@ export default async function MachinesDashboardPage() {
           label: "machines-dashboard.vms_import_batches",
           promise: supabase.from("vms_import_batches").select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime, row_count, rows_found, rows_imported, error_count").in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"]).order("report_start_date", { ascending: true }),
         }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.maintenance_attention",
+          promise: supabase.rpc("snacky_machine_maintenance_attention_v1"),
+        }),
       ])
-    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: null, error: null }];
 
   const sales = ((salesResult.data ?? []) as any[]).map((row) => ({
     ...row,
@@ -61,6 +66,9 @@ export default async function MachinesDashboardPage() {
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.machine_id), (row) => String(row.machine_id));
   const issues = groupCount(((issuesResult.data ?? []) as any[]).filter((row) => row.machine_id), (row) => String(row.machine_id));
   const openIssues = groupCount(((issuesResult.data ?? []) as any[]).filter((row) => row.machine_id && row.status !== "resolved" && row.status !== "closed"), (row) => String(row.machine_id));
+  const maintenance = (maintenanceResult.data && typeof maintenanceResult.data === "object" ? maintenanceResult.data : {}) as any;
+  const maintenanceAttention = Array.isArray(maintenance.attention) ? maintenance.attention : [];
+  const machineNameById = new Map(machines.map((machine:any)=>[String(machine.id),String(machine.name??machine.machine_code??"Machine")]));
   const cashVariance = new Map<string, number>();
   ((cashResult.data ?? []) as any[]).forEach((row) => {
     if (!row.machine_id) return;
@@ -136,9 +144,31 @@ export default async function MachinesDashboardPage() {
           <KpiLoadWarning message={stockResult.error} />
           <KpiLoadWarning message={issuesResult.error} />
           <KpiLoadWarning message={cashResult.error} />
+          <KpiLoadWarning message={maintenanceResult.error} />
 
           {!machines.length ? <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." /> : null}
           {!sales.length ? <EmptyState title="No machine sales yet" body="VMS sales snapshots are required for sales, NSM, and profit metrics." /> : null}
+
+          <KpiSection title="Maintenance attention">
+            <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {[
+                ["Machines down",maintenance.machines_down??0],
+                ["Waiting technician / part",maintenance.waiting_maintenance??0],
+                ["Repeat failures · 30d",maintenance.repeat_failures??0],
+                ["Open >24h",maintenance.open_over_24h??0],
+                ["Repaired · 7d",maintenance.recently_repaired??0],
+              ].map(([label,value])=><div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">{label}</div><strong className="mt-1 block text-2xl">{Number(value)}</strong></div>)}
+            </div>
+            {!maintenanceAttention.length?<EmptyState title="No machines need maintenance attention" body="Down machines, recurring failures, unresolved maintenance and issues older than 24 hours will appear here."/>:
+             <DataTable headers={["Machine","Reason","Detail","Action"]}>
+              {maintenanceAttention.map((row:any,index:number)=><tr key={`${row.machine_id}-${row.reason}-${row.issue_id??index}`}>
+               <td className="font-medium">{machineNameById.get(String(row.machine_id))??"Machine"}</td>
+               <td><StatusBadge status={row.reason}/></td>
+               <td>{row.detail??"-"}</td>
+               <td><div className="flex flex-wrap gap-2"><Link className="link-secondary" href={`/machines/${row.machine_id}`}>Machine</Link>{row.issue_id?<Link className="link-secondary" href={`/issues/${row.issue_id}`}>Issue</Link>:null}</div></td>
+              </tr>)}
+             </DataTable>}
+          </KpiSection>
 
           <div className="grid gap-6 xl:grid-cols-2">
             <ChartCard title="Sales by machine" subtitle="Top machines ranked by VMS sales in the available data.">
