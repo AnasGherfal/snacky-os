@@ -14,6 +14,9 @@ test('owner data health separates current operational exceptions from legacy cle
   assert.match(health,/Old draft \/ preview batches/);
   assert.match(health,/current_inventory_by_location/);
   assert.match(health,/quantity_on_hand/);
+  assert.match(health,/hasAnyRole\(profile, \["owner", "admin"\]\)/);
+  assert.doesNotMatch(health,/\["owner", "admin", "supervisor"\]/);
+  assert.match(health,/\.in\("status", \["draft","assigned","picked"\]\)/);
 });
 
 test('machine setup assigns a real site and stores distance on the location',()=>{

@@ -21,7 +21,7 @@ function daysAgo(days: number) {
 
 export default async function OperationsHealthPage() {
   const profile = await getCurrentProfile();
-  if (!profile || profile.active_status !== "active" || !hasAnyRole(profile, ["owner", "admin", "supervisor"])) redirect("/unauthorized");
+  if (!profile || profile.active_status !== "active" || !hasAnyRole(profile, ["owner", "admin"])) redirect("/unauthorized");
   const db = getSupabaseAdminClient();
   if (!db) return <EmptyState title="Data Health unavailable" body="The server database connection is unavailable." />;
 
@@ -44,7 +44,7 @@ export default async function OperationsHealthPage() {
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status", "active").order("name"),
     db.from("current_inventory_by_location").select("product_id,product_name,location_type,location_id,location_name,quantity_on_hand").lt("quantity_on_hand", 0).order("quantity_on_hand", { ascending: true }).limit(100),
-    db.from("refill_orders").select("id,machine_id,status,generated_at,route_id,notes,machine:machines(name,machine_code)").not("status", "in", "(completed,cancelled)").lt("generated_at", staleRefillCutoff).order("generated_at", { ascending: true }).limit(100),
+    db.from("refill_orders").select("id,machine_id,status,generated_at,route_id,notes,machine:machines(name,machine_code)").in("status", ["draft","assigned","picked"]).lt("generated_at", staleRefillCutoff).order("generated_at", { ascending: true }).limit(100),
     db.from("cash_collections").select("id,machine_id,reconciliation_status,variance,collected_at,actual_cash_collected,vms_expected_cash").is("voided_at", null).in("reconciliation_status", ["pending","variance_review"]).gte("collected_at", cashCurrentCutoff).lt("collected_at", cashStaleCutoff).order("collected_at", { ascending: true }).limit(100),
     db.from("cash_collections").select("id,reconciliation_status,collected_at").is("voided_at", null).in("reconciliation_status", ["pending","variance_review"]).lt("collected_at", cashCurrentCutoff).order("collected_at", { ascending: true }).limit(500),
     db.from("vms_import_batches").select("id,file_name,original_file_name,report_type,status,error_count,rows_needing_review,latest_error,imported_at,uploaded_at,is_active,deleted_at").is("deleted_at", null).in("status", ["failed","partially_imported","imported_with_warnings"]).gte("uploaded_at", vmsRecentCutoff).order("uploaded_at", { ascending: false }).limit(100),
