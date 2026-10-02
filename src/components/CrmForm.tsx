@@ -6,6 +6,7 @@ import { useLanguage } from '@/components/I18nProvider';
 import { type CrmField, crmKinds, uuidPattern } from '@/lib/crm-workspace';
 
 type RequestReceipt = { id: string; action: string; recordId: string | null; values: Record<string, string> };
+type DuplicateIssue = { id:string; description?:string|null; created_at?:string|null; status?:string|null; machine?:{name?:string|null;machine_code?:string|null}|null };
 type Props = {
   action: string; recordId?: string | null; userId: string; fields: CrmField[];
   hidden?: Record<string, string>; submitLabel: string; stay?: boolean;
@@ -41,6 +42,11 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
   const [message, setMessage] = useState('');
   const lock = useRef(false);
   const storageAvailable = useRef(true);
+  const issueIntake = action === 'issue.save' && !recordId;
+  const [duplicates,setDuplicates] = useState<DuplicateIssue[]>([]);
+  const [repeatCount,setRepeatCount] = useState(0);
+  const [duplicateCheckBusy,setDuplicateCheckBusy] = useState(false);
+  const [duplicateAcknowledged,setDuplicateAcknowledged] = useState(false);
   const canAddAnother = stay && (action === 'note.add' || (!recordId && ['task.save', 'contact.save'].includes(action)));
 
   useEffect(() => {
@@ -55,6 +61,30 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
     // Parent identity, not changing field defaults, controls saved-command scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, action, recordId]);
+
+  useEffect(() => {
+    if(!issueIntake){setDuplicates([]);setRepeatCount(0);setDuplicateCheckBusy(false);setDuplicateAcknowledged(false);return;}
+    setDuplicateAcknowledged(false);
+    const locationId=values.location_id??'',machineId=values.machine_id??'',issueType=values.issue_type??'';
+    if(!uuidPattern.test(locationId)||!issueType){setDuplicates([]);setRepeatCount(0);setDuplicateCheckBusy(false);return;}
+    const controller=new AbortController();
+    const timer=setTimeout(async()=>{
+      setDuplicateCheckBusy(true);
+      try{
+        const params=new URLSearchParams({location_id:locationId,issue_type:issueType});
+        if(uuidPattern.test(machineId))params.set('machine_id',machineId);
+        const response=await fetch('/api/crm/issue-duplicates?'+params.toString(),{signal:controller.signal,headers:{Accept:'application/json'}});
+        const result=await response.json();
+        if(response.ok&&result?.ok===true){
+          setDuplicates(Array.isArray(result.duplicates)?result.duplicates:[]);
+          setRepeatCount(Number(result.repeat_count_30d??0));
+        }else{setDuplicates([]);setRepeatCount(0);}
+      }catch(error){
+        if((error as {name?:string})?.name!=='AbortError'){setDuplicates([]);setRepeatCount(0);}
+      }finally{if(!controller.signal.aborted)setDuplicateCheckBusy(false);}
+    },250);
+    return()=>{clearTimeout(timer);controller.abort();};
+  },[issueIntake,values.location_id,values.machine_id,values.issue_type]);
 
   function forget(id: string) {
     try { if (JSON.parse(localStorage.getItem(key) ?? 'null')?.id === id) localStorage.removeItem(key); }
@@ -118,14 +148,24 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
     </label>;
   };
 
+  const duplicateBlocked=issueIntake&&duplicates.length>0&&!duplicateAcknowledged;
+
   return <form action={submit} className="space-y-4" dir={ar ? 'rtl' : 'ltr'}>
     {message ? <p role={done ? 'status' : 'alert'} className={`rounded-lg border p-3 text-sm ${done ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>{message}</p> : null}
+    {issueIntake&&duplicateCheckBusy?<p className="text-xs text-slate-500">{tr('Checking for an existing open issue…','جارٍ التحقق من وجود بلاغ مفتوح مشابه…')}</p>:null}
+    {issueIntake&&duplicates.length>0?<div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+      <strong>{tr('Possible existing issue','قد يوجد بلاغ مفتوح بالفعل')}</strong>
+      <p className="mt-1">{tr('Open the existing issue first. Create another only when this is a genuinely separate incident.','افتح البلاغ الموجود أولاً. أنشئ بلاغاً جديداً فقط إذا كانت هذه حادثة منفصلة فعلاً.')}</p>
+      <div className="mt-3 space-y-2">{duplicates.map(issue=><a key={issue.id} className="block rounded-lg border border-amber-200 bg-white px-3 py-2 underline" href={`/issues/${issue.id}`} target="_blank" rel="noreferrer">{issue.machine?.name?issue.machine.name+' · ':''}{issue.description??tr('Open issue','بلاغ مفتوح')}</a>)}</div>
+      {!duplicateAcknowledged?<button type="button" className="btn-secondary mt-3" onClick={()=>setDuplicateAcknowledged(true)}>{tr('This is separate — create another issue','هذه حادثة منفصلة — إنشاء بلاغ جديد')}</button>:<p className="mt-3 font-medium">{tr('Separate incident confirmed.','تم تأكيد أنها حادثة منفصلة.')}</p>}
+    </div>:null}
+    {issueIntake&&repeatCount>=3?<div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"><strong>{tr(`Repeated issue — ${repeatCount} similar incidents in 30 days`,`مشكلة متكررة — ${repeatCount} بلاغات مشابهة خلال 30 يوماً`)}</strong><p className="mt-1">{tr('Consider technician repair, a replacement part, or replacing the recurring failure point instead of repeated operator visits.','راجع الحاجة إلى فني أو قطعة غيار أو استبدال سبب العطل بدل تكرار زيارات المشغّلين.')}</p></div>:null}
     {saved && !done ? <p className="text-sm text-amber-900">{tr('The submitted details are saved and locked until the result is confirmed.', 'التفاصيل محفوظة ومقفلة حتى تأكيد النتيجة.')}</p> : null}
     {!storageAvailable.current ? <p className="text-xs text-amber-800">{tr('Keep this page open until saving is confirmed. Browser storage is unavailable.', 'أبقِ الصفحة مفتوحة حتى تأكيد الحفظ. تخزين المتصفح غير متاح.')}</p> : null}
     <div className="grid gap-4 sm:grid-cols-2">{fields.filter(item => !item.advanced).map(field)}</div>
     {fields.some(item => item.advanced) ? <details className="rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer text-sm font-semibold">{tr('More details — optional', 'تفاصيل إضافية — اختيارية')}</summary><div className="mt-4 grid gap-4 sm:grid-cols-2">{fields.filter(item => item.advanced).map(field)}</div></details> : null}
     {done && canAddAnother ? <button type="button" className="btn-secondary min-h-11" onClick={() => { setValues(defaults()); setDone(false); setSaved(null); setMessage(''); }}>{tr('Add another entry', 'إضافة سجل آخر')}</button>
       : stale ? <button type="button" className="btn-secondary min-h-11" onClick={() => router.refresh()}>{tr('Reload latest record before editing', 'تحميل أحدث نسخة قبل التعديل')}</button>
-      : <button disabled={!ready || busy || blocked || done} className="btn-primary min-h-11 w-full sm:w-auto">{busy ? tr('Saving…', 'جارٍ الحفظ…') : done ? tr('Saved', 'تم الحفظ') : saved ? tr('Retry saved request', 'إعادة محاولة الطلب المحفوظ') : submitLabel}</button>}
+      : <button disabled={!ready || busy || blocked || done || duplicateBlocked} className="btn-primary min-h-11 w-full sm:w-auto">{busy ? tr('Saving…', 'جارٍ الحفظ…') : done ? tr('Saved', 'تم الحفظ') : saved ? tr('Retry saved request', 'إعادة محاولة الطلب المحفوظ') : submitLabel}</button>}
   </form>;
 }
