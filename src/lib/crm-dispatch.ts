@@ -1,6 +1,6 @@
-export const crmDispatchActions=['accept','en_route','start','block','fix'] as const;
+export const crmDispatchActions=['accept','en_route','start','block','fix','needs_technician','needs_part','machine_offline'] as const;
 export type CrmDispatchAction=typeof crmDispatchActions[number];
-export type CrmDispatchState='available'|'assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed';
+export type CrmDispatchState='available'|'assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed'|'needs_technician'|'needs_part'|'machine_offline';
 export type CrmDispatchCommand={
   request_id:string;
   task_id:string;
@@ -41,7 +41,7 @@ export function validateCrmDispatchCommand(value:unknown):CrmDispatchCommand{
  const raw=object(value),request_id=String(raw.request_id??''),task_id=String(raw.task_id??''),action=String(raw.action??'') as CrmDispatchAction,version=String(raw.version??'').trim(),note=raw.note===undefined?undefined:String(raw.note);
  if(!uuid.test(request_id)||!uuid.test(task_id)||!crmDispatchActions.includes(action)||!version||version.length>100)throw Error('invalid');
  if(note!==undefined&&note.length>2000)throw Error('invalid');
- if(['block','fix'].includes(action)&&String(note??'').trim().length<3)throw Error('invalid');
+ if(['block','fix','needs_technician','needs_part','machine_offline'].includes(action)&&String(note??'').trim().length<3)throw Error('invalid');
  return {request_id,task_id,action,version,...(note===undefined?{}:{note})};
 }
 export function crmDispatchSameOrigin(request:Request){const origin=request.headers.get('origin');if(!origin)return true;try{return new URL(origin).origin===new URL(request.url).origin;}catch{return false;}}
@@ -54,7 +54,7 @@ export function crmDispatchError(code:string,ar:boolean){
  const labels:Record<string,[string,string]>={
   denied:['This field action is not assigned to you.','هذا الإجراء الميداني غير مسند لك.'],
   conflict:['This task changed. Reload before continuing.','تغيّرت المهمة. أعد تحميل الصفحة قبل المتابعة.'],
-  invalid:['Check the action, note and required field photo.','راجع الإجراء والملاحظة والصورة الميدانية المطلوبة.'],
+  invalid:['Check the action, visit result and required field photo.','راجع الإجراء ونتيجة الزيارة والصورة الميدانية المطلوبة.'],
   uncertain:['The result is uncertain. Retry the saved action before doing anything else.','النتيجة غير مؤكدة. أعد نفس الإجراء المحفوظ قبل أي خطوة أخرى.'],
   unavailable:['Field dispatch is unavailable right now.','الإرسال الميداني غير متاح حالياً.']
  };
@@ -68,7 +68,10 @@ export function crmDispatchLabel(state:string|null|undefined,ar:boolean){
   en_route:['On the way','في الطريق'],
   working:['Working','قيد العمل'],
   blocked:['Blocked','متوقف'],
-  fixed:['Fixed — CRM verification','تم الإصلاح — بانتظار تحقق العلاقات']
+  fixed:['Fixed — CRM verification','تم الإصلاح — بانتظار تحقق العلاقات'],
+  needs_technician:['Needs technician','يحتاج فني'],
+  needs_part:['Needs spare part','يحتاج قطعة غيار'],
+  machine_offline:['Machine offline','الماكينة خارج الخدمة']
  };
  return (labels[state??'']??['Legacy field task','مهمة ميدانية سابقة'])[ar?1:0];
 }

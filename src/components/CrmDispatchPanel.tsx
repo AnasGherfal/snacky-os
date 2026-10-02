@@ -1,6 +1,7 @@
 'use client';
 import {useMemo,useRef,useState,useSyncExternalStore} from 'react';
 import {useRouter} from 'next/navigation';
+import {OperatorIssueReleaseButton} from '@/components/CrmIssueFieldQueue';
 
 const subscribe=()=>()=>{};
 const clientSnapshot=()=>true;
@@ -16,7 +17,8 @@ function fmt(value:string|null|undefined,ar:boolean){
 }
 function tone(state:string|null){
  if(state==='fixed')return 'border-emerald-200 bg-emerald-50 text-emerald-900';
- if(state==='blocked')return 'border-rose-200 bg-rose-50 text-rose-900';
+ if(state==='needs_technician'||state==='needs_part')return 'border-orange-200 bg-orange-50 text-orange-900';
+ if(state==='machine_offline'||state==='blocked')return 'border-rose-200 bg-rose-50 text-rose-900';
  if(state==='working'||state==='en_route')return 'border-sky-200 bg-sky-50 text-sky-900';
  if(state==='accepted')return 'border-violet-200 bg-violet-50 text-violet-900';
  return 'border-amber-200 bg-amber-50 text-amber-900';
@@ -58,6 +60,8 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
  }
 
  const state=task.dispatch_state;
+ const maintenanceOutcome=['needs_technician','needs_part','machine_offline'].includes(String(state));
+ const terminal=state==='fixed'||maintenanceOutcome;
  const next=useMemo(()=>{
   if(state==='assigned')return 'accept';
   if(state==='accepted')return 'en_route';
@@ -80,18 +84,19 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
 
   {task.dispatch_state==='blocked'&&task.blocked_reason?<div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm"><strong>{ar?'سبب التوقف':'Blocked by'}</strong><p className="mt-1 whitespace-pre-wrap">{task.blocked_reason}</p></div>:null}
   {task.dispatch_state==='fixed'&&task.result?<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm"><strong>{ar?'تقرير المشغّل':'Operator report'}</strong><p className="mt-1 whitespace-pre-wrap">{task.result}</p></div>:null}
+  {maintenanceOutcome&&task.result?<div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950"><strong>{ar?'تشخيص المشغّل':'Operator diagnosis'}</strong><p className="mt-1 whitespace-pre-wrap">{task.result}</p><p className="mt-2 text-xs">{ar?'انتهت زيارة المشغّل، لكن بلاغ العميل يبقى مفتوحاً حتى تتم الصيانة والمتابعة.':'The operator visit is complete, but the customer issue stays open until maintenance and follow-up are completed.'}</p></div>:null}
   {error?<p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>:null}
   {pending?<div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p>{ar?'يوجد إجراء محفوظ لم تتأكد نتيجته. أعد نفس الإجراء قبل أي خطوة أخرى.':'A saved action has an uncertain result. Retry it before doing anything else.'}</p><button className="btn-primary mt-2" disabled={busy} onClick={()=>void send(pending.action,pending.note??'')}>{ar?'إعادة الإجراء المحفوظ':'Retry saved action'}</button></div>:null}
 
-  {canAct&&state!=='fixed'?<div className="space-y-3">
-   {next?<button className="btn-primary min-h-12 w-full sm:w-auto" disabled={busy||Boolean(pending)} onClick={()=>void send(next)}>
+  {canAct&&!terminal?<div className="space-y-3">
+   <div className="flex flex-wrap gap-2">{next?<button className="btn-primary min-h-12" disabled={busy||Boolean(pending)} onClick={()=>void send(next)}>
     {next==='accept'?(ar?'قبول المهمة':'Accept task'):next==='en_route'?(ar?'أنا في الطريق':'On my way'):(ar?'بدء / استئناف العمل':'Start / resume work')}
-   </button>:null}
+   </button>:null}{['assigned','accepted','en_route'].includes(String(state))?<OperatorIssueReleaseButton taskId={task.id} ar={ar}/>:null}</div>
    {['accepted','en_route','working'].includes(String(state))?<div className="grid gap-2 sm:max-w-xl"><label className="text-sm font-medium">{ar?'إذا تعذر إكمال العمل':'If work is blocked'}<textarea className="field-input mt-1" rows={2} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} placeholder={ar?'مثال: الكهرباء مفصولة، قطعة غيار مطلوبة…':'Example: power is off, part required…'}/></label><button className="btn-secondary justify-self-start" disabled={busy||Boolean(pending)||note.trim().length<3} onClick={()=>void send('block',note)}>{ar?'تسجيل عائق':'Mark blocked'}</button></div>:null}
-   {state==='working'?<div className="grid gap-2 sm:max-w-xl"><label className="text-sm font-medium">{ar?'ماذا أصلحت؟':'What did you fix?'}<textarea className="field-input mt-1" rows={3} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} required/></label><p className="text-xs text-slate-500">{proofImages>0?(ar?'الصورة الميدانية موجودة ويمكن إكمال المهمة.':'Field photo is attached; the task can be completed.'):(ar?'أرفق صورة ميدانية من قسم المستندات أدناه قبل إنهاء المهمة.':'Attach a field photo in Documents & proof below before finishing.')}</p><button className="btn-primary justify-self-start" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('fix',note)}>{ar?'تم الإصلاح — إرسال التقرير':'Fixed — send report'}</button>{proofImages<1?<a className="text-sm text-sky-800 underline" href="#crm-documents">{ar?'الذهاب لإرفاق الصورة':'Go to photo upload'}</a>:null}</div>:null}
+   {state==='working'?<div className="grid gap-3 sm:max-w-2xl"><label className="text-sm font-medium">{ar?'نتيجة الزيارة / التشخيص':'Visit result / diagnosis'}<textarea className="field-input mt-1" rows={3} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} required placeholder={ar?'اكتب ما وجدته، وما تم إصلاحه أو ما المطلوب':'Write what you found, what was fixed, or what is still required'}/></label><p className="text-xs text-slate-500">{proofImages>0?(ar?'الصورة الميدانية موجودة ويمكن تسجيل نتيجة الزيارة.':'Field photo is attached; you can record the visit outcome.'):(ar?'أرفق صورة ميدانية من قسم المستندات أدناه قبل إنهاء الزيارة.':'Attach a field photo in Documents & proof below before completing the visit.')}</p><div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('fix',note)}>{ar?'تم الإصلاح':'Fixed'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('needs_technician',note)}>{ar?'يحتاج فني':'Needs technician'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('needs_part',note)}>{ar?'يحتاج قطعة غيار':'Needs spare part'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('machine_offline',note)}>{ar?'الماكينة خارج الخدمة':'Machine offline'}</button></div>{proofImages<1?<a className="text-sm text-sky-800 underline" href="#crm-documents">{ar?'الذهاب لإرفاق الصورة':'Go to photo upload'}</a>:null}</div>:null}
   </div>:null}
 
-  {state==='fixed'?<p className="text-sm text-slate-600">{ar?'إنهاء المهمة لا يغلق مشكلة العميل. تم إبلاغ مسؤول علاقات العملاء ليؤكد النتيجة مع العميل ثم يغلق الحالة.':'Finishing field work does not close the customer issue. Customer Relations is notified to verify the outcome and close the case.'}</p>:null}
+  {state==='fixed'?<p className="text-sm text-slate-600">{ar?'إنهاء المهمة لا يغلق مشكلة العميل. تم إبلاغ مسؤول علاقات العملاء ليؤكد النتيجة مع العميل ثم يغلق الحالة.':'Finishing field work does not close the customer issue. Customer Relations is notified to verify the outcome and close the case.'}</p>:maintenanceOutcome?<p className="text-sm text-orange-800">{ar?'تم تسجيل احتياج صيانة. لا يُغلق بلاغ العميل، ويظهر الآن لعلاقات العملاء والإدارة للمتابعة.':'Maintenance is required. The customer issue stays open and is now surfaced to CRM and management for follow-up.'}</p>:null}
  </section>;
 }
 

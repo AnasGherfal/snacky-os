@@ -80,9 +80,14 @@ test('support dashboard SQL is read-only, scoped to the signed-in CRM owner and 
   assert.doesNotMatch(supportSql,/delete\s+from\s+public\.financial_transactions/i);
 });
 
-test('support waiting reasons and management approval are standardized for routing',()=>{
-  for(const value of ['operator','customer','management','other']) assert.match(forms,new RegExp("\\['"+value+"'"));
+test('machine workflow status is automatic while CRM keeps customer and management follow-up',()=>{
+  const start=forms.indexOf("}else{",forms.indexOf("if(kind==='issue')"));
+  const end=forms.indexOf("if(kind==='contact')",start);
+  const editBlock=forms.slice(start,end);
+  assert.doesNotMatch(editBlock,/f\('status'/);
+  assert.doesNotMatch(editBlock,/f\('waiting_on'/);
+  assert.match(editBlock,/CRM next action/);
   assert.match(forms,/Management approval/);
   assert.match(forms,/موافقة الإدارة/);
-  assert.match(forms,/Waiting for','بانتظار'.*type:'select'/);
+  assert.match(workspace,/crmIssueOperationalStatus/);
 });

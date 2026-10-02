@@ -14,6 +14,10 @@ const workspace=read('src/components/CrmWorkspace.tsx');
 const forms=read('src/components/CrmRecordForms.tsx');
 const crm=read('src/lib/crm-workspace.ts');
 const notices=read('supabase/migrations/20260919220000_assignment_notifications.sql');
+const reliability=read('supabase/migrations/20261002104000_operations_reliability_v1.sql');
+const operatorIssues=read('src/app/operator/issues/page.tsx');
+const machineHistory=read('src/app/machines/[id]/page.tsx');
+const machineDashboard=read('src/app/machines-dashboard/page.tsx');
 
 test('dispatch extends existing CRM tasks instead of creating a second task system',()=>{
  assert.match(migration,/alter table public\.crm_tasks/i);
@@ -93,11 +97,13 @@ test('existing notification system remains assignment and completion transport',
  assert.doesNotMatch(migration,/web-push|push_subscriptions/i);
 });
 
-test('operator phone UI exposes dispatch steps and requires photo before fixed',()=>{
- for(const label of ['Accept task','On my way','Start / resume work','Mark blocked','Fixed — send report'])assert.ok(panel.includes(label));
+test('operator phone UI exposes dispatch steps, release and visit outcomes with photo proof',()=>{
+ for(const label of ['Accept task','On my way','Start / resume work','Mark blocked','Fixed','Needs technician','Needs spare part','Machine offline'])assert.ok(panel.includes(label));
+ assert.match(panel,/OperatorIssueReleaseButton/);
  assert.ok(panel.includes('proofImages<1'));
  assert.ok(panel.includes('crm-documents'));
  assert.match(panel,/Finishing field work does not close the customer issue/i);
+ assert.match(panel,/customer issue stays open/i);
 });
 
 test('CRM sees acknowledgement overdue and keeps final closure separate',()=>{
@@ -121,4 +127,74 @@ test('API is same-origin, bounded, authenticated and receipt checked',()=>{
  assert.match(api,/snacky_issue_dispatch_command_v1/);
  assert.match(api,/crmDispatchReceiptMatches/);
  assert.match(lib,/crmDispatchReceiptMatches/);
+});
+
+
+test('operations reliability lets an operator release unstarted work back to the shared queue',()=>{
+ assert.match(reliability,/p_action='release'/);
+ assert.match(reliability,/Only the operator who claimed this issue can release it/);
+ assert.match(reliability,/dispatch_state not in \('assigned','accepted','en_route'\)/);
+ assert.match(reliability,/snacky\.crm_queue_release_task_id/);
+ assert.match(reliability,/new\.dispatch_state:='available'/);
+ assert.match(reliability,/assigned_to=null/);
+ assert.match(reliability,/field_released/);
+ assert.match(reliability,/Released:/);
+});
+
+test('shared claim queue limits overload without reintroducing CRM operator assignment',()=>{
+ assert.match(reliability,/v_active_count>=3/);
+ assert.match(reliability,/3 active machine issues/);
+ assert.match(reliability,/active urgent machine issue/);
+ assert.match(forms,/filter\(p=>p\.role!=='operator'&&!p\.is_operator\)/);
+ assert.match(operatorIssues,/Operator workload/);
+ assert.match(operatorIssues,/up to 3 active machine issues/);
+});
+
+test('operator visit can finish as repair technician part or offline without closing customer complaint',()=>{
+ for(const state of ['needs_technician','needs_part','machine_offline'])assert.ok(reliability.includes("'"+state+"'"));
+ assert.match(reliability,/Upload at least one field photo before completing the field task/);
+ assert.match(reliability,/Arrange technician visit/);
+ assert.match(reliability,/Arrange spare part and follow-up visit/);
+ assert.match(reliability,/Machine offline — arrange maintenance before reopening/);
+ assert.match(reliability,/waiting_on='management'/);
+ assert.match(reliability,/insert into public\.crm_tasks/);
+ assert.match(reliability,/'admin'/);
+ assert.match(reliability,/Operator diagnosis:/);
+ assert.match(reliability,/next_step,\(a->>'issue_id'\)::uuid,'admin',issue_owner/);
+ assert.doesNotMatch(reliability,/update public\.issues\s+set status='resolved'/i);
+});
+
+test('machine offline changes machine to maintenance and a later repair can reactivate it',()=>{
+ assert.match(reliability,/v_action='machine_offline'/);
+ assert.match(reliability,/set status='maintenance'/);
+ assert.match(reliability,/v_action='fix'/);
+ assert.match(reliability,/set status='active'/);
+});
+
+test('issue operational state comes from field dispatch instead of manual CRM status controls',()=>{
+ assert.match(workspace,/crmIssueOperationalStatus/);
+ assert.match(workspace,/operational_status/);
+ assert.match(workspace,/latestDispatch/);
+ assert.match(reliability,/next_action='Waiting for an operator to claim the machine issue'/);
+ assert.match(reliability,/next_action='Operator claimed the field visit'/);
+ assert.match(reliability,/waiting_on='operator'/);
+});
+
+test('operator claim cards show workload distance reported time and map access',()=>{
+ assert.match(operatorIssues,/Operator workload/);
+ assert.match(operatorIssues,/km one way from storage/);
+ assert.match(operatorIssues,/Reported/);
+ assert.match(operatorIssues,/Open location in Maps/);
+ assert.match(operatorIssues,/google\.com\/maps\/search/);
+});
+
+test('machine page preserves service history and management dashboard surfaces maintenance attention',()=>{
+ assert.match(machineHistory,/Machine service history/);
+ assert.match(machineHistory,/Waiting technician \/ part/);
+ assert.match(machineHistory,/latestFieldByIssue/);
+ assert.match(machineDashboard,/Maintenance attention/);
+ assert.match(machineDashboard,/snacky_machine_maintenance_attention_v1/);
+ for(const label of ['Machines down','Waiting technician / part','Repeat failures · 30d','Open >24h','Repaired · 7d'])assert.ok(machineDashboard.includes(label));
+ assert.match(reliability,/repeat_failures/);
+ assert.match(reliability,/open_over_24h/);
 });
