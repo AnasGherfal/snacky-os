@@ -635,6 +635,13 @@ export function PurchaseForm({
   const [searchByLine, setSearchByLine] = useState<Record<string, string>>({});
   const [submitIntent, setSubmitIntent] = useState<"draft" | "received" | null>(null);
   const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [supplierOptions, setSupplierOptions] = useState<SupplierOption[]>(() =>
+    [...suppliers].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
+  );
+  const [quickSupplierOpen, setQuickSupplierOpen] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState("");
+  const [quickSupplierPending, setQuickSupplierPending] = useState(false);
+  const [quickSupplierError, setQuickSupplierError] = useState("");
   const [detailsErrors, setDetailsErrors] = useState<{ supplierId?: string; purchaseDate?: string; receivingStorageLocationId?: string }>({});
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewState | null>(() => {
@@ -645,6 +652,17 @@ export function PurchaseForm({
   const [removeSavedReceipt, setRemoveSavedReceipt] = useState(false);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+
+  useEffect(() => {
+    setSupplierOptions((current) => {
+      const byId = new Map(current.map((supplier) => [supplier.id, supplier]));
+      suppliers.forEach((supplier) => byId.set(supplier.id, supplier));
+      return Array.from(byId.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      );
+    });
+  }, [suppliers]);
+
   const draftKey = useDraftKey("purchase", [initialPurchase?.id ?? "new"]);
   const initialComparableDraft = useMemo(() => {
     if (!initialPurchase?.id) return null;
@@ -1068,6 +1086,51 @@ export function PurchaseForm({
     </>
   );
 
+  const handleQuickAddSupplier = async () => {
+    const name = quickSupplierName.trim().replace(/\s+/g, " ");
+    if (!name) {
+      setQuickSupplierError("Enter a supplier name.");
+      return;
+    }
+
+    setQuickSupplierPending(true);
+    setQuickSupplierError("");
+    try {
+      const response = await fetch("/api/suppliers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        supplier?: SupplierOption;
+        error?: string;
+      };
+      if (!response.ok || !payload.supplier?.id || !payload.supplier.name) {
+        throw new Error(payload.error || "Could not add supplier.");
+      }
+
+      const supplier = {
+        id: String(payload.supplier.id),
+        name: String(payload.supplier.name),
+      };
+      setSupplierOptions((current) => {
+        const next = current.filter((item) => item.id !== supplier.id);
+        next.push(supplier);
+        return next.sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        );
+      });
+      setDetails((current) => ({ ...current, supplierId: supplier.id }));
+      setDetailsErrors((current) => ({ ...current, supplierId: undefined }));
+      setQuickSupplierName("");
+      setQuickSupplierOpen(false);
+    } catch (error) {
+      setQuickSupplierError(error instanceof Error ? error.message : "Could not add supplier.");
+    } finally {
+      setQuickSupplierPending(false);
+    }
+  };
+
   const validateBeforeSubmit = (intent: "draft" | "received") => {
     const nextDetailsErrors: typeof detailsErrors = {};
     const nextLineErrors: Record<string, string> = {};
@@ -1229,10 +1292,66 @@ export function PurchaseForm({
       <FormSection title="Purchase details" description="Record the supplier, receipt, payment state, and supporting receipt reference before receiving stock.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Supplier">
-            <select name="supplier_id" className="field-input" value={details.supplierId} onChange={(event) => setDetails((current) => ({ ...current, supplierId: event.target.value }))}>
-              <option value="">Select supplier</option>
-              {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-            </select>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <select
+                name="supplier_id"
+                className="field-input min-w-0 flex-1"
+                value={details.supplierId}
+                onChange={(event) => setDetails((current) => ({ ...current, supplierId: event.target.value }))}
+                disabled={Boolean(submitIntent) || quickSupplierPending}
+              >
+                <option value="">Select supplier — use Unknown if not known</option>
+                {supplierOptions.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+              </select>
+              <button
+                type="button"
+                className="btn-secondary shrink-0"
+                disabled={Boolean(submitIntent) || quickSupplierPending}
+                onClick={() => {
+                  setQuickSupplierError("");
+                  setQuickSupplierOpen((open) => !open);
+                }}
+              >
+                + Add supplier
+              </button>
+            </div>
+            {quickSupplierOpen ? (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-medium text-slate-600">
+                  Add a supplier without leaving this purchase. Existing names are reused instead of duplicated.
+                </div>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    autoFocus
+                    className="field-input min-w-0 flex-1"
+                    value={quickSupplierName}
+                    onChange={(event) => {
+                      setQuickSupplierName(event.target.value);
+                      setQuickSupplierError("");
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleQuickAddSupplier();
+                      }
+                    }}
+                    placeholder="New supplier name"
+                    disabled={quickSupplierPending}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary shrink-0"
+                    onClick={() => void handleQuickAddSupplier()}
+                    disabled={quickSupplierPending || !quickSupplierName.trim()}
+                  >
+                    {quickSupplierPending ? "Adding..." : "Add & select"}
+                  </button>
+                </div>
+                {quickSupplierError ? (
+                  <p className="mt-2 text-xs font-medium text-rose-700">{quickSupplierError}</p>
+                ) : null}
+              </div>
+            ) : null}
             {detailsErrors.supplierId ? <p className="mt-2 text-xs font-medium text-rose-700">{detailsErrors.supplierId}</p> : null}
           </FormField>
           <FormField label="Purchase date" required>
