@@ -14,6 +14,7 @@ test('XY slot product writes use the Swagger slot-product/price endpoint',()=>{
  assert.match(control,/jqbh: args\.vmsMachineId/);
  assert.match(control,/hdbh: args\.slotCode/);
  assert.match(control,/spbh: args\.vmsProductId/);
+ assert.match(control,/spmc: args\.productName/);
  assert.match(control,/spjg: toMinorUnits\(args\.priceLyd\)/);
 });
 

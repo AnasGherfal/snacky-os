@@ -144,6 +144,7 @@ export async function POST(
     vmsMachineId: String(machine.vms_machine_id),
     slotCode,
     vmsProductId: targetVmsProductId,
+    productName: String(mapping.vms_product_name ?? product.name),
     priceLyd,
   });
 

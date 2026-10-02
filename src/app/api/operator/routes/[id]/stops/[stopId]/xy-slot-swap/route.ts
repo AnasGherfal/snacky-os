@@ -121,6 +121,7 @@ export async function POST(
     vmsMachineId,
     slotCode: slotCodeA,
     vmsProductId: slotB.vmsProductId,
+    productName: slotB.productName ?? slotB.vmsProductId,
     priceLyd: slotB.priceLyd,
   });
   if (!firstWrite.accepted) {
@@ -195,6 +196,7 @@ export async function POST(
     vmsMachineId,
     slotCode: slotCodeB,
     vmsProductId: slotA.vmsProductId,
+    productName: slotA.productName ?? slotA.vmsProductId,
     priceLyd: slotA.priceLyd,
   });
   const secondVerification = secondWrite.accepted

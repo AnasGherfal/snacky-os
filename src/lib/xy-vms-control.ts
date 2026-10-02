@@ -59,6 +59,7 @@ export async function setXySlotProduct(args: {
   vmsMachineId: string;
   slotCode: string;
   vmsProductId: string;
+  productName: string;
   priceLyd: number;
 }) {
   const config = getXyVmsConfig();
@@ -69,6 +70,7 @@ export async function setXySlotProduct(args: {
     jqbh: args.vmsMachineId,
     hdbh: args.slotCode,
     spbh: args.vmsProductId,
+    spmc: args.productName,
     spjg: toMinorUnits(args.priceLyd),
   });
   const timestamp = Date.now().toString().padStart(13, "0");
