@@ -30,10 +30,10 @@ export default async function OperatorIssuesPage() {
   const memberId=profile.team_member_id ?? "";
   const [{data:availableTasks},{data:myTasks}]=supabase ? await Promise.all([
     supabase.from("crm_tasks")
-      .select("id,title,priority,due_date,notes,issue:issues(id,issue_type,description,location:locations(name),machine:machines(name,machine_code))")
+      .select("id,title,priority,due_date,notes,issue:issues(id,issue_type,description,location:locations(name,address,distance_from_storage_km),machine:machines(name,machine_code))")
       .eq("task_type","field_action").eq("dispatch_state","available").is("assigned_to",null).is("archived_at",null).neq("status","completed").order("created_at",{ascending:true}),
     memberId ? supabase.from("crm_tasks")
-      .select("id,title,priority,status,dispatch_state,due_date,issue:issues(id,issue_type,location:locations(name),machine:machines(name,machine_code))")
+      .select("id,title,priority,status,dispatch_state,due_date,issue:issues(id,issue_type,location:locations(name,address,distance_from_storage_km),machine:machines(name,machine_code))")
       .eq("task_type","field_action").eq("assigned_to",memberId).is("archived_at",null).neq("status","completed").order("created_at",{ascending:true})
       : Promise.resolve({data:[]})
   ]) : [{data:[]},{data:[]}];
@@ -58,6 +58,7 @@ export default async function OperatorIssuesPage() {
                 <div className="flex flex-wrap gap-2"><StatusBadge status={task.priority}/><span className="text-xs text-slate-500">{task.due_date??"-"}</span></div>
                 <h3 className="mt-2 font-semibold text-slate-900">{task.title}</h3>
                 <p className="mt-1 text-sm text-slate-700">{task.issue?.location?.name??""}{task.issue?.machine?.name?` · ${task.issue.machine.name}`:""}</p>
+                <p className="mt-1 text-xs text-slate-600">{task.issue?.location?.address??""}{task.issue?.location?.distance_from_storage_km!==null&&task.issue?.location?.distance_from_storage_km!==undefined?`${task.issue.location.address?" · ":""}${Number(task.issue.location.distance_from_storage_km).toFixed(1)} km one way from storage`:""}</p>
                 <p className="mt-2 text-sm text-slate-700">{task.issue?.description??task.notes??"-"}</p>
               </div>
               <OperatorIssueClaimButton taskId={task.id}/>
@@ -73,7 +74,7 @@ export default async function OperatorIssuesPage() {
         {!myTasks?.length ? <EmptyState title="No claimed field work" body="Claim an available machine issue when you are able to handle it." /> :
           myTasks.map((task:any)=><article key={task.id} className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><h3 className="font-semibold text-slate-900">{task.title}</h3><p className="mt-1 text-sm text-slate-500">{task.issue?.location?.name??""}{task.issue?.machine?.name?` · ${task.issue.machine.name}`:""}</p></div>
+              <div><h3 className="font-semibold text-slate-900">{task.title}</h3><p className="mt-1 text-sm text-slate-500">{task.issue?.location?.name??""}{task.issue?.machine?.name?` · ${task.issue.machine.name}`:""}</p><p className="mt-1 text-xs text-slate-500">{task.issue?.location?.distance_from_storage_km!==null&&task.issue?.location?.distance_from_storage_km!==undefined?`${Number(task.issue.location.distance_from_storage_km).toFixed(1)} km one way from storage`:"Distance not set"}</p></div>
               <div className="flex gap-2"><StatusBadge status={task.dispatch_state??task.status}/><Link className="link-secondary" href={`/follow-ups/${task.id}`}>Open</Link></div>
             </div>
           </article>)}

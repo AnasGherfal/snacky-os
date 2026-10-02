@@ -22,8 +22,14 @@ export async function POST(request: Request) {
     // failure must never block already-persisted work notifications.
     const escalation = await db.rpc("snacky_process_dispatch_escalations_v1", { p_now: null });
     if (escalation.error) console.error("[work-notifications] Urgent dispatch escalation scan unavailable.");
+    const fieldEscalation = await db.rpc("snacky_process_issue_field_escalations_v1", { p_now: null });
+    if (fieldEscalation.error) console.error("[work-notifications] Issue field escalation scan unavailable.");
     const delivery = await dispatchWorkNotifications(db);
-    return NextResponse.json({ ...delivery, escalation: escalation.error ? { unavailable: true } : escalation.data });
+    return NextResponse.json({
+      ...delivery,
+      escalation: escalation.error ? { unavailable: true } : escalation.data,
+      fieldEscalation: fieldEscalation.error ? { unavailable: true } : fieldEscalation.data,
+    });
   } catch {
     console.error("[work-notifications] Dispatch incomplete; persisted jobs remain retryable.");
     return NextResponse.json({ error: "Delivery incomplete; queued for retry" }, { status: 503 });

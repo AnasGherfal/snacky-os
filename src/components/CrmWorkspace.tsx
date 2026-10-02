@@ -20,6 +20,14 @@ export type CrmSearchParams=Record<string,string|string[]|undefined>;
 const scalar=(params:CrmSearchParams,key:string)=>typeof params[key]==='string'?params[key] as string:'';
 function formattedDate(value:any,ar:boolean){if(!value)return ar?'غير مسجّل':'Not recorded';const date=new Date(String(value));return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat(ar?'ar-LY':'en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Tripoli'}).format(date);}
 function money(value:unknown){return value===null||value===undefined?'—':`${Number(value).toLocaleString('en-US',{maximumFractionDigits:2})} LYD`;}
+function businessDateMinusDays(value:string,days:number){
+ const match=/^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value);if(!match)return value;
+ let year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+ const leap=(y:number)=>y%4===0&&(y%100!==0||y%400===0);
+ const monthDays=(y:number,m:number)=>m===2?(leap(y)?29:28):[4,6,9,11].includes(m)?30:31;
+ for(let i=0;i<days;i++){day-=1;if(day<1){month-=1;if(month<1){month=12;year-=1;}day=monthDays(year,month);}}
+ return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
 async function dispatchNotificationDevices(tasks:any[]){
  const members=[...new Set(tasks.map((task:any)=>String(task.assigned_to??'')).filter(Boolean))];
  if(!members.length)return new Map<string,number>();
@@ -93,6 +101,15 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   else console.error('[crm-workspace] Customer support panel unavailable',{error:supportResult.error});
  }
  const row=context.record,d=row?.data??{},kind=section as CrmKind;
+ let repeatIssueCount=0;
+ let repeatIssueRows:any[]=[];
+ const issueMachineId=d.machine_id??row?.machine_id;
+ if(section==='issue'&&row&&context.staff&&db&&issueMachineId&&d.issue_type){
+  const since30=`${businessDateMinusDays(context.today,30)}T00:00:00Z`;
+  const repeatResult=await db.from('issues').select('id,created_at,status,description').eq('machine_id',issueMachineId).eq('issue_type',d.issue_type).is('archived_at',null).eq('is_practice',false).gte('created_at',since30).order('created_at',{ascending:false}).limit(12);
+  if(!repeatResult.error){repeatIssueRows=repeatResult.data??[];repeatIssueCount=repeatIssueRows.length;}
+  else console.error('[crm-workspace] Repeat issue history unavailable',{issue_id:row.id,error:repeatResult.error});
+ }
  const rows=(context.rows??[]).map((r:any)=>({...r,assigned_name:r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name}));
  const name=(member:any)=>context.directory.find((p:any)=>p.id===member)?.name??(ar?'غير مسجّل':'Not recorded');
  const title=create&&section==='issue'?tr('Quick customer issue','بلاغ عميل سريع'):create?`${tr('Add','إضافة')} ${crmNames[section][ar?1:0]}`:row?.title??(section==='work'?`${tr('Hello','أهلاً')}, ${profile.full_name.split(' ')[0]}`:crmNames[section][ar?1:0]);
@@ -151,6 +168,7 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
     {section==='lead'&&d.converted_location_id?<Link className="btn-secondary" href={crmHref('location',d.converted_location_id)}>{tr('Open connected Snacky location','فتح موقع سناكي المرتبط')}</Link>:null}
     {d.description||d.notes?<p className="whitespace-pre-wrap break-words text-sm leading-6">{d.description??d.notes}</p>:null}
     {section==='issue'?<><p className="text-sm">{tr('Amount involved','المبلغ')}: {money(d.amount_involved_lyd)} · {tr('Product / lane','رقم المنتج / المسار')}: {d.lane_number??'—'}</p>{d.waiting_on?<p className="rounded-lg bg-amber-50 p-3 text-sm">{tr('Waiting for','بانتظار')}: {d.waiting_on}</p>:null}{d.resolution?<div className="rounded-lg bg-emerald-50 p-4 text-sm"><strong>{tr('Resolution','الحل')}</strong><p className="mt-2 whitespace-pre-wrap">{d.resolution}</p><p>{tr('Refund reported','المبلغ المسترد المسجّل')}: {money(d.refund_amount_lyd)}</p><p>{name(d.resolved_by)} · {formattedDate(d.resolved_at,ar)}</p></div>:null}</>:null}
+    {section==='issue'&&repeatIssueCount>=3?<div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"><strong>{tr(`Repeated issue — ${repeatIssueCount} similar incidents in 30 days`,`مشكلة متكررة — ${repeatIssueCount} بلاغات مشابهة خلال 30 يوماً`)}</strong><p className="mt-1">{tr('Consider technician repair, a replacement part, or replacing the recurring failure point instead of repeated operator visits.','راجع الحاجة إلى فني أو قطعة غيار أو استبدال سبب العطل بدل تكرار زيارات المشغّلين.')}</p><div className="mt-2 flex flex-wrap gap-2">{repeatIssueRows.filter((x:any)=>x.id!==row.id).slice(0,4).map((x:any)=><Link className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs underline" key={x.id} href={crmHref('issue',x.id)}>{formattedDate(x.created_at,ar)} · {crmStatus(x.status,ar)}</Link>)}</div></div>:null}
     {section==='task'&&taskDispatch?<CrmDispatchTaskPanel task={taskDispatch} userId={profile.id} ar={ar} canAct={row.assigned_to===context.me&&!row.archived} proofImages={taskProofImages}/>:null}
     {section==='obligation'?<div className={`rounded-xl border p-4 text-sm ${d.is_historical?'border-violet-200 bg-violet-50':'border-amber-200'}`}><div className="flex flex-wrap items-baseline justify-between gap-2"><strong>{money(d.amount_lyd)}</strong><strong>{tr('Rent period','فترة الإيجار')}: {rentPeriodLabel(d,ar)}</strong></div><p className="mt-2">{d.status==='paid'?`${tr('Reported paid by','سجّل الدفع')}: ${name(d.paid_by)} · ${d.payment_date??tr('Exact paid date not recorded','تاريخ الدفع الدقيق غير مسجّل')}`:tr('Payment not reported yet','لم يُسجّل الدفع بعد')}</p>{d.is_historical?<><p className="mt-2 font-medium">{tr('Historical backfill — no current action required','سجل تاريخي مضاف للماضي — لا يتطلب إجراء حالياً')}</p>{d.historical_source?<p className="mt-1 text-xs text-slate-600">{tr('Source','المصدر')}: {d.historical_source}</p>:null}</>:<p>{d.finance_verified_at?tr('Matching Finance expense verified','تم التحقق من حركة المصروف المالية المطابقة'):tr('No Finance entry has been verified. A reported payment is not an accounting posting.','لم يتم التحقق من حركة مالية. تسجيل الدفع هنا لا ينشئ قيداً محاسبياً.')}</p>}</div>:null}
     {context.machines?.length?<div className="space-y-2">{context.machines.map((m:any)=><div key={m.id} className="rounded-lg border p-3 text-sm"><strong>{m.name}</strong><p>{m.machine_code} · {m.status} · {m.online_status??tr('Online state unknown','الاتصال غير معروف')}</p><p className="text-xs text-slate-500">{tr('Last status update','آخر تحديث للحالة')}: {formattedDate(m.last_status_at,ar)}</p>{context.manager?<Link className="text-sky-800 underline" href={`/machines/${m.id}`}>{tr('Machine record','سجل الماكينة')}</Link>:null}</div>)}</div>:null}

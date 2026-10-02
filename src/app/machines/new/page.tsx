@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { LocalDraftForm } from "@/components/LocalDraft";
+import { MachineSiteDistanceFields } from "@/components/MachineSiteDistanceFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -24,6 +25,10 @@ async function createMachine(formData: FormData) {
   const profile = await getCurrentProfile();
   const machineCode = String(formData.get("machine_code") || "").trim();
   const machineDisplayName = String(formData.get("machine_display_name") || machineCode).trim() || machineCode;
+  const distanceText = cleanText(formData.get("distance_from_storage_km"));
+  const distanceFromStorageKm = distanceText === null ? null : Number(distanceText);
+  if (distanceFromStorageKm !== null && (!Number.isFinite(distanceFromStorageKm) || distanceFromStorageKm < 0)) return;
+
   const payload = {
     machine_code: machineCode,
     machine_display_name: machineDisplayName,
@@ -63,6 +68,10 @@ async function createMachine(formData: FormData) {
       .select("id, machine_code, name, status, location_id")
       .single();
   }
+  if (insertResult.data && payload.location_id) {
+    const distanceUpdate = await supabase.from("locations").update({ distance_from_storage_km: distanceFromStorageKm, updated_at: new Date().toISOString() }).eq("id", payload.location_id).select("id").maybeSingle();
+    if (distanceUpdate.error) console.error("[machines] Could not save site distance while creating machine", { machine_id: insertResult.data.id, location_id: payload.location_id, error: distanceUpdate.error });
+  }
   if (insertResult.data) {
     await logActivity({
       profile,
@@ -76,6 +85,8 @@ async function createMachine(formData: FormData) {
   }
 
   revalidatePath("/machines");
+  revalidatePath("/locations");
+  revalidatePath("/payroll/distances");
   redirect("/machines");
 }
 
@@ -127,16 +138,14 @@ export default async function NewMachinePage() {
         </FormSection>
         <FormSection title="Active site" description="Link the machine to the exact current site now, or leave it empty and assign it later.">
           <div className="grid gap-4 md:grid-cols-2">
-            <FormField label="Current active site">
-              <select name="location_id" className="field-input" defaultValue="">
-                <option value="">No site assigned yet</option>
-                {(locations ?? []).map((location: any) => (
-                  <option key={location.id} value={location.id}>
-                    {formatSiteLabel(location, { includeArea: true, fallback: location.name ?? "Unknown site" })}
-                  </option>
-                ))}
-              </select>
-            </FormField>
+            <MachineSiteDistanceFields
+              initialLocationId=""
+              locations={(locations ?? []).map((location: any) => ({
+                id: location.id,
+                label: formatSiteLabel(location, { includeArea: true, fallback: location.name ?? "Unknown site" }),
+                distance_from_storage_km: location.distance_from_storage_km,
+              }))}
+            />
             <FormField label="Rent LYD" hint="Monthly rent paid for this site, if applicable.">
               <input type="number" step="0.01" name="rent_amount" placeholder="0.00" className="field-input" />
             </FormField>
