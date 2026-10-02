@@ -5,7 +5,9 @@ import { usePathname, useRouter } from "next/navigation";
 import { refreshXyRoutePlanningDataAction } from "@/lib/xy-vms-actions";
 
 const XY_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const XY_SHARED_COOLDOWN_MS = 20 * 60 * 1000;
 const XY_RUNNING_RETRY_MS = 15 * 1000;
+const XY_SHARED_ATTEMPT_KEY = "snacky:xy-vms:last-background-attempt";
 const XY_DATA_PATHS = ["/dashboard", "/refills", "/machines", "/machines-dashboard", "/inventory-dashboard"];
 
 export function XyBackgroundSync({ enabled }: { enabled: boolean }) {
@@ -25,8 +27,20 @@ export function XyBackgroundSync({ enabled }: { enabled: boolean }) {
     const displaysXyData = () => XY_DATA_PATHS
       .some((path) => pathnameRef.current === path || pathnameRef.current.startsWith(`${path}/`));
 
+    const sharedCooldownActive = () => {
+      try {
+        const last=Number(window.localStorage.getItem(XY_SHARED_ATTEMPT_KEY)??0);
+        return Number.isFinite(last)&&last>0&&Date.now()-last<XY_SHARED_COOLDOWN_MS;
+      } catch { return false; }
+    };
+    const claimSharedAttempt = () => {
+      try { window.localStorage.setItem(XY_SHARED_ATTEMPT_KEY,String(Date.now())); } catch {}
+    };
+
     const refresh = async (waitingForAnotherRun = false) => {
       if (running.current || document.visibilityState !== "visible") return;
+      if (!waitingForAnotherRun && sharedCooldownActive()) return;
+      claimSharedAttempt();
       running.current = true;
       try {
         const result = await refreshXyRoutePlanningDataAction();

@@ -175,6 +175,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     stockSnapshotCount,
     statusSnapshotCount,
     needsReviewCount,
+    mappedMachinesResult,
+    liveStockMachinesResult,
   ] = await Promise.all([
     supabase
       .from("vms_sync_runs")
@@ -192,6 +194,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("vms_stock_snapshots").select("id", { count: "exact", head: true }).eq("source_provider", "xy"),
     supabase.from("vms_machine_status_snapshots").select("id", { count: "exact", head: true }),
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
+    supabase.from("machines").select("id,name,machine_code,vms_machine_id,status").not("vms_machine_id","is",null).order("name"),
+    supabase.from("latest_vms_stock_by_slot").select("machine_id,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
   ]);
 
   const loadError =
@@ -200,7 +204,9 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     productCatalogCount.error ??
     stockSnapshotCount.error ??
     statusSnapshotCount.error ??
-    needsReviewCount.error;
+    needsReviewCount.error ??
+    mappedMachinesResult.error ??
+    liveStockMachinesResult.error;
 
   if (loadError) {
     console.error("[xy-vms-admin] Failed to load XY sync dashboard", loadError);
@@ -219,6 +225,12 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const officialTestPassed = officialQueryMachineSucceeded(latestOfficialTest?.response_summary);
   const syncDisabled = !config.ready || !officialTestPassed;
   const syncDisabledTitle = !config.ready ? "Complete the server-side official XY configuration first." : "Run a successful official queryMachine test first.";
+  const mappedMachines=(mappedMachinesResult.data??[]) as Array<{id:string;name:string;machine_code:string;vms_machine_id:string|null;status:string|null}>;
+  const liveStockRows=(liveStockMachinesResult.data??[]) as Array<{machine_id:string|null;captured_at:string|null}>;
+  const liveStockMachineIds=new Set(liveStockRows.map(row=>String(row.machine_id??"")).filter(Boolean));
+  const machinesMissingLiveStock=mappedMachines.filter(machine=>!liveStockMachineIds.has(machine.id));
+  const latestXyStockAt=liveStockRows[0]?.captured_at??null;
+  const machineCoverageLabel=`${liveStockMachineIds.size}/${mappedMachines.length}`;
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
   const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
 
@@ -280,6 +292,27 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </section>
       </div>
 
+      <section className="surface-card mb-6">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Live XY Connection Health</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">Operational coverage from the active verified XY stock snapshot. This does not trigger a sync.</p>
+          </div>
+          <StatusBadge status={machinesMissingLiveStock.length ? "needs_review" : "completed"} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">XY-linked machines</div><strong className="mt-1 block text-2xl">{mappedMachines.length}</strong></div>
+          <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">Live stock coverage</div><strong className="mt-1 block text-2xl">{machineCoverageLabel}</strong></div>
+          <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">Latest verified stock</div><strong className="mt-1 block text-sm">{formatDate(latestXyStockAt)}</strong></div>
+        </div>
+        {machinesMissingLiveStock.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="font-semibold text-amber-950">Machines without usable stock in the active XY snapshot</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div></div>)}</div>
+          <p className="mt-3 text-xs text-amber-800">Check whether these machines are newly added/empty, no longer present in XY, or returning only unconfigured lanes before changing their Snacky status.</p>
+        </div>:null}
+        {(needsReviewCount.count??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>{needsReviewCount.count} XY products need mapping</strong><p className="mt-1 text-xs text-amber-800">Unmapped XY products are not silently created in Snacky.</p></div><a className="btn-secondary" href="/vms-mappings">Review mappings</a></div>:null}
+      </section>
+
       {!config.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
           Missing server-side XY configuration: {config.missing.join(", ")}. Keep XY secrets server-only and do not use `NEXT_PUBLIC_` for them.
@@ -296,7 +329,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Automatic XY Sync</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">Machine lanes refresh automatically when an authorized planner opens Snacky OS, every 10 minutes while it remains open, and through the daily protected server job. The buttons below are emergency/manual tools only.</p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">Machine lanes refresh automatically for authorized planners with a shared 20-minute browser cooldown across tabs, plus the protected server scheduler. Route creation still performs its own freshness check before planning. The buttons below are emergency/manual tools only.</p>
           </div>
           <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Automatic</span>
         </div>
