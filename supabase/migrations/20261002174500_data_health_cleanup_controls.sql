@@ -192,17 +192,7 @@ $function$;
 revoke all on function data_health_private.command(text,uuid,text) from public,anon;
 grant execute on function data_health_private.command(text,uuid,text) to authenticated,service_role;
 
-CREATE OR REPLACE FUNCTION public.snacky_data_health_command_v1(p_action text, p_target_id uuid DEFAULT NULL::uuid, p_reason text DEFAULT NULL::text)
- RETURNS jsonb
- LANGUAGE sql
- SET search_path TO ''
-AS $function$
-  select data_health_private.command(p_action,p_target_id,p_reason);
-$function$;
-revoke all on function public.snacky_data_health_command_v1(text,uuid,text) from public,anon;
-grant execute on function public.snacky_data_health_command_v1(text,uuid,text) to authenticated,service_role;
-
-CREATE OR REPLACE FUNCTION public.snacky_data_health_workspace_v1()
+CREATE OR REPLACE FUNCTION data_health_private.workspace()
  RETURNS jsonb
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
@@ -301,6 +291,25 @@ begin
  return result;
 end
 $function$;
+revoke all on function data_health_private.workspace() from public,anon;
+grant execute on function data_health_private.workspace() to authenticated,service_role;
+
+CREATE OR REPLACE FUNCTION public.snacky_data_health_command_v1(p_action text, p_target_id uuid DEFAULT NULL::uuid, p_reason text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE sql
+ SET search_path TO ''
+AS $function$
+  select data_health_private.command(p_action,p_target_id,p_reason);
+$function$;
+revoke all on function public.snacky_data_health_command_v1(text,uuid,text) from public,anon;
+grant execute on function public.snacky_data_health_command_v1(text,uuid,text) to authenticated,service_role;
+
+CREATE OR REPLACE FUNCTION public.snacky_data_health_workspace_v1()
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+ SET search_path TO ''
+AS $function$ select data_health_private.workspace(); $function$;
 revoke all on function public.snacky_data_health_workspace_v1() from public,anon;
 grant execute on function public.snacky_data_health_workspace_v1() to authenticated,service_role;
 
