@@ -69,7 +69,7 @@ test("operational receipt tables keep declared machine amounts separate from Fin
   assert.match(detailPage, /if \(!canSeeMoney\)[\s\S]*?from\("cash_removal_receipts"\)/);
 });
 
-test("cash count asks only for one combined total and derives its period automatically", () => {
+test("new cash confirms saved machine amounts without a second total while legacy cash keeps one manual total", () => {
   assert.equal(calculateDenominationTotal({ "0.5": 2, "5": 3, "20": 4 }, 1.25), 97.25);
   assert.match(simpleCountMigration, /add column if not exists cash_period_start date/);
   assert.match(simpleCountMigration, /add column if not exists cash_period_end date/);
@@ -85,10 +85,18 @@ test("cash count asks only for one combined total and derives its period automat
   assert.match(actions, /confirm_cash_count_auto_period_v1/);
   assert.match(actions, /p_total_amount_lyd: totalAmount/);
   assert.doesNotMatch(actions, /formData\.get\("period_start"\)|formData\.get\("period_end"\)/);
+  assert.match(custodyForms, /name="use_recorded_machine_total"/);
+  assert.match(custodyForms, /No second cash amount is required/);
   assert.match(custodyForms, /name="total_amount_lyd"/);
+  assert.match(custodyForms, /older record has no saved per-machine amounts/);
   assert.doesNotMatch(custodyForms, /name="period_start"|name="period_end"|Cash period from|Cash period to/);
   assert.match(custodyForms, /previous full cash-removal record/);
-  assert.match(detailPage, /last full cash-removal record for each machine/);
+  assert.match(detailPage, /recordedMachineTotal/);
+  assert.match(detailPage, /amount for each machine was already recorded at collection/);
+  assert.match(actions, /from\("cash_collection_machines"\)/);
+  assert.match(actions, /select\("machine_id, removed_amount_lyd"\)/);
+  assert.match(actions, /useRecordedMachineTotal/);
+  assert.match(actions, /rows\.reduce\(\(sum, row\) => sum \+ Number\(row\.removed_amount_lyd\), 0\)/);
   assert.doesNotMatch(custodyForms, /name="count_witness_id"|denominationFieldName|Count every denomination/);
   assert.doesNotMatch(custodyForms, /formType="cash-total-count"[\s\S]*name="evidence_file"/);
   assert.doesNotMatch(custodyForms, /machine_expected|machine_counted/);

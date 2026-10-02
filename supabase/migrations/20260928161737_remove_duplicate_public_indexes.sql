@@ -1,9 +1,0 @@
-drop index if exists public.idx_financial_transactions_purchase_source_type_id;
-drop index if exists public.idx_financial_transactions_source_type_source_id;
-drop index if exists public.idx_product_monthly_purchase_plans_month_product;
-drop index if exists public.idx_route_pick_list_items_checked;
-drop index if exists public.snacky_route_pick_list_items_id_uq;
-drop index if exists public.snacky_route_stop_items_id_uq;
-drop index if exists public.idx_system_activity_logs_actor;
-drop index if exists public.idx_vms_import_preview_rows_batch;
-drop index if exists public.idx_vms_product_mappings_last_seen;

@@ -9,7 +9,7 @@ const sidebar=fs.readFileSync('src/components/Sidebar.tsx','utf8');
 const machines=fs.readFileSync('src/app/machines/page.tsx','utf8');
 
 test('owner data health separates current operational exceptions from legacy cleanup',()=>{
-  for(const label of ['Machines missing site','Active sites missing distance','Negative stock balances','Stale refill orders (>48h)','Cash actions 3–30 days old','Recent VMS failures / partial'])assert.ok(health.includes(label));
+  for(const label of ['Machines missing site','Active sites missing distance','Negative stock balances','Safe stale refill cancellations','Cash actions 3–30 days old','Recent VMS failures / partial'])assert.ok(health.includes(label));
   assert.match(health,/Legacy: older than 30 days/);
   assert.match(health,/Old draft \/ preview batches/);
   assert.match(health,/current_inventory_by_location/);

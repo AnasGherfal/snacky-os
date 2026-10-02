@@ -128,7 +128,7 @@ test('unidentified records stay visible and never substitute a generated ID for 
   assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
 });
 
-test('cash box detail counts every machine separately while Finance keeps one summed box total', () => {
+test('cash box detail reuses recorded machine amounts while Finance keeps one summed box total', () => {
   const api = read('src/app/api/cash-handling/route.ts');
   const ui = read('src/components/CashHandlingWorkspace.tsx');
   assert.match(groupedCashSql, /cash_collection_machine_lines_v1_impl/);
@@ -136,9 +136,10 @@ test('cash box detail counts every machine separately while Finance keeps one su
   assert.match(api, /snacky_cash_collection_machine_lines_v1/);
   assert.match(ui, /Amounts recorded at removal/);
   assert.match(ui, /machine\.removed_amount_lyd/);
-  assert.match(ui, /machine_count_/);
+  assert.match(ui, /amount: Number\(machine\.removed_amount_lyd\)\.toFixed\(2\)/);
   assert.match(ui, /machine_counts: JSON\.stringify\(machineCountRows\)/);
-  assert.match(ui, /Enter the physical counted amount for each machine separately/);
+  assert.match(ui, /No second amount is required/);
+  assert.doesNotMatch(ui, /name=\{\`machine_count_/);
   assert.match(perMachineCountSql, /add column if not exists counted_amount_lyd numeric\(12,2\)/);
   assert.match(perMachineCountSql, /Counted machines must exactly match the machines in this cash box/);
   assert.match(perMachineCountSql, /Cash-box total does not match the per-machine count sum/);
