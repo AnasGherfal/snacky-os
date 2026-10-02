@@ -32,7 +32,9 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
     );
   }
 
-  return <><PageHeader title="Machines" subtitle="Machine master records, targets, and installation context." action={<PrimaryButton href="/machines/new">Add machine</PrimaryButton>} />
+  const missingSiteCount=(data??[]).filter((m:any)=>!m.location_id).length;
+
+  return <><PageHeader title="Machines" subtitle="Machine master records, targets, and installation context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{"Machine setup"+(missingSiteCount?" · "+missingSiteCount+" missing site":"")}</SecondaryButton><PrimaryButton href="/machines/new">Add machine</PrimaryButton></div>} />
     <form className="mb-4 flex flex-wrap gap-2">
       <input type="hidden" name="pageSize" value={pageSize} />
       <SearchInput defaultValue={q} placeholder="Search by machine code or display label..." />
