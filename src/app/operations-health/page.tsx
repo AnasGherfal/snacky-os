@@ -48,7 +48,7 @@ export default async function OperationsHealthPage() {
     ["Active sites missing distance",missingDistance.length,"/machines/setup"],
     ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
     ["Safe stale refill cancellations",Number(counts.safe_refill_cancellations??0),"#stale-refills"],
-    ["Cash actions 3–30 days old",currentCashCount,"/cash-collections"],
+    ["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"],
     ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
   ] as const;
   const activeCards=cards.filter(([,value])=>value>0);
@@ -96,7 +96,7 @@ export default async function OperationsHealthPage() {
     </section>
 
     <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls.</p></div><SecondaryButton href="/cash-collections">Open cash</SecondaryButton></div>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
       {(currentCashCount>0||Number(counts.legacy_cash_unclassified??0)>0||Number(counts.legacy_cash_classified??0)>0)?<div className="mb-4 grid gap-3 sm:grid-cols-3">{currentCashCount>0?<div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div>:null}{Number(counts.legacy_cash_unclassified??0)>0?<div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified)}</strong></div>:null}{Number(counts.legacy_cash_classified??0)>0?<div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified)}</strong></div>:null}</div>:null}
       {!legacyCash.length?<EmptyState title="No legacy cash backlog" body="Older unresolved cash has been cleared or classified."/>:
       <DataTable headers={["Collected","Custody","Reconciliation","Counted","Expected","Classification","Action"]}>{legacyCash.slice(0,50).map((row:any)=><tr key={row.id}>
