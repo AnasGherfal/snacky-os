@@ -12,9 +12,13 @@ test('Data Health cleanup uses signed-in role-checked RPCs',()=>{
  assert.ok(!page.includes('getSupabaseAdminClient'));
  assert.ok(page.includes('snacky_data_health_workspace_v1'));
  assert.ok(migration.includes('Owner or admin access required'));
- assert.ok(migration.includes('create or replace function data_health_private.workspace'));
- assert.ok(migration.includes('security invoker'));
- assert.ok(migration.includes('select data_health_private.workspace()'));
+ assert.ok(migration.toLowerCase().includes('create or replace function data_health_private.workspace'));
+ const workspaceStart=migration.toLowerCase().indexOf('create or replace function public.snacky_data_health_workspace_v1');
+ const workspaceEnd=migration.toLowerCase().indexOf('revoke all on function public.snacky_data_health_workspace_v1',workspaceStart);
+ const publicWorkspace=migration.slice(workspaceStart,workspaceEnd);
+ assert.ok(workspaceStart>=0&&workspaceEnd>workspaceStart);
+ assert.ok(!/security definer/i.test(publicWorkspace));
+ assert.ok(publicWorkspace.includes('select data_health_private.workspace()'));
 });
 
 test('stale refill cancellation is guarded by age state inventory and route safety',()=>{
