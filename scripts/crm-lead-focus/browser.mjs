@@ -167,7 +167,7 @@ try{
   const full=await rpc('owner');assert.deepEqual(new Set(full.rows.slice(0,3).map(x=>x.id)),new Set(focusIds));
   for(const lead of full.rows.slice(0,3)){assert.equal(lead.focused,true);assert.equal(lead.assigned_to,accounts.crm.member);assert.equal(lead.next_action,'Confirm contact details and report the next step');assert.equal(lead.due_date,today);}
   await go(crm,'scope=mine&focus=active');assert.equal(await table(crm).locator('tbody tr').count(),3);assert.equal(await crm.getByRole('button',{name:'Assign & set focus',exact:true}).count(),0);
-  await crm.goto(app+'/my-work');await crm.getByRole('heading',{name:'Your focused places',exact:true}).waitFor();
+  await crm.goto(app+'/my-work');await crm.getByRole('heading',{name:'CRM team focus',exact:true}).waitFor();
  });
  await check('pending bulk command recovers when reassignment empties the filtered list',async()=>{
   await go(owner,'q=Training place 43&scope=mine');
