@@ -4,6 +4,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/co
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageVmsMappings, getEffectivePermissions } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
+import { suggestVmsProduct } from "@/lib/vms-mapping-suggestions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,8 @@ type SupabaseQueryError = {
 
 type ProductOption = { id: string; name: string | null; sku: string | null; barcode: string | null };
 type VmsProductMappingRow = {
+  vms_third_party_product_id?: string | null;
+  vms_barcode?: string | null;
   id: string;
   vms_product_code: string | null;
   vms_product_id: string | null;
@@ -47,6 +50,8 @@ const mappingSelect = [
   "vms_product_code",
   "vms_product_id",
   "vms_product_name",
+  "vms_third_party_product_id",
+  "vms_barcode",
   "snacky_product_id",
   "product_id",
   "snacky_product_name",
@@ -264,7 +269,16 @@ export default async function VmsProductMappingPage({
     return <ErrorState title="Could not load VMS mappings" body={mappingLoadErrorMessage(issue, queryName)} />;
   }
 
-  const rows = ((mappingsResult.data ?? []) as unknown as VmsProductMappingRow[]).map((row) => normalizeMappingRow(row, productById));
+  const rows = ((mappingsResult.data ?? []) as unknown as VmsProductMappingRow[]).map((row) => {
+    const normalized=normalizeMappingRow(row,productById);
+    const suggestion=normalized.status==="needs_review"?suggestVmsProduct({
+      vmsProductId:normalized.vms_product_id??normalized.vms_product_code,
+      vmsProductName:normalized.vms_product_name,
+      thirdPartyProductId:normalized.vms_third_party_product_id,
+      barcode:normalized.vms_barcode,
+    },productRows):null;
+    return {...normalized,suggestion};
+  });
   const count = mappingsResult.count ?? 0;
   const totalMappings = totalMappingsResult.count ?? 0;
   const needsReviewCount = needsReviewResult.count ?? 0;
@@ -350,12 +364,13 @@ export default async function VmsProductMappingPage({
         <EmptyState title="No mappings match these filters" body="Adjust the search or status filter to view more VMS products." />
       ) : (
         <>
-          <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "VMS Selling", "VMS Cost", "Latest Machine", "Match Status", "Last Seen", "Actions"]}>
+          <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "Suggested Match", "VMS Selling", "VMS Cost", "Latest Machine", "Match Status", "Last Seen", "Actions"]}>
             {rows.map((mapping) => (
               <tr key={mapping.id}>
                 <td>{mapping.vms_product_code ?? mapping.vms_product_id ?? "-"}</td>
                 <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
                 <td>{mapping.product?.name ?? mapping.snacky_product_name ?? <span className="text-slate-400">Unmapped</span>}</td>
+                <td>{(mapping as any).suggestion?<div><div className="font-medium text-slate-900">{(mapping as any).suggestion.product.name}</div><div className="text-xs text-slate-500">{(mapping as any).suggestion.confidence}% · {(mapping as any).suggestion.reason}</div><Link className="mt-1 inline-block text-xs text-sky-800 underline" href={"/vms-mappings/"+mapping.id+"/edit?suggest="+(mapping as any).suggestion.product.id}>Review suggestion</Link></div>:mapping.status==="needs_review"?<span className="text-slate-400">No confident match</span>:"-"}</td>
                 <td>{formatMoney(mapping.vms_selling_price_lyd)}</td>
                 <td>{formatMoney(mapping.vms_cost_price_lyd, 4)}</td>
                 <td>{mapping.latest_machine_name ?? "-"}</td>

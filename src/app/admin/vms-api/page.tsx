@@ -194,7 +194,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("vms_stock_snapshots").select("id", { count: "exact", head: true }).eq("source_provider", "xy"),
     supabase.from("vms_machine_status_snapshots").select("id", { count: "exact", head: true }),
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
-    supabase.from("machines").select("id,name,machine_code,vms_machine_id,status").not("vms_machine_id","is",null).order("name"),
+    supabase.from("machines").select("id,name,machine_code,vms_machine_id,status,vms_last_synced_at,vms_online_status").not("vms_machine_id","is",null).order("name"),
     supabase.from("latest_vms_stock_by_slot").select("machine_id,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
   ]);
 
@@ -225,10 +225,15 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const officialTestPassed = officialQueryMachineSucceeded(latestOfficialTest?.response_summary);
   const syncDisabled = !config.ready || !officialTestPassed;
   const syncDisabledTitle = !config.ready ? "Complete the server-side official XY configuration first." : "Run a successful official queryMachine test first.";
-  const mappedMachines=(mappedMachinesResult.data??[]) as Array<{id:string;name:string;machine_code:string;vms_machine_id:string|null;status:string|null}>;
+  const mappedMachines=(mappedMachinesResult.data??[]) as Array<{id:string;name:string;machine_code:string;vms_machine_id:string|null;status:string|null;vms_last_synced_at:string|null;vms_online_status:string|null}>;
   const liveStockRows=(liveStockMachinesResult.data??[]) as Array<{machine_id:string|null;captured_at:string|null}>;
   const liveStockMachineIds=new Set(liveStockRows.map(row=>String(row.machine_id??"")).filter(Boolean));
   const machinesMissingLiveStock=mappedMachines.filter(machine=>!liveStockMachineIds.has(machine.id));
+  const diagnoseMissingStock=(machine:(typeof mappedMachines)[number])=>{
+    if(!machine.vms_last_synced_at)return "Not returned by current official XY machine sync — verify or remove stale local XY link.";
+    if(String(machine.vms_online_status??"")==="0")return "Returned by XY but currently offline and has no configured stock lanes in the active snapshot.";
+    return "Returned by XY but no usable configured stock lanes were present in the active snapshot.";
+  };
   const latestXyStockAt=liveStockRows[0]?.captured_at??null;
   const machineCoverageLabel=`${liveStockMachineIds.size}/${mappedMachines.length}`;
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
@@ -307,7 +312,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </div>
         {machinesMissingLiveStock.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="font-semibold text-amber-950">Machines without usable stock in the active XY snapshot</div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div></div>)}</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div><div className="mt-2 text-xs font-medium text-amber-800">{diagnoseMissingStock(machine)}</div></div>)}</div>
           <p className="mt-3 text-xs text-amber-800">Check whether these machines are newly added/empty, no longer present in XY, or returning only unconfigured lanes before changing their Snacky status.</p>
         </div>:null}
         {(needsReviewCount.count??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>{needsReviewCount.count} XY products need mapping</strong><p className="mt-1 text-xs text-amber-800">Unmapped XY products are not silently created in Snacky.</p></div><a className="btn-secondary" href="/vms-mappings">Review mappings</a></div>:null}
