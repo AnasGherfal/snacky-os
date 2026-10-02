@@ -159,6 +159,8 @@ test('operator visit can finish as repair technician part or offline without clo
  assert.match(reliability,/waiting_on='management'/);
  assert.match(reliability,/insert into public\.crm_tasks/);
  assert.match(reliability,/'admin'/);
+ assert.match(reliability,/Operator diagnosis:/);
+ assert.match(reliability,/next_step,\(a->>'issue_id'\)::uuid,'admin',issue_owner/);
  assert.doesNotMatch(reliability,/update public\.issues\s+set status='resolved'/i);
 });
 
