@@ -42,10 +42,12 @@ export function CashCountForm({
   action,
   id,
   clientSubmissionId,
+  recordedMachineTotal,
 }: {
   action: FormAction;
   id: string;
   clientSubmissionId: string;
+  recordedMachineTotal?: number | null;
 }) {
   return (
     <LocalDraftForm action={action} formType="cash-total-count" draftKeyParts={[id]} className="mt-5 space-y-4">
@@ -54,11 +56,22 @@ export function CashCountForm({
       <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
         No date range is needed here. Snacky OS uses each machine&apos;s previous full cash-removal record as the start and the removal date already saved on this bag as the end.
       </p>
-      <FormField label="Total cash counted (LYD)" required hint="Enter one combined total for the whole bag. Do not split it by denomination or machine.">
-        <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" required className="field-input text-2xl font-semibold" placeholder="0.00" />
-      </FormField>
-      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Save the count now. The VMS comparison is a separate step and can be completed later.</p>
-      <button className="btn-primary w-full">Save cash total</button>
+      {recordedMachineTotal !== null && recordedMachineTotal !== undefined ? (
+        <>
+          <input type="hidden" name="use_recorded_machine_total" value="yes" />
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <div className="text-sm font-medium text-emerald-900">Cash-bag total from the machine amounts already recorded</div>
+            <div className="mt-2 text-3xl font-semibold text-emerald-950">{recordedMachineTotal.toFixed(2)} LYD</div>
+            <p className="mt-2 text-sm leading-6 text-emerald-900">No second cash amount is required. Snacky OS will verify and use the saved per-machine amounts when you confirm.</p>
+          </div>
+        </>
+      ) : (
+        <FormField label="Total cash counted (LYD)" required hint="This older record has no saved per-machine amounts, so enter the physical bag total once.">
+          <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" required className="field-input text-2xl font-semibold" placeholder="0.00" />
+        </FormField>
+      )}
+      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Confirm the saved collection now. The VMS comparison is a separate step and can be completed later.</p>
+      <button className="btn-primary w-full">{recordedMachineTotal !== null && recordedMachineTotal !== undefined ? "Confirm recorded cash total" : "Save cash total"}</button>
     </LocalDraftForm>
   );
 }
