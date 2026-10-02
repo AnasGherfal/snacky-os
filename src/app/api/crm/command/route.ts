@@ -19,6 +19,27 @@ export async function POST(request:Request){
  try{payload=crmPayload(command.values);}catch(error){return NextResponse.json({ok:false,message:error instanceof Error?error.message:'Invalid record data.',resetAllowed:true},{status:400});}
  const db=await getAuthenticatedSupabaseServerClient();
  if(!db)return NextResponse.json({ok:false,message:'Session unavailable. Keep the saved request and sign in again.'},{status:503});
+ if(command.action==='machine.report'){
+  try{
+   const machineId=String(payload.machine_id??''),description=String(payload.description??''),priority=String(payload.priority??'high');
+   if(!uuidPattern.test(machineId))return NextResponse.json({ok:false,message:'Choose a valid machine.',resetAllowed:true},{status:400});
+   const {data,error}=await db.rpc('snacky_report_machine_issue_v1',{
+    p_request_id:command.id,p_machine_id:machineId,p_description:description,p_priority:priority
+   });
+   if(error){
+    console.error('[crm] Machine report failed',{code:error.code,message:error.message});
+    const knownRollback=/^(22|23)/.test(String(error.code))||['P0001','42501','40001'].includes(String(error.code));
+    return NextResponse.json({ok:false,message:knownRollback?error.message:'Could not confirm the machine report. Retry the same saved request.',resetAllowed:knownRollback},{status:knownRollback?409:503});
+   }
+   const issueId=String(data?.id??'');
+   if(!data||data.ok!==true||!uuidPattern.test(issueId))return NextResponse.json({ok:false,message:'Could not confirm the machine report. Retry the same saved request.'},{status:503});
+   for(const path of ['/my-work','/issues','/follow-ups','/operator/issues'])revalidatePath(path,'layout');
+   return NextResponse.json({ok:true,commandId:command.id,id:issueId,kind:'issue',href:crmHref('issue',issueId),message:'Machine issue sent to operators.'});
+  }catch(error){
+   console.error('[crm] Machine report result uncertain',error);
+   return NextResponse.json({ok:false,message:'Could not confirm the machine report. Retry this same saved request.'},{status:503});
+  }
+ }
  try{
   const {data,error}=await db.rpc('snacky_crm_command_v1',{p_command_id:command.id,p_action:command.action,p_id:command.recordId||null,p_payload:payload});
   if(error){

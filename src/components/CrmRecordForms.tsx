@@ -3,7 +3,7 @@ import { CrmForm } from '@/components/CrmForm';
 import { crmNames,crmOptionRows,issueCategories,issueStatuses,leadStatuses,locationTypes,taskStatuses,type CrmField,type CrmKind } from '@/lib/crm-workspace';
 
 type Context={me:string;manager:boolean;owner_admin:boolean;staff:boolean;today:string;directory:any[];options:any};
-export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:any;context:Context;userId:string;ar:boolean}){
+export function CrmRecordForm({kind,row,context,userId,ar,machineReport=false}:{kind:CrmKind;row?:any;context:Context;userId:string;ar:boolean;machineReport?:boolean}){
  const tr=(en:string,arabic:string)=>ar?arabic:en,d=row?.data??{},relation=d.relationship??{};
  const f=(name:string,en:string,arabic:string,extra:Partial<CrmField>={}):CrmField=>({name,label:tr(en,arabic),value:String(d[name]??''),...extra});
  const people=(field=false)=>context.directory.filter(p=>field||p.role!=='operator').map(p=>({value:p.id,label:p.name}));
@@ -18,7 +18,13 @@ export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:an
    f('source','Source','مصدر الجهة',{type:'select',value:d.source??'manual',advanced:true,options:crmOptionRows([['manual','Employee research','بحث الموظف'],['owner','Snacky management','إدارة سناكي'],['customer_support','Customer support','خدمة العملاء'],['field_outreach','Field outreach','زيارة ميدانية'],['inbound','Website / social inquiry','استفسار الموقع / التواصل'],['referral','Referral','ترشيح'],['archive_import','Imported archive','أرشيف مستورد'],['other','Other','أخرى']],ar)}),f('source_detail','Source details','تفاصيل المصدر',{advanced:true}),next[2],f('visibility','Who can view this lead?','من يمكنه عرض الجهة؟',{type:'select',value:d.visibility??'team',advanced:true,options:crmOptionRows([['team','Customer relations team','فريق علاقات العملاء'],['assigned','Assigned employee and management','الموظف المسؤول والإدارة']],ar)})];
  }
  if(kind==='issue'){
-  if(!row){
+  if(!row&&machineReport){
+   fields=[
+    f('machine_id','Machine','الماكينة',{type:'select',value:'',options:[{value:'',label:tr('Choose the machine','اختر الماكينة')},...(context.options.machines??[]).map((m:any)=>({value:m.id,label:m.name}))],required:true,hint:tr('Saving sends this fault directly to the shared operator queue.','عند الحفظ يذهب العطل مباشرةً إلى قائمة المشغّلين المشتركة.')}),
+    f('description','What is wrong?','ما العطل؟',{type:'textarea',required:true,hint:tr('Describe only what was reported or observed.','صِف فقط ما تم الإبلاغ عنه أو ملاحظته.')}),
+    f('priority','Priority','الأولوية',{type:'select',value:'high',options:crmOptionRows([['normal','Normal','عادية'],['high','High','عالية'],['critical','Critical','حرجة']],ar),required:true})
+   ];
+  }else if(!row){
    fields=[
     f('customer_phone','Customer WhatsApp / phone','رقم واتساب / هاتف العميل',{type:'tel',required:true,hint:tr('Use the number from the incoming WhatsApp chat or call.','استخدمي رقم العميل من محادثة واتساب أو المكالمة.')}),
     f('location_id','Location','الموقع',{type:'select',value:'',options:locationOptions,required:true}),
@@ -51,7 +57,8 @@ export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:an
  if(kind==='obligation')fields=[f('title','Obligation','الالتزام',{value:'',required:true}),f('location_id','Location','الموقع',{type:'select',options:locationOptions,required:true}),f('amount_lyd','Amount (LYD)','المبلغ (د.ل)',{type:'number',min:0,required:true}),f('due_date','Due date','تاريخ الاستحقاق',{type:'date',required:true}),assignee,f('frequency','Frequency','التكرار',{type:'select',value:'monthly',options:crmOptionRows([['once','Once','مرة واحدة'],['monthly','Monthly','شهري'],['quarterly','Quarterly','ربع سنوي'],['yearly','Yearly','سنوي']],ar)}),f('notes','Notes','ملاحظات',{type:'textarea'})];
  if(!row&&context.manager&&['lead','issue','obligation'].includes(kind))fields.push(f('is_practice','Practice record — excluded from real work reports','سجل تدريبي — مستبعد من تقارير العمل الفعلي',{type:'checkbox',value:'false',advanced:true}));
  const hidden:Record<string,string>=row?{version:String(d.version??'')}:{};
- return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}`} action={kind==='obligation'?'obligation.create':`${kind}.save`} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
+ const action=machineReport?'machine.report':kind==='obligation'?'obligation.create':`${kind}.save`;
+ return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}:${machineReport?'machine':'standard'}`} action={action} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):machineReport?tr('Report & notify operators','تسجيل العطل وإشعار المشغّلين'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
 }
 
 export function CrmFollowupForm({kind,id,context,userId,ar,priority='normal'}:{kind:CrmKind;id:string;context:Context;userId:string;ar:boolean;priority?:string}){
@@ -68,7 +75,7 @@ export function CrmFollowupForm({kind,id,context,userId,ar,priority='normal'}:{k
 }
 export function CrmNoteForm({kind,id,userId,ar}:{kind:CrmKind;id:string;userId:string;ar:boolean}){
  return <CrmForm action="note.add" recordId={id} userId={userId} hidden={{kind}} fields={[
-  {name:'activity_type',label:ar?'نوع التواصل':'Interaction',type:'select',value:'note',options:crmOptionRows([['note','Note','ملاحظة'],['call','Call','مكالمة'],['whatsapp','WhatsApp','واتساب'],['email','Email','بريد إلكتروني'],['visit','Field visit','زيارة ميدانية'],['meeting','Meeting','اجتماع'],['proposal','Proposal sent','إرسال عرض'],['agreement','Agreement','اتفاق'],['other','Other','أخرى']],ar)},
+  {name:'activity_type',label:ar?'نوع التواصل':'Interaction',type:'select',value:'whatsapp',options:crmOptionRows([['call','Call','مكالمة'],['whatsapp','WhatsApp','واتساب'],['email','Email','بريد إلكتروني'],['visit','Field visit','زيارة ميدانية'],['meeting','Meeting','اجتماع'],['proposal','Proposal sent','إرسال عرض'],['agreement','Agreement','اتفاق'],['other','Other','أخرى']],ar)},
   {name:'summary',label:ar?'ماذا حدث وما النتيجة؟':'What happened and what was the outcome?',type:'textarea',required:true},
  ]} submitLabel={ar?'حفظ النشاط':'Save activity'} stay/>;
 }
