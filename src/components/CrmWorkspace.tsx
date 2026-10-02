@@ -20,6 +20,14 @@ export type CrmSearchParams=Record<string,string|string[]|undefined>;
 const scalar=(params:CrmSearchParams,key:string)=>typeof params[key]==='string'?params[key] as string:'';
 function formattedDate(value:any,ar:boolean){if(!value)return ar?'غير مسجّل':'Not recorded';const date=new Date(String(value));return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat(ar?'ar-LY':'en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Tripoli'}).format(date);}
 function money(value:unknown){return value===null||value===undefined?'—':`${Number(value).toLocaleString('en-US',{maximumFractionDigits:2})} LYD`;}
+function businessDateMinusDays(value:string,days:number){
+ const match=/^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value);if(!match)return value;
+ let year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+ const leap=(y:number)=>y%4===0&&(y%100!==0||y%400===0);
+ const monthDays=(y:number,m:number)=>m===2?(leap(y)?29:28):[4,6,9,11].includes(m)?30:31;
+ for(let i=0;i<days;i++){day-=1;if(day<1){month-=1;if(month<1){month=12;year-=1;}day=monthDays(year,month);}}
+ return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
 async function dispatchNotificationDevices(tasks:any[]){
  const members=[...new Set(tasks.map((task:any)=>String(task.assigned_to??'')).filter(Boolean))];
  if(!members.length)return new Map<string,number>();
@@ -97,7 +105,7 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
  let repeatIssueRows:any[]=[];
  const issueMachineId=d.machine_id??row?.machine_id;
  if(section==='issue'&&row&&context.staff&&db&&issueMachineId&&d.issue_type){
-  const since30=new Date(Date.now()-30*24*60*60*1000).toISOString();
+  const since30=`${businessDateMinusDays(context.today,30)}T00:00:00Z`;
   const repeatResult=await db.from('issues').select('id,created_at,status,description').eq('machine_id',issueMachineId).eq('issue_type',d.issue_type).is('archived_at',null).eq('is_practice',false).gte('created_at',since30).order('created_at',{ascending:false}).limit(12);
   if(!repeatResult.error){repeatIssueRows=repeatResult.data??[];repeatIssueCount=repeatIssueRows.length;}
   else console.error('[crm-workspace] Repeat issue history unavailable',{issue_id:row.id,error:repeatResult.error});
