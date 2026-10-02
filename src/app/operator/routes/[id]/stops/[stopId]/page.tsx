@@ -224,6 +224,15 @@ interface MachineStorageStockRow {
   createdAt: string | null;
 }
 
+interface MachineIssueSummary {
+  id: string;
+  issueType: string;
+  priority: string;
+  status: string;
+  description: string;
+  createdAt: string | null;
+}
+
 interface StopData {
   stopId: string;
   routeId: string;
@@ -245,6 +254,7 @@ interface StopData {
   manualSales?: NormalizedRouteManualSale[];
   manualSalesLoadError?: boolean;
   adjustments?: InventoryAdjustmentRow[];
+  machineIssues?: MachineIssueSummary[];
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
 }
@@ -1382,6 +1392,44 @@ export default function MachineStopPage() {
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         <RouteStopQuickActions />
+
+        {stopData.machineIssues?.length ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 md:p-5">
+            <div>
+              <h2 className="text-lg font-semibold text-amber-950">
+                {tr("Issues reported for this machine", "بلاغات مسجلة على هذه الماكينة")}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-amber-900">
+                {tr(
+                  "Check these while you are at the machine. Customer Relations still owns the complaint and customer follow-up; your job here is to inspect the physical problem and report what you find.",
+                  "راجع هذه البلاغات وأنت عند الماكينة. تبقى علاقات العملاء مسؤولة عن البلاغ والتواصل مع العميل؛ المطلوب منك هنا فحص المشكلة الميدانية وتسجيل ما وجدته.",
+                )}
+              </p>
+            </div>
+            <div className="mt-3 space-y-2">
+              {stopData.machineIssues.map((issue) => (
+                <article key={issue.id} className="rounded-xl border border-amber-200 bg-white p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-slate-900">{issue.issueType.replaceAll("_", " ")}</p>
+                      {issue.createdAt ? (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {tr("Reported", "تاريخ البلاغ")}{" "}
+                          {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Tripoli" }).format(new Date(issue.createdAt))}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusBadge status={issue.priority} />
+                      <StatusBadge status={issue.status} />
+                    </div>
+                  </div>
+                  {issue.description ? <p className="mt-2 text-sm leading-6 text-slate-700">{issue.description}</p> : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <p>{t(error, error)}</p>

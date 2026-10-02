@@ -58,7 +58,7 @@ export function CrmRecordForm({kind,row,context,userId,ar,machineReport=false}:{
  if(!row&&context.manager&&['lead','issue','obligation'].includes(kind))fields.push(f('is_practice','Practice record — excluded from real work reports','سجل تدريبي — مستبعد من تقارير العمل الفعلي',{type:'checkbox',value:'false',advanced:true}));
  const hidden:Record<string,string>=row?{version:String(d.version??'')}:{};
  const action=machineReport?'machine.report':kind==='obligation'?'obligation.create':`${kind}.save`;
- return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}:${machineReport?'machine':'standard'}`} action={action} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):machineReport?tr('Report & notify operators','تسجيل العطل وإشعار المشغّلين'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
+ return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}:${machineReport?'machine':'standard'}`} action={action} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):machineReport?tr('Record machine issue','تسجيل عطل الماكينة'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
 }
 
 export function CrmFollowupForm({kind,id,context,userId,ar,priority='normal'}:{kind:CrmKind;id:string;context:Context;userId:string;ar:boolean;priority?:string}){

@@ -84,6 +84,14 @@ type MachineVmsPriceRow = {
   vms_selling_price_lyd?: number | string | null;
   product_image_url?: string | null;
 };
+type MachineIssueRow = {
+  id: string;
+  issue_type?: string | null;
+  priority?: string | null;
+  status?: string | null;
+  description?: string | null;
+  created_at?: string | null;
+};
 type AdjustmentRow = {
   id: string;
   adjustment_type?: string | null;
@@ -655,6 +663,7 @@ export async function GET(
       adjustmentsResult,
       manualSalesResult,
       manualMachineSalesResult,
+      machineIssuesResult,
     ] = await Promise.all([
       supabase.rpc("snacky_route_bag_balances", { p_route_id: routeId }),
       supabase
@@ -703,6 +712,14 @@ export async function GET(
         .eq("status", "confirmed")
         .order("sale_time", { ascending: false })
         .limit(200),
+      operationalReadClient
+        .from("issues")
+        .select("id, issue_type, priority, status, description, created_at")
+        .eq("machine_id", stop.machine_id)
+        .is("archived_at", null)
+        .eq("is_practice", false)
+        .order("created_at", { ascending: false })
+        .limit(20),
     ]);
     if (routeBagBalancesError) {
       throw new Error(`Could not load the authoritative route inventory balance: ${errorMessage(routeBagBalancesError)}`);
@@ -738,6 +755,19 @@ export async function GET(
     if (manualMachineSalesResult.error && !isMissingTable(manualMachineSalesResult.error, "route_manual_sales")) {
       logOptionalStopDataIssue({ step: "load_manual_machine_sales", query: "route_manual_sales", routeId, stopId, profile, route, stop, error: manualMachineSalesResult.error });
     }
+    if (machineIssuesResult.error) {
+      logOptionalStopDataIssue({ step: "load_machine_issues", query: "issues", routeId, stopId, profile, route, stop, error: machineIssuesResult.error });
+    }
+    const machineIssues = (machineIssuesResult.error ? [] : (machineIssuesResult.data ?? []) as MachineIssueRow[])
+      .filter((issue) => !["resolved", "closed"].includes(String(issue.status ?? "")))
+      .map((issue) => ({
+        id: issue.id,
+        issueType: issue.issue_type ?? "machine_issue",
+        priority: issue.priority ?? "normal",
+        status: issue.status ?? "open",
+        description: issue.description ?? "",
+        createdAt: issue.created_at ?? null,
+      }));
 
     const storageStockClient = getSupabaseAdminClient() ?? supabase;
     const { data: machineStorageStockRows, error: machineStorageStockError } = await storageStockClient
@@ -1010,6 +1040,7 @@ export async function GET(
       manualSalesLoadError: Boolean(manualSalesResult.error),
       machineStorageStock: machineStorageStockRows ?? [],
       adjustments,
+      machineIssues,
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
