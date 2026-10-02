@@ -1,10 +1,9 @@
-
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { DataHealthActionButton } from "@/components/DataHealthActionButton";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
-import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -13,120 +12,106 @@ function fmt(value: unknown) {
   const d = new Date(String(value));
   return Number.isNaN(d.getTime()) ? String(value) : new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Tripoli" }).format(d);
 }
-function daysAgo(days: number) {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString();
-}
+function daysAgo(days:number){const d=new Date();d.setUTCDate(d.getUTCDate()-days);return d.toISOString();}
 
 export default async function OperationsHealthPage() {
-  const profile = await getCurrentProfile();
-  if (!profile || profile.active_status !== "active" || !hasAnyRole(profile, ["owner", "admin"])) redirect("/unauthorized");
-  const db = getSupabaseAdminClient();
-  if (!db) return <EmptyState title="Data Health unavailable" body="The server database connection is unavailable." />;
+  const profile=await getCurrentProfile();
+  if(!profile||profile.active_status!=="active"||!hasAnyRole(profile,["owner","admin"]))redirect("/unauthorized");
+  const db=await getAuthenticatedSupabaseServerClient();
+  if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
-  const staleRefillCutoff = daysAgo(2);
-  const cashCurrentCutoff = daysAgo(30);
-  const cashStaleCutoff = daysAgo(3);
-  const vmsRecentCutoff = daysAgo(30);
-  const legacyCutoff = daysAgo(14);
-
-  const [
-    machinesResult,
-    locationsResult,
-    negativeInventoryResult,
-    staleRefillsResult,
-    cashCurrentResult,
-    cashLegacyResult,
-    vmsRecentResult,
-    vmsLegacyResult,
-  ] = await Promise.all([
+  const [workspaceResult,machinesResult,locationsResult,currentCashResult]=await Promise.all([
+    db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
-    db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status", "active").order("name"),
-    db.from("current_inventory_by_location").select("product_id,product_name,location_type,location_id,location_name,quantity_on_hand").lt("quantity_on_hand", 0).order("quantity_on_hand", { ascending: true }).limit(100),
-    db.from("refill_orders").select("id,machine_id,status,generated_at,route_id,notes,machine:machines(name,machine_code)").in("status", ["draft","assigned","picked"]).lt("generated_at", staleRefillCutoff).order("generated_at", { ascending: true }).limit(100),
-    db.from("cash_collections").select("id,machine_id,reconciliation_status,variance,collected_at,actual_cash_collected,vms_expected_cash").is("voided_at", null).in("reconciliation_status", ["pending","variance_review"]).gte("collected_at", cashCurrentCutoff).lt("collected_at", cashStaleCutoff).order("collected_at", { ascending: true }).limit(100),
-    db.from("cash_collections").select("id,reconciliation_status,collected_at").is("voided_at", null).in("reconciliation_status", ["pending","variance_review"]).lt("collected_at", cashCurrentCutoff).order("collected_at", { ascending: true }).limit(500),
-    db.from("vms_import_batches").select("id,file_name,original_file_name,report_type,status,error_count,rows_needing_review,latest_error,imported_at,uploaded_at,is_active,deleted_at").is("deleted_at", null).in("status", ["failed","partially_imported","imported_with_warnings"]).gte("uploaded_at", vmsRecentCutoff).order("uploaded_at", { ascending: false }).limit(100),
-    db.from("vms_import_batches").select("id,status,uploaded_at").is("deleted_at", null).in("status", ["draft","previewed"]).lt("uploaded_at", legacyCutoff).order("uploaded_at", { ascending: true }).limit(500),
+    db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
+    db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
   ]);
 
-  const machines = machinesResult.data ?? [];
-  const locations = locationsResult.data ?? [];
-  const missingMachineLocation = machines.filter((m: any) => !m.location_id);
-  const missingDistance = locations.filter((l: any) => l.distance_from_storage_km === null || l.distance_from_storage_km === undefined);
-  const negativeInventory = negativeInventoryResult.data ?? [];
-  const staleRefills = staleRefillsResult.data ?? [];
-  const cashCurrent = cashCurrentResult.data ?? [];
-  const cashLegacy = cashLegacyResult.data ?? [];
-  const vmsRecent = vmsRecentResult.data ?? [];
-  const vmsLegacy = vmsLegacyResult.data ?? [];
+  if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
+    console.error("[data-health] Workspace unavailable",workspaceResult.error);
+    return <EmptyState title="Data Health unavailable" body="Snacky OS could not load the cleanup workspace."/>;
+  }
 
-  const currentExceptions = [
-    { label: "Machines missing site", value: missingMachineLocation.length, href: "/machines/setup", critical: true },
-    { label: "Active sites missing distance", value: missingDistance.length, href: "/machines/setup", critical: true },
-    { label: "Negative stock balances", value: negativeInventory.length, href: "/inventory/reconciliation", critical: true },
-    { label: "Stale refill orders (>48h)", value: staleRefills.length, href: "/refills", critical: staleRefills.length > 0 },
-    { label: "Cash actions 3–30 days old", value: cashCurrent.length, href: "/cash-collections", critical: cashCurrent.length > 0 },
-    { label: "Recent VMS failures / partial", value: vmsRecent.length, href: "/vms-import", critical: vmsRecent.length > 0 },
-  ];
+  const data=workspaceResult.data as any,counts=data.counts??{};
+  const inventoryHealth=Array.isArray(data.inventory_health)?data.inventory_health:[];
+  const staleRefills=Array.isArray(data.stale_refills)?data.stale_refills:[];
+  const legacyCash=Array.isArray(data.legacy_cash)?data.legacy_cash:[];
+  const vmsCleanup=Array.isArray(data.vms_cleanup)?data.vms_cleanup:[];
+  const machines=machinesResult.data??[],locations=locationsResult.data??[];
+  const missingMachineLocation=machines.filter((m:any)=>!m.location_id);
+  const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
+  const currentCashCount=currentCashResult.count??0;
+
+  const cards=[
+    ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
+    ["Active sites missing distance",missingDistance.length,"/machines/setup"],
+    ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
+    ["Safe stale refill cancellations",Number(counts.safe_refill_cancellations??0),"#stale-refills"],
+    ["Cash actions 3–30 days old",currentCashCount,"/cash-collections"],
+    ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
+  ] as const;
 
   return <div className="space-y-6">
-    <PageHeader
-      title="Data Health"
-      subtitle="Owner exception center: fix current operational data first, then clean legacy backlog without mixing the two."
-      action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}
-    />
+    <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {currentExceptions.map((item) => <Link key={item.label} href={item.href} className={"rounded-xl border p-4 "+(item.critical && item.value > 0 ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-white")}>
-        <div className="text-xs font-medium text-slate-500">{item.label}</div>
-        <div className="mt-1 text-3xl font-semibold text-slate-950">{item.value}</div>
-        <div className="mt-2 text-xs text-sky-800">Open records →</div>
-      </Link>)}
+      {cards.map(([label,value,href])=><Link key={label} href={href} className={"rounded-xl border p-4 "+(value>0?"border-rose-200 bg-rose-50":"border-slate-200 bg-white")}><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>)}
     </section>
 
     <section className="surface-card">
-      <div className="mb-4"><h2 className="text-lg font-semibold">Machine & location setup</h2><p className="mt-1 text-sm text-slate-500">Operating machines need a current site; active sites need one-way distance from storage.</p></div>
-      {!missingMachineLocation.length && !missingDistance.length ? <EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance." /> :
+      <div className="mb-4"><h2 className="text-lg font-semibold">Machine & location setup</h2><p className="mt-1 text-sm text-slate-500">Every operating machine needs its real current site; every active site should have one-way distance from storage.</p></div>
+      {!missingMachineLocation.length&&!missingDistance.length?<EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance."/>:
       <div className="grid gap-5 xl:grid-cols-2">
-        <div><h3 className="mb-2 font-medium">Machines without site</h3>{!missingMachineLocation.length ? <p className="text-sm text-slate-500">None.</p> :
-          <div className="space-y-2">{missingMachineLocation.map((m: any) => <div key={m.id} className="rounded-lg border border-slate-200 p-3"><div className="font-medium">{m.name}</div><div className="text-xs text-slate-500">{m.machine_code} · {m.status}</div></div>)}</div>}
-        </div>
-        <div><h3 className="mb-2 font-medium">Sites missing distance</h3>{!missingDistance.length ? <p className="text-sm text-slate-500">None.</p> :
-          <div className="space-y-2">{missingDistance.map((l: any) => <div key={l.id} className="rounded-lg border border-slate-200 p-3"><div className="font-medium">{l.name}</div><div className="text-xs text-slate-500">{l.address ?? "No address recorded"}</div></div>)}</div>}
-        </div>
+        <div><h3 className="mb-2 font-medium">Machines without site</h3>{missingMachineLocation.map((m:any)=><div key={m.id} className="mb-2 rounded-lg border p-3"><strong>{m.name}</strong><p className="text-xs text-slate-500">{m.machine_code} · {m.status}</p></div>)}</div>
+        <div><h3 className="mb-2 font-medium">Sites missing distance</h3>{missingDistance.map((l:any)=><div key={l.id} className="mb-2 rounded-lg border p-3"><strong>{l.name}</strong><p className="text-xs text-slate-500">{l.address??"No address recorded"}</p></div>)}</div>
       </div>}
     </section>
 
-    <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Negative inventory</h2><p className="mt-1 text-sm text-slate-500">Negative physical stock should be reconciled, not silently carried forward.</p></div><SecondaryButton href="/inventory/reconciliation">Open inventory reconciliation</SecondaryButton></div>
-      {!negativeInventory.length ? <EmptyState title="No negative stock" body="Current inventory has no negative balances." /> :
-      <DataTable headers={["Location","Type","Product","Quantity"]}>{negativeInventory.map((row: any, index: number) => <tr key={[row.location_type,row.location_id,row.product_id,index].join("-")}><td>{row.location_name ?? "-"}</td><td>{row.location_type}</td><td>{row.product_name}</td><td className="font-semibold text-rose-700">{Number(row.quantity_on_hand)}</td></tr>)}</DataTable>}
-    </section>
-
-    <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Stale refill work</h2><p className="mt-1 text-sm text-slate-500">Draft, assigned or picked refill orders older than 48 hours may still reserve stock or confuse today’s work.</p></div><SecondaryButton href="/refills">Open refills</SecondaryButton></div>
-      {!staleRefills.length ? <EmptyState title="No stale refill orders" body="All unfinished refill work is recent." /> :
-      <DataTable headers={["Generated","Machine","Status","Route","Notes"]}>{staleRefills.map((row: any) => <tr key={row.id}><td>{fmt(row.generated_at)}</td><td>{row.machine?.name ?? row.machine?.machine_code ?? row.machine_id ?? "-"}</td><td><StatusBadge status={row.status} /></td><td>{row.route_id ? <Link className="link-secondary" href={"/routes/"+row.route_id}>Open route</Link> : "-"}</td><td>{row.notes ?? "-"}</td></tr>)}</DataTable>}
-    </section>
-
-    <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash reconciliation</h2><p className="mt-1 text-sm text-slate-500">Current work is separated from older legacy backlog so today’s cash controls stay usable.</p></div><SecondaryButton href="/cash-collections">Open cash</SecondaryButton></div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-amber-800">Actionable: 3–30 days old</div><div className="mt-1 text-3xl font-semibold">{cashCurrent.length}</div></div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-medium text-slate-600">Legacy: older than 30 days</div><div className="mt-1 text-3xl font-semibold">{cashLegacy.length}</div><p className="mt-1 text-xs text-slate-500">Backfill/archive separately; do not mix with current daily queue.</p></div>
+    <section className="surface-card" id="inventory-health">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">Inventory integrity</h2><p className="mt-1 text-sm text-slate-500">A negative balance becomes an audit case. Snacky OS never invents stock to make the warning disappear.</p></div>
+        <div className="flex flex-wrap gap-2"><DataHealthActionButton action="scan_negative_inventory" label="Scan / refresh cases" requiresReason={false}/><SecondaryButton href="/inventory/reconciliation">Inventory reconciliation</SecondaryButton></div>
       </div>
-      {cashCurrent.length ? <div className="mt-4"><DataTable headers={["Collected","Status","Counted","Expected","Variance","Record"]}>{cashCurrent.slice(0,20).map((row: any)=><tr key={row.id}><td>{fmt(row.collected_at)}</td><td><StatusBadge status={row.reconciliation_status}/></td><td>{row.actual_cash_collected ?? "-"}</td><td>{row.vms_expected_cash ?? "-"}</td><td>{row.variance ?? "-"}</td><td><Link className="link-secondary" href={"/cash-collections/"+row.id}>Open</Link></td></tr>)}</DataTable></div> : null}
+      {!inventoryHealth.length?<EmptyState title="No open inventory health cases" body="Scan when a negative balance appears; corrected cases stay open until you close them with a note."/>:
+      <DataTable headers={["Location","Product","Current qty","Case","Action"]}>{inventoryHealth.slice(0,50).map((row:any,index:number)=><tr key={row.case_id??[row.location_type,row.location_id,row.product_id,index].join("-")}>
+        <td><div className="font-medium">{row.location_name??"-"}</div><div className="text-xs text-slate-500">{row.location_type}</div></td>
+        <td>{row.product_name}</td>
+        <td className={Number(row.current_quantity??0)<0?"font-semibold text-rose-700":"font-semibold text-emerald-700"}>{row.current_quantity??0}</td>
+        <td>{row.case_id?<StatusBadge status={row.ready_to_resolve?"corrected_waiting_close":"open"}/>:<span className="text-xs text-amber-700">Scan cases first</span>}</td>
+        <td>{row.ready_to_resolve&&row.case_id?<DataHealthActionButton action="resolve_inventory_case" targetId={row.case_id} label="Close corrected case" defaultReason="Physical and ledger balance verified after correction"/>:<Link className="link-secondary" href="/inventory/reconciliation">Review inventory</Link>}</td>
+      </tr>)}</DataTable>}
+    </section>
+
+    <section className="surface-card" id="stale-refills">
+      <div className="mb-4"><h2 className="text-lg font-semibold">Stale refill orders</h2><p className="mt-1 text-sm text-slate-500">{Number(counts.safe_refill_cancellations??0)} can be cancelled safely. {Number(counts.picked_refill_review??0)} picked orders remain review-only because physical custody may already exist.</p></div>
+      {!staleRefills.length?<EmptyState title="No stale refill work" body="All unfinished refill orders are recent."/>:
+      <DataTable headers={["Generated","Machine","Refill","Route","Ledger","Action"]}>{staleRefills.slice(0,50).map((row:any)=><tr key={row.id}>
+        <td>{fmt(row.generated_at)}</td><td>{row.machine_name??row.machine_code??row.machine_id??"-"}</td><td><StatusBadge status={row.status}/></td>
+        <td>{row.route_id?<><StatusBadge status={row.route_status??"unknown"}/> <Link className="link-secondary" href={"/routes/"+row.route_id}>Route</Link></>:"No route"}</td>
+        <td>{row.has_movements?"Inventory movements exist":"No linked inventory movement"}</td>
+        <td>{row.can_cancel?<DataHealthActionButton action="cancel_stale_refill" targetId={row.id} label="Cancel stale refill" defaultReason="Obsolete refill order; no inventory movement and no active route"/>:<span className="text-xs font-medium text-amber-700">{row.status==="picked"?"Picked stock requires manual inventory review":"Cancellation blocked by safety checks"}</span>}</td>
+      </tr>)}</DataTable>}
     </section>
 
     <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">VMS import health</h2><p className="mt-1 text-sm text-slate-500">Recent failed/partial imports are operational exceptions; old draft/preview batches are legacy cleanup.</p></div><SecondaryButton href="/vms-import">Open VMS imports</SecondaryButton></div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-rose-800">Recent failures / partial / warnings</div><div className="mt-1 text-3xl font-semibold">{vmsRecent.length}</div></div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-medium text-slate-600">Old draft / preview batches</div><div className="mt-1 text-3xl font-semibold">{vmsLegacy.length}</div></div>
-      </div>
-      {vmsRecent.length ? <div className="mt-4"><DataTable headers={["Uploaded","File","Type","Status","Errors","Review rows","Record"]}>{vmsRecent.slice(0,25).map((row: any)=><tr key={row.id}><td>{fmt(row.uploaded_at)}</td><td>{row.original_file_name ?? row.file_name ?? "-"}</td><td>{row.report_type ?? "-"}</td><td><StatusBadge status={row.status}/></td><td>{Number(row.error_count ?? 0)}</td><td>{Number(row.rows_needing_review ?? 0)}</td><td><Link className="link-secondary" href={"/vms-import/"+row.id}>Open</Link></td></tr>)}</DataTable></div>:null}
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls.</p></div><SecondaryButton href="/cash-collections">Open cash</SecondaryButton></div>
+      <div className="mb-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div><div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified??0)}</strong></div><div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified??0)}</strong></div></div>
+      {!legacyCash.length?<EmptyState title="No legacy cash backlog" body="Older unresolved cash has been cleared or classified."/>:
+      <DataTable headers={["Collected","Custody","Reconciliation","Counted","Expected","Classification","Action"]}>{legacyCash.slice(0,50).map((row:any)=><tr key={row.id}>
+        <td>{fmt(row.collected_at)}</td><td><StatusBadge status={row.custody_status}/></td><td><StatusBadge status={row.reconciliation_status}/></td><td>{row.actual_cash_collected??"-"}</td><td>{row.vms_expected_cash??"-"}</td>
+        <td>{row.classification==="legacy_backlog"?<><strong>Legacy backlog</strong><div className="text-xs text-slate-500">{row.classification_reason}</div></>:"Unclassified"}</td>
+        <td>{row.classification==="legacy_backlog"?<DataHealthActionButton action="unclassify_legacy_cash" targetId={row.id} label="Restore to legacy queue" requiresReason={false}/>:<DataHealthActionButton action="classify_legacy_cash" targetId={row.id} label="Mark legacy backlog" defaultReason="Historical record predates current cash reconciliation controls"/>}</td>
+      </tr>)}</DataTable>}
+    </section>
+
+    <section className="surface-card" id="vms-health">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">VMS health & cleanup</h2><p className="mt-1 text-sm text-slate-500">Only old, inactive batches with zero imported rows can be archived here. Recent partial imports stay visible for repair.</p></div><SecondaryButton href="/vms-import">Open VMS imports</SecondaryButton></div>
+      <div className="mb-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><div className="text-xs">Recent failures / partial / warnings</div><strong className="text-2xl">{Number(counts.vms_recent_attention??0)}</strong></div><div className="rounded-xl border p-3"><div className="text-xs">Safe archive candidates</div><strong className="text-2xl">{Number(counts.vms_cleanup_candidates??0)}</strong></div></div>
+      {!vmsCleanup.length?<EmptyState title="No VMS cleanup items" body="There are no recent problem batches or old abandoned batches."/>:
+      <DataTable headers={["Uploaded","File","Type","Status","Imported","Errors","Review","Action"]}>{vmsCleanup.slice(0,60).map((row:any)=><tr key={row.id}>
+        <td>{fmt(row.uploaded_at)}</td><td>{row.original_file_name??row.file_name??"-"}</td><td>{row.report_type??"-"}</td><td><StatusBadge status={row.status}/></td><td>{Number(row.rows_imported??0)}</td><td>{Number(row.error_count??0)}</td><td>{Number(row.rows_needing_review??0)}</td>
+        <td>{row.can_archive?<DataHealthActionButton action="archive_vms_batch" targetId={row.id} label="Archive abandoned batch" defaultReason="Abandoned zero-import VMS batch; archived from Data Health"/>:<Link className="link-secondary" href={"/vms-import/"+row.id}>Review batch</Link>}</td>
+      </tr>)}</DataTable>}
     </section>
   </div>;
 }
