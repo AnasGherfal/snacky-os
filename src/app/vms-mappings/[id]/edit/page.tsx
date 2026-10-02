@@ -64,7 +64,7 @@ export default async function EditVmsProductMappingPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; suggest?: string }>;
 }) {
   const profile = await getCurrentProfile();
   if (!canManageVmsMappings(profile)) {
@@ -81,7 +81,7 @@ export default async function EditVmsProductMappingPage({
   }
 
   const { id } = await params;
-  const { error } = await searchParams;
+  const { error, suggest } = await searchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
 
   if (!supabase) {
@@ -103,6 +103,9 @@ export default async function EditVmsProductMappingPage({
 
   if (mappingError) console.error("[vms-mappings:edit] Failed to load mapping", { id, error: mappingError });
   if (!mapping) notFound();
+
+  const suggestedProduct=(products??[]).find((product:ProductOption)=>product.id===suggest)??null;
+  const defaultProductId=mapping.snacky_product_id??mapping.product_id??suggestedProduct?.id??"";
 
   return (
     <>
@@ -146,9 +149,10 @@ export default async function EditVmsProductMappingPage({
           </FormSection>
 
           <FormSection title="Snacky mapping">
+            {suggestedProduct&&!mapping.snacky_product_id&&!mapping.product_id?<div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900"><strong>Suggested match: {suggestedProduct.name}</strong><p className="mt-1 text-xs">Snacky preselected this product for review only. Confirm the product and choose the final mapping status yourself.</p></div>:null}
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Select Snacky Product" hint="Only real active products from the products table are available.">
-                <select name="product_id" defaultValue={mapping.snacky_product_id ?? mapping.product_id ?? ""} className="field-input">
+                <select name="product_id" defaultValue={defaultProductId} className="field-input">
                   <option value="">Unmapped</option>
                   {(products ?? []).map((product: ProductOption) => (
                     <option key={product.id} value={product.id}>

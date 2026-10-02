@@ -90,12 +90,14 @@ test("machine stop XY Change and Move use focused modal UX without page jumping"
 });
 
 test("XY slot writes use the vendor-verified signed fields and fail closed on rejection", () => {
-  assert.match(xyControlSource, /shbh: config\.merchantId/);
-  assert.match(xyControlSource, /jqbh: args\.vmsMachineId/);
-  assert.match(xyControlSource, /hdbh: args\.slotCode/);
-  assert.match(xyControlSource, /spbh: args\.vmsProductId/);
-  assert.match(xyControlSource, /spjg: toMinorUnits\(args\.priceLyd\)/);
-  assert.doesNotMatch(xyControlSource, /spmc:/);
+  assert.match(xyControlSource, /buildXySlotProductWriteParams/);
+  assert.match(xyControlSource, /merchantId: config\.merchantId/);
+  assert.match(xyControlSource, /vmsMachineId: args\.vmsMachineId/);
+  assert.match(xyControlSource, /slotCode: args\.slotCode/);
+  assert.match(xyControlSource, /vmsProductId: args\.vmsProductId/);
+  assert.match(xyControlSource, /priceLyd: args\.priceLyd/);
+  assert.match(xyControlSource, /stockQty: args\.stockQty/);
+  assert.match(xyControlSource, /XY_SLOT_PRODUCT_WRITE_ENDPOINT/);
   assert.match(xyControlSource, /accepted: response\.ok && String\(code \?\? ""\) === "1"/);
   assert.match(xySlotProductRouteSource, /if \(!write\.accepted\)/);
   assert.match(xySlotProductRouteSource, /xy_slot_product_change_rejected/);

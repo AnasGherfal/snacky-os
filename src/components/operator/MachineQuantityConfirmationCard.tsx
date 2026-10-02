@@ -52,7 +52,7 @@ export function MachineQuantityConfirmationCard({
   const savedEvidenceMatches = savedKey === currentKey || machineQuantityEvidenceMatches(savedRows, rows);
   const ready = rows.length === 0 || Boolean(installed && savedEvidenceMatches && machineQuantityEvidenceReady(status));
   const ownerPending = ready && status === "offline_pending";
-  const canUploadScreenshots = loaded && installed && !completed && status !== "offline_pending";
+  const canUploadScreenshots = loaded && installed && !completed && status !== "offline_pending" && status !== "xy_api_verified";
   const reusableEvidenceCount = savedEvidenceMatches && status === "xy_screenshot_saved" ? evidenceFiles.length : 0;
   const screenshotLimitReached = reusableEvidenceCount >= MAX_SCREENSHOTS;
 
@@ -95,7 +95,7 @@ export function MachineQuantityConfirmationCard({
     return items.map((item) => ({ productId: item.productId, quantity: item.filledQty }));
   }
 
-  async function saveMode(mode: "xy_screenshot" | "machine_offline", files: MachineQuantityEvidenceFile[] = []) {
+  async function saveMode(mode: "xy_api" | "xy_screenshot" | "machine_offline", files: MachineQuantityEvidenceFile[] = []) {
     const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
       method: "POST",
       cache: "no-store",
@@ -206,8 +206,8 @@ export function MachineQuantityConfirmationCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">{tr("Machine-system inventory", "مخزون نظام الجهاز")}</div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">{tr("Update quantities and save the XY page", "حدّث الكميات واحفظ صفحة XY")}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-700">{tr("Set the changed selections in the machine, refresh the XY cargo-lane page, then upload screenshot(s) showing the quantities.", "اضبط الخانات المتغيرة في الجهاز، وحدّث صفحة خانات XY، ثم ارفع صورة أو صور شاشة توضح الكميات.")}</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{tr("Update machine quantities", "حدّث كميات الجهاز")}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{tr("Set the changed selections in the machine, then let Snacky verify the live XY lane quantities. Screenshots remain available as a fallback.", "اضبط الخانات المتغيرة في الجهاز، ثم دع سناكي يتحقق مباشرة من كميات خانات XY. تبقى صور الشاشة خياراً احتياطياً.")}</p>
         </div>
         <span className={ownerPending ? "shrink-0 rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white" : ready ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
           {ownerPending ? tr("Owner follow-up", "متابعة المالك") : ready ? tr("Saved", "تم الحفظ") : tr("Required", "مطلوب")}
@@ -240,7 +240,9 @@ export function MachineQuantityConfirmationCard({
         <div className={`mt-4 rounded-lg border bg-white p-3 text-sm font-medium ${ownerPending ? "border-amber-300 text-amber-950" : "border-emerald-200 text-emerald-900"}`}>
           {ownerPending
             ? tr("Power-off exception saved. You can finish this stop; the owner must update the machine quantities later.", "تم حفظ استثناء انقطاع الكهرباء. يمكنك إنهاء الموقع، وعلى المالك تحديث كميات الجهاز لاحقاً.")
-            : tr(`XY screenshot evidence saved (${evidenceFiles.length}).`, `تم حفظ إثبات صور شاشة XY (${evidenceFiles.length}).`)}
+            : status==="xy_api_verified"
+              ? tr("Verified directly with XY.", "تم التحقق مباشرة من XY.")
+              : tr(`XY screenshot evidence saved (${evidenceFiles.length}).`, `تم حفظ إثبات صور شاشة XY (${evidenceFiles.length}).`)}
           {savedAt ? ` · ${new Date(savedAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}` : ""}
         </div>
       ) : null}
@@ -250,6 +252,8 @@ export function MachineQuantityConfirmationCard({
           {tr("The filled quantities changed. Upload new XY screenshots for the updated numbers.", "تغيرت كميات التعبئة. ارفع صور شاشة XY جديدة للأرقام المحدثة.")}
         </div>
       ) : null}
+
+      {!ready&&loaded&&installed&&!completed?<button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={()=>{setSaving(true);setError("");void saveMode("xy_api").catch((verifyError)=>setError(verifyError instanceof Error?verifyError.message:tr("Could not verify quantities with XY.","تعذر التحقق من الكميات عبر XY."))).finally(()=>setSaving(false));}}>{saving?tr("Checking XY...","جارٍ التحقق من XY..."):tr("Verify with XY","تحقق عبر XY")}</button>:null}
 
       {canUploadScreenshots ? (
         <label className="mt-4 block rounded-xl border border-slate-200 bg-white p-4">

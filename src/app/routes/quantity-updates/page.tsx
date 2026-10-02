@@ -48,7 +48,7 @@ export default async function MachineQuantityUpdatesPage() {
   const { data, error } = await supabase
     .from("route_stop_quantity_confirmations")
     .select("id, route_id, route_stop_id, machine_id, operator_id, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, resolved_at, machine:machines(id, name, machine_code, location:locations(name)), route:routes(id, route_date), operator:team_members(id, full_name)")
-    .in("verification_status", ["offline_pending", "xy_screenshot_saved", "owner_completed"])
+    .in("verification_status", ["offline_pending", "xy_api_verified", "xy_screenshot_saved", "owner_completed"])
     .order("submitted_at", { ascending: false })
     .limit(100);
 
@@ -108,7 +108,7 @@ export default async function MachineQuantityUpdatesPage() {
                 <article key={record.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div><div className="font-semibold text-slate-950">{formatMachineDisplayName(machine, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{record.submitted_at ? new Date(record.submitted_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : "-"}</div></div>
-                    <div className="flex flex-wrap gap-2"><StatusBadge status={record.verification_status} label={record.verification_status === "owner_completed" ? tr("Owner completed", "أكملها المالك") : tr("Operator screenshot", "صورة المشغّل")} /><Link href={`/routes/${record.route_id}`} className="btn-secondary">{tr("Open route", "فتح الجولة")}</Link></div>
+                    <div className="flex flex-wrap gap-2"><StatusBadge status={record.verification_status} label={record.verification_status === "owner_completed" ? tr("Owner completed", "أكملها المالك") : record.verification_status==="xy_api_verified"?tr("Verified by XY","تم التحقق عبر XY"):tr("Operator screenshot", "صورة المشغّل")} /><Link href={`/routes/${record.route_id}`} className="btn-secondary">{tr("Open route", "فتح الجولة")}</Link></div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {files.map((file, index) => {

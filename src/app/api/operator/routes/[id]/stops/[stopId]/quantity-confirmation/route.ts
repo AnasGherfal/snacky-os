@@ -14,6 +14,8 @@ import {
 } from "@/lib/machine-quantity-confirmation";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { readXyMachineLayout } from "@/lib/xy-vms-control";
+import { verifyMachineQuantityRowsAgainstXy } from "@/lib/xy-quantity-verification";
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
@@ -57,7 +59,7 @@ async function loadContext(routeId: string, stopId: string) {
 
   const [{ data: route, error: routeError }, { data: stop, error: stopError }] = await Promise.all([
     client.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle(),
-    client.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).maybeSingle(),
+    client.from("route_stops").select("id, route_id, machine_id, status, machine:machines(vms_machine_id)").eq("id", stopId).maybeSingle(),
   ]);
   if (routeError || stopError) return { error: NextResponse.json({ success: false, code: "CONTEXT_LOAD_FAILED", error: errorMessage(routeError ?? stopError) }, { status: 500 }) };
   if (!route || !stop || stop.route_id !== routeId) return { error: NextResponse.json({ success: false, code: "STOP_NOT_FOUND", error: "Route stop was not found." }, { status: 404 }) };
@@ -205,8 +207,8 @@ export async function POST(
       return NextResponse.json({ success: true, installed: true, confirmed: true, confirmation: data });
     }
 
-    if (mode !== "xy_screenshot" && mode !== "machine_offline") {
-      return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose XY screenshots or machine power off." }, { status: 400 });
+    if (!["xy_api","xy_screenshot","machine_offline"].includes(mode)) {
+      return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose direct XY verification, XY screenshots, or machine power off." }, { status: 400 });
     }
     const filledItemsError = validateFilledItems(payload.filledItems);
     if (filledItemsError) return NextResponse.json({ success: false, code: "INVALID_FILLED_ITEMS", error: filledItemsError }, { status: 400 });
@@ -221,6 +223,29 @@ export async function POST(
     const sources = buildMachineQuantitySourcesFromPlan(planRows, payload.filledItems as MachineQuantityFilledItem[]);
     const rows = buildMachineQuantityRows(sources);
     const confirmationKey = machineQuantityConfirmationKey(rows);
+
+    if(mode==="xy_api"){
+      const machineRelation=Array.isArray(context.stop.machine)?context.stop.machine[0]:context.stop.machine;
+      const vmsMachineId=clean(machineRelation?.vms_machine_id);
+      if(!vmsMachineId){
+        return NextResponse.json({success:false,installed:true,code:"XY_MACHINE_ID_MISSING",error:"This machine is not connected to an XY machine id. Use screenshot evidence instead."},{status:409});
+      }
+      let liveLayout;
+      try{
+        liveLayout=await readXyMachineLayout(vmsMachineId);
+      }catch(error){
+        return NextResponse.json({success:false,installed:true,code:"XY_LIVE_UNAVAILABLE",error:"Could not read the machine from XY right now. Wait and retry, upload screenshots, or use the power-off option."},{status:503});
+      }
+      const verification=verifyMachineQuantityRowsAgainstXy(rows,liveLayout);
+      if(!verification.verified){
+        return NextResponse.json({
+          success:false,installed:true,code:"XY_QUANTITY_MISMATCH",
+          error:"XY does not show the expected post-refill quantities yet. Refresh the machine/XY connection and retry, or upload screenshots.",
+          mismatches:verification.mismatches,
+        },{status:409});
+      }
+    }
+
     const record = {
       route_id: routeId,
       route_stop_id: stopId,
@@ -228,7 +253,7 @@ export async function POST(
       operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
       quantity_rows: rows,
       confirmation_key: confirmationKey,
-      verification_status: mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
+      verification_status: mode === "xy_api" ? "xy_api_verified" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
       evidence_files: evidenceFiles,
       offline_reason: offlineReason,
       submitted_at: now,

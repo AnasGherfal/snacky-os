@@ -162,7 +162,7 @@ export default async function CashCollectionsPage({ searchParams }: { searchPara
   const totalMissing = combinedPosition.missingCash;
   const waitingCount = summaryRows.filter((row: any) => ["removed", "in_storage"].includes(row.custody_status)).length;
   const needsCheckCount = summaryRows.filter((row: any) => row.custody_status === "counted").length;
-  const actions = canRecordCashRemoval(context) ? <PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton> : null;
+  const actions = <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Action queue</SecondaryButton>{canRecordCashRemoval(context)?<PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton>:null}</div>;
 
   return (
     <div className="space-y-6">
