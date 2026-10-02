@@ -1,0 +1,40 @@
+name: Stock reconciliation checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/inventory/reconciliation/page.tsx"
+      - "src/lib/stock-reconciliation.ts"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607170001_stock_reconciliation_missing_items.sql"
+      - "scripts/test-stock-reconciliation.mjs"
+      - ".github/workflows/stock-reconciliation-check.yml"
+  push:
+    branches:
+      - feature/missing-items-stock-reconciliation
+    paths:
+      - "src/app/inventory/reconciliation/page.tsx"
+      - "src/lib/stock-reconciliation.ts"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607170001_stock_reconciliation_missing_items.sql"
+      - "scripts/test-stock-reconciliation.mjs"
+      - ".github/workflows/stock-reconciliation-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run stock reconciliation tests
+        run: node --test scripts/test-stock-reconciliation.mjs
+      - name: Build Snacky OS
+        run: npm run build

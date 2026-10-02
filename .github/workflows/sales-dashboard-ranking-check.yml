@@ -1,0 +1,40 @@
+name: Sales Dashboard ranking checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/sales/page.tsx"
+      - "src/components/SortableDataTable.tsx"
+      - "src/components/ui.tsx"
+      - "src/lib/table-sort.ts"
+      - "scripts/test-sortable-sales-dashboard.mjs"
+      - ".github/workflows/sales-dashboard-ranking-check.yml"
+  push:
+    branches:
+      - feature/sales-dashboard-sortable-details
+    paths:
+      - "src/app/sales/page.tsx"
+      - "src/components/SortableDataTable.tsx"
+      - "src/components/ui.tsx"
+      - "src/lib/table-sort.ts"
+      - "scripts/test-sortable-sales-dashboard.mjs"
+      - ".github/workflows/sales-dashboard-ranking-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Sales Dashboard ranking tests
+        run: node --test scripts/test-sortable-sales-dashboard.mjs
+      - name: Build Snacky OS
+        run: npm run build

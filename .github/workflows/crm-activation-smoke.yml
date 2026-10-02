@@ -1,0 +1,70 @@
+name: CRM live activation smoke
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/lib/crm-recurring.ts'
+      - '.github/workflows/crm-activation-smoke.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-live-activation-smoke
+  cancel-in-progress: true
+jobs:
+  anonymous-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for the public production activation and verify denial without login
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+          python - <<'PY'
+          import json, time, urllib.request, urllib.error
+          from pathlib import Path
+          origin = 'https://snacky-os.vercel.app'
+          observations = []
+          # Deliberately no cookies, tokens, command ID or valid mutation body.
+          # Disabled code returns 503/unavailable before auth; enabled code returns 403/denied.
+          for attempt in range(1, 25):
+              req = urllib.request.Request(origin + '/api/crm/routines', data=b'{}', method='POST', headers={'Content-Type':'application/json', 'Origin':origin})
+              try:
+                  response = urllib.request.urlopen(req, timeout=10)
+              except urllib.error.HTTPError as error:
+                  response = error
+              except (urllib.error.URLError, TimeoutError) as error:
+                  observations.append({'attempt':attempt, 'error':type(error).__name__})
+                  time.sleep(10)
+                  continue
+              with response:
+                  status = response.status
+                  content_type = response.headers.get('content-type', '')
+                  body = response.read(4096)
+              try:
+                  payload = json.loads(body) if 'application/json' in content_type else {}
+              except ValueError:
+                  payload = {}
+              observations.append({'attempt':attempt, 'status':status, 'code':payload.get('code')})
+              print(json.dumps(observations[-1]), flush=True)
+              if status == 403 and payload.get('code') == 'denied' and payload.get('ok') is False:
+                  with urllib.request.urlopen(origin + '/login', timeout=10) as login:
+                      if login.status != 200:
+                          raise SystemExit('Production login page did not return 200')
+                  result = {'activation_visible':True, 'anonymous_denied':True, 'login_status':200, 'observations':observations, 'scope':'No authenticated staff session or business write was exercised.'}
+                  Path('diagnostics/activation-smoke.json').write_text(json.dumps(result, indent=2))
+                  print('Live activation confirmed; unauthenticated access denied; login page available.')
+                  break
+              if status < 400:
+                  Path('diagnostics/activation-smoke.json').write_text(json.dumps({'observations':observations}, indent=2))
+                  raise SystemExit('Unexpected success without authentication; investigate before enabling generation')
+              time.sleep(10)
+          else:
+              Path('diagnostics/activation-smoke.json').write_text(json.dumps({'activation_visible':False, 'observations':observations}, indent=2))
+              raise SystemExit('Activation was not confirmed within the bounded deployment window')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crm-live-activation-smoke
+          path: diagnostics/activation-smoke.json
+          retention-days: 7

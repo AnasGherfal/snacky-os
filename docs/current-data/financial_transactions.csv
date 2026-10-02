@@ -1,0 +1,528 @@
+date,transaction,money_flow,transaction_type,location,transaction_description,signed_amount,auto_bucket,bucket_override,final_bucket
+2024-12-08,1943,Money In,Revenue,deplomacyMall,قيمة اول 5 ايام,1943,Inflow,TO_CONFIRM,Inflow
+2024-12-15,779,Money In,Revenue,deplomacyMall,TO_CONFIRM,779.0,Inflow,TO_CONFIRM,Inflow
+2024-12-18,20,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-20.0,Inventory,TO_CONFIRM,Inventory
+2024-08-19,46,Money Out,TO_CONFIRM,TO_CONFIRM,مياه + لصقة دبل فيس,-46.0,Review,TO_CONFIRM,Review
+2024-08-20,1225,Money In,Revenue,deplomacyMall,TO_CONFIRM,1225.0,Inflow,TO_CONFIRM,Inflow
+2024-08-21,180,Money Out,TO_CONFIRM,TO_CONFIRM,طباعة توربو للايت بوكس,-180.0,Review,TO_CONFIRM,Review
+2024-08-21,2500,Money In,ads,TO_CONFIRM, دعاية توربو ( من نص 9 الى نص 12),2500.0,Inflow,TO_CONFIRM,Inflow
+2024-08-24,50,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-50.0,Review,TO_CONFIRM,Review
+2024-08-24,50,Money In,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,50.0,Review,TO_CONFIRM,Review
+2024-08-24,40,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-40.0,Inventory,TO_CONFIRM,Inventory
+2024-08-26,1140,Money Out,Product Restocking,TO_CONFIRM,بضاعه ,-1140.0,Inventory,TO_CONFIRM,Inventory
+2024-08-26,900,Money In,Revenue,deplomacyMall,TO_CONFIRM,900.0,Inflow,TO_CONFIRM,Inflow
+2024-08-29,60,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-60.0,Inventory,TO_CONFIRM,Inventory
+2024-08-31,18,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-18.0,Inventory,TO_CONFIRM,Inventory
+2024-08-31,1158,Money In,Revenue,deplomacyMall,TO_CONFIRM,1158.0,Inflow,TO_CONFIRM,Inflow
+2024-08-31,15,Money In,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,15.0,Review,TO_CONFIRM,Review
+2024-08-31,15,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-15.0,Review,TO_CONFIRM,Review
+2024-09-01,190,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل الميزانيه,-190.0,Review,TO_CONFIRM,Review
+2024-09-01,827,Money Out,Product Restocking,TO_CONFIRM,بضاعه ,-827.0,Inventory,TO_CONFIRM,Inventory
+2024-09-02,40,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-40.0,Inventory,TO_CONFIRM,Inventory
+2024-09-04,1082,Money In,Revenue,deplomacyMall,TO_CONFIRM,1082.0,Inflow,TO_CONFIRM,Inflow
+2024-09-04,40,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-40.0,Inventory,TO_CONFIRM,Inventory
+2024-09-05,64,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-64.0,Inventory,TO_CONFIRM,Inventory
+2024-09-07,1574,Money Out,Product Restocking,TO_CONFIRM,بضاعه ,-1574.0,Inventory,TO_CONFIRM,Inventory
+2024-09-07,20,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-20.0,Inventory,TO_CONFIRM,Inventory
+2024-09-08,40,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-40.0,Inventory,TO_CONFIRM,Inventory
+2024-09-09,1896,Money In,Revenue,deplomacyMall,TO_CONFIRM,1896.0,Inflow,TO_CONFIRM,Inflow
+2024-09-09,40,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-40.0,Inventory,TO_CONFIRM,Inventory
+2024-09-10,225,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-225.0,Inventory,TO_CONFIRM,Inventory
+2024-09-10,325,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-325.0,Inventory,TO_CONFIRM,Inventory
+2024-09-11,57.75,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-57.75,Inventory,TO_CONFIRM,Inventory
+2024-09-12,1134,Money In,Revenue,deplomacyMall,TO_CONFIRM,1134.0,Inflow,TO_CONFIRM,Inflow
+2024-09-12,446,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-446.0,Inventory,TO_CONFIRM,Inventory
+2024-09-11,61,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-61.0,Inventory,TO_CONFIRM,Inventory
+2024-09-12,72,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-72.0,Inventory,TO_CONFIRM,Inventory
+2024-09-14,177,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-177.0,Inventory,TO_CONFIRM,Inventory
+2024-09-15,1280,Money In,Revenue,deplomacyMall,TO_CONFIRM,1280.0,Inflow,TO_CONFIRM,Inflow
+2024-09-16,72,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-72.0,Inventory,TO_CONFIRM,Inventory
+2024-09-16,585,Money In,Revenue,deplomacyMall,TO_CONFIRM,585.0,Inflow,TO_CONFIRM,Inflow
+2024-09-16,164,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-164.0,Inventory,TO_CONFIRM,Inventory
+2024-09-18,718,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-718.0,Inventory,TO_CONFIRM,Inventory
+2024-09-19,792,Money In,Revenue,deplomacyMall,TO_CONFIRM,792.0,Inflow,TO_CONFIRM,Inflow
+2024-09-19,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,0.0,Review,TO_CONFIRM,Review
+2024-09-21,1144,Money In,Revenue,deplomacyMall,TO_CONFIRM,1144.0,Inflow,TO_CONFIRM,Inflow
+2024-09-21,51,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-51.0,Inventory,TO_CONFIRM,Inventory
+2024-09-22,540,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-540.0,Inventory,TO_CONFIRM,Inventory
+2024-09-21,101,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-101.0,Inventory,TO_CONFIRM,Inventory
+2024-09-25,87,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-87.0,Inventory,TO_CONFIRM,Inventory
+2024-09-26,50.5,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-50.5,Inventory,TO_CONFIRM,Inventory
+2024-09-26,1311,Money In,Revenue,deplomacyMall,TO_CONFIRM,1311.0,Inflow,TO_CONFIRM,Inflow
+2024-09-28,960,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-960.0,Inventory,TO_CONFIRM,Inventory
+2024-09-28,49,Money Out,Product Restocking,TO_CONFIRM,بضاعه (مياه),-49.0,Inventory,TO_CONFIRM,Inventory
+2024-09-27,80,Money Out,TO_CONFIRM,TO_CONFIRM,تركيب اللافته عل تلاجه,-80.0,Review,TO_CONFIRM,Review
+2024-10-01,375,Money Out,TO_CONFIRM,TO_CONFIRM,"ارسال (change box, motherboard) الى الصين",-375.0,Review,TO_CONFIRM,Review
+2024-10-02,1500,Money Out,TO_CONFIRM,TO_CONFIRM,ارجاع قيمة الى محمد العتيري,-1500.0,Review,TO_CONFIRM,Review
+2024-09-30,935,Money In,Revenue,deplomacyMall,TO_CONFIRM,935.0,Inflow,TO_CONFIRM,Inflow
+2024-11-29,836,Money In,Revenue,deplomacyMall,TO_CONFIRM,836.0,Inflow,TO_CONFIRM,Inflow
+2024-11-29,70,Money Out,TO_CONFIRM,TO_CONFIRM,"ارجاع شحن (change box, motherboard)",-70.0,Review,TO_CONFIRM,Review
+2024-11-29,65,Money Out,Product Restocking,TO_CONFIRM,بضاعه من محل لجنب دبلوماسي,-65.0,Inventory,TO_CONFIRM,Inventory
+2024-11-30,1029,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1029.0,Inventory,TO_CONFIRM,Inventory
+2024-12-03,50,Money Out,TO_CONFIRM,TO_CONFIRM,اجار فوركه لتحريك المكينه ,-50.0,Review,TO_CONFIRM,Review
+2024-12-05,850,Money Out,Product Restocking,TO_CONFIRM,بضاعه من المتحده والمحل لديما ناخد منه,-850.0,Inventory,TO_CONFIRM,Inventory
+2024-12-01,1800,Money In,TO_CONFIRM,TO_CONFIRM,تمت تسوية سعر الماكينه مع تيسير,1800.0,Review,TO_CONFIRM,Review
+2024-12-09,1111,Money In,Revenue,deplomacyMall,TO_CONFIRM,1111.0,Inflow,TO_CONFIRM,Inflow
+2024-12-10,455,Money Out,TO_CONFIRM,TO_CONFIRM,فواتير,-455.0,Review,TO_CONFIRM,Review
+2024-12-11,9000,Money In,TO_CONFIRM,TO_CONFIRM,سحبت فلوس الايداع لفتح شركه,9000.0,Review,TO_CONFIRM,Review
+2024-12-14,980,Money In,Revenue,deplomacyMall,TO_CONFIRM,980.0,Inflow,TO_CONFIRM,Inflow
+2024-12-15,2500,Money In,ads,TO_CONFIRM,توربو من نص 12 الى نص 3,2500.0,Inflow,TO_CONFIRM,Inflow
+2024-12-17,1097,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1097.0,Inventory,TO_CONFIRM,Inventory
+2024-12-19,1600,Money In,Revenue,deplomacyMall,TO_CONFIRM,1600.0,Inflow,TO_CONFIRM,Inflow
+2024-12-19,1223,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1223.0,Inventory,TO_CONFIRM,Inventory
+2024-12-22,1140,Money In,Revenue,deplomacyMall,TO_CONFIRM,1140.0,Inflow,TO_CONFIRM,Inflow
+2024-12-28,150,Money Out,TO_CONFIRM,TO_CONFIRM,الى دعاء المصممه,-150.0,Review,TO_CONFIRM,Review
+2024-12-28,60,Money Out,TO_CONFIRM,TO_CONFIRM,طباعة الستكر لعصير البرتقال,-60.0,Review,TO_CONFIRM,Review
+2025-01-02,1047,Money In,Revenue,deplomacyMall,TO_CONFIRM,1047.0,Inflow,TO_CONFIRM,Inflow
+2025-01-02,769,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-769.0,Inventory,TO_CONFIRM,Inventory
+2025-01-05,1189,Money In,Revenue,deplomacyMall,TO_CONFIRM,1189.0,Inflow,TO_CONFIRM,Inflow
+2025-01-05,221,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-221.0,Inventory,TO_CONFIRM,Inventory
+2025-01-06,640,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-640.0,Inventory,TO_CONFIRM,Inventory
+2025-01-08,782,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-782.0,Inventory,TO_CONFIRM,Inventory
+2025-01-08,1768,Money In,Revenue,deplomacyMall,TO_CONFIRM,1768.0,Inflow,TO_CONFIRM,Inflow
+2025-01-09,1206,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1206.0,Inventory,TO_CONFIRM,Inventory
+2025-01-09,1947,Money In,Revenue,deplomacyMall,TO_CONFIRM,1947.0,Inflow,TO_CONFIRM,Inflow
+2025-01-11,1191,Money In,Revenue,deplomacyMall,TO_CONFIRM,1191.0,Inflow,TO_CONFIRM,Inflow
+2025-01-11,525,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-525.0,Inventory,TO_CONFIRM,Inventory
+2025-01-10,31,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-31.0,Inventory,TO_CONFIRM,Inventory
+2025-01-14,8217,Money Out,to snacky,TO_CONFIRM,لشراء ماكينات,-8217.0,Review,TO_CONFIRM,Review
+2025-01-14,13000,Money Out,TO_CONFIRM,TO_CONFIRM,"دفع قيمة 21,217 دينار لشراء عدد اثنان مكينات",-13000.0,Review,TO_CONFIRM,Review
+2025-01-16,448,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-448.0,Inventory,TO_CONFIRM,Inventory
+2025-01-22,70,Money Out,shipping,TO_CONFIRM,توصيل change box من شاهين,-70.0,Review,TO_CONFIRM,Review
+2025-01-24,693,Money In,Revenue,deplomacyMall,TO_CONFIRM,693.0,Inflow,TO_CONFIRM,Inflow
+2025-01-25,559,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-559.0,Inventory,TO_CONFIRM,Inventory
+2025-01-26,453,Money In,Revenue,deplomacyMall,TO_CONFIRM,453.0,Inflow,TO_CONFIRM,Inflow
+2025-02-01,491,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-491.0,Inventory,TO_CONFIRM,Inventory
+2025-02-04,1240,Money In,Revenue,deplomacyMall,TO_CONFIRM,1240.0,Inflow,TO_CONFIRM,Inflow
+2025-02-06,357,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-357.0,Inventory,TO_CONFIRM,Inventory
+2025-02-13,1809,Money In,Revenue,deplomacyMall,TO_CONFIRM,1809.0,Inflow,TO_CONFIRM,Inflow
+2025-02-13,548,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-548.0,Review,TO_CONFIRM,Review
+2025-02-15,1381,Money In,Revenue,deplomacyMall,TO_CONFIRM,1381.0,Inflow,TO_CONFIRM,Inflow
+2025-02-15,756,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-756.0,Inventory,TO_CONFIRM,Inventory
+2025-02-15,150,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-150.0,Review,TO_CONFIRM,Review
+2025-02-15,335,Money Out,Anas,TO_CONFIRM,ارجاع بعض القيمه اللتي تمت دفعها في البضاعه,-335.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-02-15,335,Money In,from snacky,TO_CONFIRM,TO_CONFIRM,335.0,Review,TO_CONFIRM,Review
+2025-02-15,147,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه,-147.0,Review,TO_CONFIRM,Review
+2025-02-16,321,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-321.0,Inventory,TO_CONFIRM,Inventory
+2025-02-19,448,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-448.0,Inventory,TO_CONFIRM,Inventory
+2025-02-19,1345,Money In,Revenue,deplomacyMall,TO_CONFIRM,1345.0,Inflow,TO_CONFIRM,Inflow
+2025-02-19,1000,Money Out,Rent,TO_CONFIRM,ايجار الدبلوماسي شهر 11 و 12,-1000.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-02-20,589,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-589.0,Inventory,TO_CONFIRM,Inventory
+2025-02-26,619,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-619.0,Inventory,TO_CONFIRM,Inventory
+2025-02-26,1705,Money In,Revenue,deplomacyMall,TO_CONFIRM,1705.0,Inflow,TO_CONFIRM,Inflow
+2025-02-27,3174,Money Out,shipping,TO_CONFIRM,شحن الماكينه التانيه من شاهين,-3174.0,Review,TO_CONFIRM,Review
+2025-02-28,528,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-528.0,Inventory,TO_CONFIRM,Inventory
+2025-03-04,1105,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-1105.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-03-04,1105,Money In,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,1105.0,Review,TO_CONFIRM,Review
+2025-03-04,500,Money Out,Rent,TO_CONFIRM,شهر 3,-500.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-03-04,1500,Money In,ads,TO_CONFIRM,نصف قيمة دعايه توربو تلاته اشهر,1500.0,Inflow,TO_CONFIRM,Inflow
+2025-03-08,1735,Money In,Revenue,deplomacyMall,TO_CONFIRM,1735.0,Inflow,TO_CONFIRM,Inflow
+2025-03-08,892,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-892.0,Inventory,TO_CONFIRM,Inventory
+2025-03-08,200,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-200.0,Inventory,TO_CONFIRM,Inventory
+2025-03-10,100,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-100.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-03-10,100,Money In,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,100.0,Review,TO_CONFIRM,Review
+2025-03-11,20,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-20.0,Inventory,TO_CONFIRM,Inventory
+2025-03-12,656,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-656.0,Inventory,TO_CONFIRM,Inventory
+2025-03-13,384,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-384.0,Inventory,TO_CONFIRM,Inventory
+2025-03-14,277,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل الميزانية,-277.0,Review,TO_CONFIRM,Review
+2025-03-14,50,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-50.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-03-14,50,Money In,from snacky,TO_CONFIRM,TO_CONFIRM,50.0,Review,TO_CONFIRM,Review
+2025-03-14,1852,Money In,Revenue,deplomacyMall,TO_CONFIRM,1852.0,Inflow,TO_CONFIRM,Inflow
+2025-03-16,300,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-300.0,Inventory,TO_CONFIRM,Inventory
+2025-03-17,65,Money In,from snacky,TO_CONFIRM,TO_CONFIRM,65.0,Review,TO_CONFIRM,Review
+2025-03-17,65,Money Out, Anas,TO_CONFIRM,TO_CONFIRM,-65.0,Review,TO_CONFIRM,Review
+2025-03-17,429,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-429.0,Inventory,TO_CONFIRM,Inventory
+2025-03-18,1434,Money In,Revenue,deplomacyMall,TO_CONFIRM,1434.0,Inflow,TO_CONFIRM,Inflow
+2025-03-19,384,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-384.0,Inventory,TO_CONFIRM,Inventory
+2025-03-20,563,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-563.0,Inventory,TO_CONFIRM,Inventory
+2025-03-22,245,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-245.0,Inventory,TO_CONFIRM,Inventory
+2025-03-25,1350,Money In,Revenue,deplomacyMall,TO_CONFIRM,1350.0,Inflow,TO_CONFIRM,Inflow
+2025-03-25,557,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-557.0,Inventory,TO_CONFIRM,Inventory
+2025-03-26,696,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-696.0,Inventory,TO_CONFIRM,Inventory
+2025-03-28,1724,Money In,Revenue,deplomacyMall,TO_CONFIRM,1724.0,Inflow,TO_CONFIRM,Inflow
+2025-03-29,205,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-205.0,Inventory,TO_CONFIRM,Inventory
+2025-03-30,692,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-692.0,Inventory,TO_CONFIRM,Inventory
+2025-03-31,830,Money In,Revenue,deplomacyMall,TO_CONFIRM,830.0,Inflow,TO_CONFIRM,Inflow
+2025-04-02,1120,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1120.0,Inventory,TO_CONFIRM,Inventory
+2025-04-02,2823,Money In,Revenue,deplomacyMall,ايام العيد,2823.0,Inflow,TO_CONFIRM,Inflow
+2025-04-03,1553,Money In,Revenue,deplomacyMall,TO_CONFIRM,1553.0,Inflow,TO_CONFIRM,Inflow
+2025-04-03,1025,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1025.0,Inventory,TO_CONFIRM,Inventory
+2025-04-04,300,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-300.0,Inventory,TO_CONFIRM,Inventory
+2025-04-04,1334,Money In,Revenue,deplomacyMall,TO_CONFIRM,1334.0,Inflow,TO_CONFIRM,Inflow
+2025-04-05,1500,Money Out,Rent,TO_CONFIRM,دبلوماسي شهر تنين وتلاته واربعه,-1500.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-04-05,1448,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1448.0,Inventory,TO_CONFIRM,Inventory
+2025-04-10,895,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-895.0,Inventory,TO_CONFIRM,Inventory
+2025-04-11,2188,Money In,Revenue,deplomacyMall,TO_CONFIRM,2188.0,Inflow,TO_CONFIRM,Inflow
+2025-04-12,550,Money In,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه,550.0,Review,TO_CONFIRM,Review
+2025-04-12,1650,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1650.0,Inventory,TO_CONFIRM,Inventory
+2025-04-16,800,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-800.0,Operations,TO_CONFIRM,Operations
+2025-04-17,1363,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1363.0,Inventory,TO_CONFIRM,Inventory
+2025-04-19,2748,Money In,Revenue,deplomacyMall,TO_CONFIRM,2748.0,Inflow,TO_CONFIRM,Inflow
+2025-04-19,532,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-532.0,Inventory,TO_CONFIRM,Inventory
+2025-04-21,532,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-532.0,Inventory,TO_CONFIRM,Inventory
+2025-04-23,1430,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1430.0,Inventory,TO_CONFIRM,Inventory
+2025-04-23,2495,Money In,Revenue,deplomacyMall,TO_CONFIRM,2495.0,Inflow,TO_CONFIRM,Inflow
+2025-04-24,40,Money Out, Anas,TO_CONFIRM,TO_CONFIRM,-40.0,Review,TO_CONFIRM,Review
+2025-04-26,788,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-788.0,Inventory,TO_CONFIRM,Inventory
+2025-04-30,2706,Money In,Revenue,deplomacyMall,TO_CONFIRM,2706.0,Inflow,TO_CONFIRM,Inflow
+2025-04-30,553,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-553.0,Inventory,TO_CONFIRM,Inventory
+2025-04-30,1500,Money In,ads,TO_CONFIRM,نصف قيمة التاني دعايه توربو تلاته اشهر,1500.0,Inflow,TO_CONFIRM,Inflow
+2025-05-03,761,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-761.0,Inventory,TO_CONFIRM,Inventory
+2025-05-04,50,Money Out,Doaa,TO_CONFIRM,TO_CONFIRM,-50.0,Review,TO_CONFIRM,Review
+2025-05-04,300,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-300.0,Review,TO_CONFIRM,Review
+2025-05-08,673,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-673.0,Inventory,TO_CONFIRM,Inventory
+2025-05-09,3063,Money In,Revenue,deplomacyMall,TO_CONFIRM,3063.0,Inflow,TO_CONFIRM,Inflow
+2025-05-17,4000,Money Out,to snacky,TO_CONFIRM,TO_CONFIRM,-4000.0,Review,TO_CONFIRM,Review
+2025-05-17,4000,Money In,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,4000.0,Review,TO_CONFIRM,Review
+2025-05-17,6400,Money Out,shipping,TO_CONFIRM,تخليص الشحن مكينتين,-6400.0,Review,TO_CONFIRM,Review
+2025-05-17,600,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-600.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-05-17,600,Money In,from snacky,TO_CONFIRM,TO_CONFIRM,600.0,Review,TO_CONFIRM,Review
+2025-05-19,1766,Money In,Revenue,deplomacyMall,TO_CONFIRM,1766.0,Inflow,TO_CONFIRM,Inflow
+2025-05-19,1000,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1000.0,Inventory,TO_CONFIRM,Inventory
+2025-05-20,318,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-318.0,Inventory,TO_CONFIRM,Inventory
+2025-05-27,350,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-350.0,Inventory,TO_CONFIRM,Inventory
+2025-05-28,49,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-49.0,Inventory,TO_CONFIRM,Inventory
+2025-05-29,1086,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1086.0,Inventory,TO_CONFIRM,Inventory
+2025-05-29,5400,Money Out,Rent,HTMall,ايجار سته شهور مقدم HTmall,-5400.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-05-30,88,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-88.0,Inventory,TO_CONFIRM,Inventory
+2025-05-31,333,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-333.0,Inventory,TO_CONFIRM,Inventory
+2025-05-31,2440,Money In,Revenue,deplomacyMall,TO_CONFIRM,2440.0,Inflow,TO_CONFIRM,Inflow
+2025-05-31,1157,Money In,Revenue,HTMall,TO_CONFIRM,1157.0,Inflow,TO_CONFIRM,Inflow
+2025-06-01,3000,Money In,ads,deplomacyMall,دعايه توربو تلاته اشهر ,3000.0,Inflow,TO_CONFIRM,Inflow
+2025-06-02,1220,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1220.0,Inventory,TO_CONFIRM,Inventory
+2025-06-04,1771,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1771.0,Inventory,TO_CONFIRM,Inventory
+2025-06-05,1535,Money In,Revenue,HTMall,TO_CONFIRM,1535.0,Inflow,TO_CONFIRM,Inflow
+2025-06-10,681,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-681.0,Inventory,TO_CONFIRM,Inventory
+2025-06-11,398,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-398.0,Inventory,TO_CONFIRM,Inventory
+2025-06-12,702,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-702.0,Inventory,TO_CONFIRM,Inventory
+2025-06-13,1303,Money In,Revenue,HappyLand,TO_CONFIRM,1303.0,Inflow,TO_CONFIRM,Inflow
+2025-06-13,2397,Money In,Revenue,deplomacyMall,TO_CONFIRM,2397.0,Inflow,TO_CONFIRM,Inflow
+2025-06-13,3130,Money In,Revenue,HTMall,TO_CONFIRM,3130.0,Inflow,TO_CONFIRM,Inflow
+2025-06-14,250,Money Out,Rent,deplomacyMall,TO_CONFIRM,-250.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-06-14,900,Money Out,Rent,HappyLand,TO_CONFIRM,-900.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2025-06-14,420,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-420.0,Operations,TO_CONFIRM,Operations
+2025-06-14,1100,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1100.0,Inventory,TO_CONFIRM,Inventory
+2025-04-12,550,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه,-550.0,Review,TO_CONFIRM,Review
+2025-06-16,924,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-924.0,Inventory,TO_CONFIRM,Inventory
+2025-06-16,1200,Money In,Revenue,HappyLand,TO_CONFIRM,1200.0,Inflow,TO_CONFIRM,Inflow
+2025-06-17,513,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-513.0,Inventory,TO_CONFIRM,Inventory
+2025-06-18,801,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-801.0,Inventory,TO_CONFIRM,Inventory
+2025-06-19,896,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-896.0,Inventory,TO_CONFIRM,Inventory
+2025-06-20,3435,Money In,Revenue,HTMall,TO_CONFIRM,3435.0,Inflow,TO_CONFIRM,Inflow
+2025-06-21,530,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-530.0,Inventory,TO_CONFIRM,Inventory
+2025-06-22,2332,Money In,Revenue,deplomacyMall,TO_CONFIRM,2332.0,Inflow,TO_CONFIRM,Inflow
+2025-06-23,1840,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-1840.0,Operations,TO_CONFIRM,Operations
+2025-06-24,598,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-598.0,Inventory,TO_CONFIRM,Inventory
+2025-06-25,595,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-595.0,Inventory,TO_CONFIRM,Inventory
+2025-06-26,696,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-696.0,Inventory,TO_CONFIRM,Inventory
+2025-06-28,145,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-145.0,Inventory,TO_CONFIRM,Inventory
+2025-06-30,207,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-207.0,Inventory,TO_CONFIRM,Inventory
+2025-06-30,3313,Money In,Revenue,HTMall,TO_CONFIRM,3313.0,Inflow,TO_CONFIRM,Inflow
+2025-06-30,2467,Money In,Revenue,deplomacyMall,TO_CONFIRM,2467.0,Inflow,TO_CONFIRM,Inflow
+2025-07-01,462,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-462.0,Inventory,TO_CONFIRM,Inventory
+2025-07-02,188,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-188.0,Inventory,TO_CONFIRM,Inventory
+2025-07-03,870,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-870.0,Inventory,TO_CONFIRM,Inventory
+2025-07-05,768,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-768.0,Inventory,TO_CONFIRM,Inventory
+2025-07-07,1024,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1024.0,Inventory,TO_CONFIRM,Inventory
+2025-07-09,12,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-12.0,Inventory,TO_CONFIRM,Inventory
+2025-07-10,729,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-729.0,Inventory,TO_CONFIRM,Inventory
+2025-07-12,3420,Money In,Revenue,HTMall,TO_CONFIRM,3420.0,Inflow,TO_CONFIRM,Inflow
+2025-07-12,2936,Money In,Revenue,deplomacyMall,TO_CONFIRM,2936.0,Inflow,TO_CONFIRM,Inflow
+2025-07-14,298,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-298.0,Inventory,TO_CONFIRM,Inventory
+2025-07-15,1618,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1618.0,Inventory,TO_CONFIRM,Inventory
+2025-07-15,300,Money Out,TO_CONFIRM,TO_CONFIRM,ونش لنقل الماكينه,-300.0,Review,TO_CONFIRM,Review
+2025-07-17,786,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-786.0,Inventory,TO_CONFIRM,Inventory
+2025-07-19,563,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-563.0,Inventory,TO_CONFIRM,Inventory
+2025-07-20,266,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-266.0,Inventory,TO_CONFIRM,Inventory
+2025-07-20,2000,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-2000.0,Operations,TO_CONFIRM,Operations
+2025-07-21,961,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-961.0,Inventory,TO_CONFIRM,Inventory
+2025-07-22,622,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-622.0,Inventory,TO_CONFIRM,Inventory
+2025-07-22,420,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-420.0,Operations,TO_CONFIRM,Operations
+2025-07-22,592,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-592.0,Inventory,TO_CONFIRM,Inventory
+2025-07-24,130,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-130.0,Inventory,TO_CONFIRM,Inventory
+2025-07-25,3712,Money In,Revenue,HTMall,TO_CONFIRM,3712.0,Inflow,TO_CONFIRM,Inflow
+2025-07-26,341,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-341.0,Inventory,TO_CONFIRM,Inventory
+2025-07-26,2279,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل الميزانيه,-2279.0,Review,TO_CONFIRM,Review
+2025-07-27,3000,Money In,ads,HTMall,دعاية توربو تلاته اشهر,3000.0,Inflow,TO_CONFIRM,Inflow
+2025-07-27,401,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-401.0,Inventory,TO_CONFIRM,Inventory
+2025-07-29,568,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-568.0,Inventory,TO_CONFIRM,Inventory
+2025-07-31,3323,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,3323.0,Inflow,TO_CONFIRM,Inflow
+2025-07-31,1561,Money In,Revenue,HTMall,TO_CONFIRM,1561.0,Inflow,TO_CONFIRM,Inflow
+2025-07-31,4498,Money In,Revenue,deplomacyMall,TO_CONFIRM,4498.0,Inflow,TO_CONFIRM,Inflow
+2025-08-01,188,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-188.0,Inventory,TO_CONFIRM,Inventory
+2025-08-02,170,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-170.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-08-02,170,Money In,from snacky,TO_CONFIRM,TO_CONFIRM,170.0,Review,TO_CONFIRM,Review
+2025-08-02,571,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-571.0,Inventory,TO_CONFIRM,Inventory
+2025-08-03,251,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-251.0,Inventory,TO_CONFIRM,Inventory
+2025-08-04,352,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-352.0,Inventory,TO_CONFIRM,Inventory
+2025-08-04,2007,Money Out,TO_CONFIRM,TO_CONFIRM,الى تيسير سعر شراء (bill accepter),-2007.0,Review,TO_CONFIRM,Review
+2025-08-05,707,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-707.0,Inventory,TO_CONFIRM,Inventory
+2025-08-07,817,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-817.0,Inventory,TO_CONFIRM,Inventory
+2025-08-11,3232,Money In,Revenue,HTMall,TO_CONFIRM,3232.0,Inflow,TO_CONFIRM,Inflow
+2025-08-11,211,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-211.0,Inventory,TO_CONFIRM,Inventory
+2025-08-12,774,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-774.0,Inventory,TO_CONFIRM,Inventory
+2025-08-13,362,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-362.0,Inventory,TO_CONFIRM,Inventory
+2025-08-14,796,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-796.0,Inventory,TO_CONFIRM,Inventory
+2025-08-16,442,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-442.0,Inventory,TO_CONFIRM,Inventory
+2025-08-17,170,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-170.0,Inventory,TO_CONFIRM,Inventory
+2025-08-18,195,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-195.0,Inventory,TO_CONFIRM,Inventory
+2025-08-19,641,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-641.0,Inventory,TO_CONFIRM,Inventory
+2025-08-21,1264,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1264.0,Inventory,TO_CONFIRM,Inventory
+2025-08-23,332,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-332.0,Inventory,TO_CONFIRM,Inventory
+2025-08-23,4345,Money In,Revenue,deplomacyMall,TO_CONFIRM,4345.0,Inflow,TO_CONFIRM,Inflow
+2025-08-26,210,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-210.0,Inventory,TO_CONFIRM,Inventory
+2025-08-27,4668,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,4668.0,Inflow,TO_CONFIRM,Inflow
+2025-08-28,591,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-591.0,Inventory,TO_CONFIRM,Inventory
+2025-08-28,3276,Money In,Revenue,HTMall,TO_CONFIRM,3276.0,Inflow,TO_CONFIRM,Inflow
+2025-08-28,4349,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه ,-4349.0,Review,TO_CONFIRM,Review
+2025-08-29,176,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-176.0,Inventory,TO_CONFIRM,Inventory
+2025-08-30,237,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-237.0,Inventory,TO_CONFIRM,Inventory
+2025-08-31,554,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-554.0,Inventory,TO_CONFIRM,Inventory
+2025-08-31,960,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,960.0,Inflow,TO_CONFIRM,Inflow
+2025-08-31,1277,Money In,Revenue,deplomacyMall,TO_CONFIRM,1277.0,Inflow,TO_CONFIRM,Inflow
+2025-08-31,1992,Money In,Revenue,HTMall,TO_CONFIRM,1992.0,Inflow,TO_CONFIRM,Inflow
+2025-09-01,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,0.0,Review,TO_CONFIRM,Review
+2025-09-01,685,Money In,Revenue,deplomacyMall,TO_CONFIRM,685.0,Inflow,TO_CONFIRM,Inflow
+2025-09-01,6000,Money In,ads,HTMall,دعاية توربو الى شهر 3/2026,6000.0,Inflow,TO_CONFIRM,Inflow
+2025-09-01,4000,Money In,ads,deplomacyMall,دعاية توربو الى شهر 3/2026,4000.0,Inflow,TO_CONFIRM,Inflow
+2025-09-02,670,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-670.0,Inventory,TO_CONFIRM,Inventory
+2025-09-04,630,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-630.0,Inventory,TO_CONFIRM,Inventory
+2025-09-08,510,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-510.0,Inventory,TO_CONFIRM,Inventory
+2025-09-08,250,Money Out,TO_CONFIRM,TO_CONFIRM,نقل الماكينه,-250.0,Review,TO_CONFIRM,Review
+2025-09-09,442,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-442.0,Inventory,TO_CONFIRM,Inventory
+2025-09-10,471,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-471.0,Inventory,TO_CONFIRM,Inventory
+2025-09-11,133,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-133.0,Inventory,TO_CONFIRM,Inventory
+2025-09-13,1033,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1033.0,Inventory,TO_CONFIRM,Inventory
+2025-09-13,530,Money Out,TO_CONFIRM,TO_CONFIRM,تحويل دولار,-530.0,Review,TO_CONFIRM,Review
+2025-09-14,2909,Money In,Revenue,HTMall,TO_CONFIRM,2909.0,Inflow,TO_CONFIRM,Inflow
+2025-09-15,300,Money Out,TO_CONFIRM,HTMall,كهرباء شهر 6/7/8,-300.0,Review,TO_CONFIRM,Review
+2025-09-17,665,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-665.0,Inventory,TO_CONFIRM,Inventory
+2025-09-20,252,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-252.0,Inventory,TO_CONFIRM,Inventory
+2025-09-20,2611,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2611.0,Inflow,TO_CONFIRM,Inflow
+2025-09-20,2371,Money In,Revenue,deplomacyMall,TO_CONFIRM,2371.0,Inflow,TO_CONFIRM,Inflow
+2025-09-21,1033,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1033.0,Inventory,TO_CONFIRM,Inventory
+2025-09-22,470,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-470.0,Inventory,TO_CONFIRM,Inventory
+2025-09-24,1117,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1117.0,Inventory,TO_CONFIRM,Inventory
+2025-09-24,360,Money In,Revenue,HTMall,TO_CONFIRM,360.0,Inflow,TO_CONFIRM,Inflow
+2025-09-24,35,Money In,Revenue,deplomacyMall,TO_CONFIRM,35.0,Inflow,TO_CONFIRM,Inflow
+2025-09-25,1240,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1240.0,Inventory,TO_CONFIRM,Inventory
+2025-10-15,1224,Money In,Revenue,deplomacyMall,TO_CONFIRM,1224.0,Inflow,TO_CONFIRM,Inflow
+2025-09-29,1341,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1341.0,Inflow,TO_CONFIRM,Inflow
+2025-09-29,361,Money In,Revenue,HTMall,TO_CONFIRM,361.0,Inflow,TO_CONFIRM,Inflow
+2025-09-30,2254,Money In,Revenue,HTMall,TO_CONFIRM,2254.0,Inflow,TO_CONFIRM,Inflow
+2025-10-01,639,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-639.0,Inventory,TO_CONFIRM,Inventory
+2025-10-04,985,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-985.0,Inventory,TO_CONFIRM,Inventory
+2025-10-05,492,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-492.0,Inventory,TO_CONFIRM,Inventory
+2025-10-06,1446,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1446.0,Inventory,TO_CONFIRM,Inventory
+2025-10-07,638,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-638.0,Inventory,TO_CONFIRM,Inventory
+2025-10-08,202,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-202.0,Inventory,TO_CONFIRM,Inventory
+2025-10-09,810,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-810.0,Inventory,TO_CONFIRM,Inventory
+2025-10-11,300,Money Out,TO_CONFIRM,TO_CONFIRM,توصيل ,-300.0,Review,TO_CONFIRM,Review
+2025-10-11,1675,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1675.0,Inventory,TO_CONFIRM,Inventory
+2025-10-13,27,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-27.0,Inventory,TO_CONFIRM,Inventory
+2025-10-14,600,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-600.0,Inventory,TO_CONFIRM,Inventory
+2025-10-15,908,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-908.0,Inventory,TO_CONFIRM,Inventory
+2025-10-15,3000,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه,-3000.0,Review,TO_CONFIRM,Review
+2025-10-15,2765,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2765.0,Inflow,TO_CONFIRM,Inflow
+2025-10-15,100,Money Out,TO_CONFIRM,HTMall,كهرباء,-100.0,Review,TO_CONFIRM,Review
+2025-10-18,2435,Money Out,TO_CONFIRM,TO_CONFIRM,"تحويل الى شهاب, 30% من سعر الماكينه الجديده وبغص مصاريف الدعايه",-2435.0,Review,TO_CONFIRM,Review
+2025-10-18,840,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-840.0,Operations,TO_CONFIRM,Operations
+2025-10-18,600,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-600.0,Inventory,TO_CONFIRM,Inventory
+2025-10-20,211,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-211.0,Inventory,TO_CONFIRM,Inventory
+2025-10-20,2593,Money In,Revenue,deplomacyMall,TO_CONFIRM,2593.0,Inflow,TO_CONFIRM,Inflow
+2025-10-20,2599,Money In,Revenue,SeaCost,TO_CONFIRM,2599.0,Inflow,TO_CONFIRM,Inflow
+2025-10-22,1103,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1103.0,Inventory,TO_CONFIRM,Inventory
+2025-10-20,3636,Money In,Revenue,HTMall,TO_CONFIRM,3636.0,Inflow,TO_CONFIRM,Inflow
+2025-10-23,180,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-180.0,Inventory,TO_CONFIRM,Inventory
+2025-10-25,404,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-404.0,Inventory,TO_CONFIRM,Inventory
+2025-10-26,743,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-743.0,Inventory,TO_CONFIRM,Inventory
+2025-10-27,378,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-378.0,Inventory,TO_CONFIRM,Inventory
+2025-10-28,348,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-348.0,Inventory,TO_CONFIRM,Inventory
+2025-10-29,987,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-987.0,Inventory,TO_CONFIRM,Inventory
+2025-10-30,483,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-483.0,Inventory,TO_CONFIRM,Inventory
+2025-10-31,3060,Money In,Revenue,HTMall,TO_CONFIRM,3060.0,Inflow,TO_CONFIRM,Inflow
+2025-10-31,1262,Money In,Revenue,SeaCost,TO_CONFIRM,1262.0,Inflow,TO_CONFIRM,Inflow
+2025-10-31,2354,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2354.0,Inflow,TO_CONFIRM,Inflow
+2025-10-31,819,Money In,Revenue,deplomacyMall,TO_CONFIRM,819.0,Inflow,TO_CONFIRM,Inflow
+2025-11-02,521,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-521.0,Inventory,TO_CONFIRM,Inventory
+2025-11-05,398,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-398.0,Inventory,TO_CONFIRM,Inventory
+2025-11-06,748,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-748.0,Inventory,TO_CONFIRM,Inventory
+2025-11-08,852,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-852.0,Inventory,TO_CONFIRM,Inventory
+2025-11-17,1421,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل الميزانيه,-1421.0,Review,TO_CONFIRM,Review
+2025-11-18,13000,Money Out,TO_CONFIRM,TO_CONFIRM,new machine ,-13000.0,Review,TO_CONFIRM,Review
+2025-11-18,3000,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-3000.0,Owner Draw,TO_CONFIRM,Owner Draw
+2025-11-19,4942,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-4942.0,Inventory,TO_CONFIRM,Inventory
+2025-11-30,3893,Money In,Revenue,deplomacyMall,TO_CONFIRM,3893.0,Inflow,TO_CONFIRM,Inflow
+2025-11-30,4284,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,4284.0,Inflow,TO_CONFIRM,Inflow
+2025-11-30,3493,Money In,Revenue,SeaCost,TO_CONFIRM,3493.0,Inflow,TO_CONFIRM,Inflow
+2025-11-30,5090,Money In,Revenue,HTMall,TO_CONFIRM,5090.0,Inflow,TO_CONFIRM,Inflow
+2025-12-04,500,Money Out,TO_CONFIRM,TO_CONFIRM,عربون للمصمم,-500.0,Review,TO_CONFIRM,Review
+2025-12-07,700,Money Out,TO_CONFIRM,SeaCost,ايجار seacost,-700.0,Review,TO_CONFIRM,Review
+2025-12-07,100,Money Out,TO_CONFIRM,HTMall,كهرباء,-100.0,Review,TO_CONFIRM,Review
+2025-12-07,1400,Money Out,Ahmed,TO_CONFIRM,مرتب شهر 11 احمد,-1400.0,Operations,TO_CONFIRM,Operations
+2025-12-07,10656,Money Out,Product Restocking,TO_CONFIRM,لاحمد لشراء بضاعه,-10656.0,Inventory,TO_CONFIRM,Inventory
+2025-12-20,2329,Money In,Revenue,deplomacyMall,TO_CONFIRM,2329.0,Inflow,TO_CONFIRM,Inflow
+2025-12-20,2766,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2766.0,Inflow,TO_CONFIRM,Inflow
+2025-12-20,2607,Money In,Revenue,SeaCost,TO_CONFIRM,2607.0,Inflow,TO_CONFIRM,Inflow
+2025-12-20,3085,Money In,Revenue,HTMall,TO_CONFIRM,3085.0,Inflow,TO_CONFIRM,Inflow
+2025-12-22,6400,Money Out,TO_CONFIRM,TO_CONFIRM,خضم ديون الى توربو,-6400.0,Review,TO_CONFIRM,Review
+2025-12-29,1050,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1050.0,Inventory,TO_CONFIRM,Inventory
+2025-12-28,840,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-840.0,Operations,TO_CONFIRM,Operations
+2025-12-28,4083,Money In,Revenue,HTMall,TO_CONFIRM,4083.0,Inflow,TO_CONFIRM,Inflow
+2025-12-31,924,Money In,Revenue,HTMall,TO_CONFIRM,924.0,Inflow,TO_CONFIRM,Inflow
+2025-12-31,2292,Money In,Revenue,deplomacyMall,TO_CONFIRM,2292.0,Inflow,TO_CONFIRM,Inflow
+2025-12-31,1192,Money In,Revenue,SeaCost,TO_CONFIRM,1192.0,Inflow,TO_CONFIRM,Inflow
+2025-12-31,2349,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2349.0,Inflow,TO_CONFIRM,Inflow
+2026-01-05,11810,Money Out,shipping,TO_CONFIRM,TO_CONFIRM,-11810.0,Review,TO_CONFIRM,Review
+2026-01-06,500,Money Out,TO_CONFIRM,TO_CONFIRM,نقل ماكينات,-500.0,Review,TO_CONFIRM,Review
+2026-01-16,8000,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-8000.0,Inventory,TO_CONFIRM,Inventory
+2026-01-16,3040,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3040.0,Inventory,TO_CONFIRM,Inventory
+2026-01-15,2473,Money In,Revenue,SeaCost,TO_CONFIRM,2473.0,Inflow,TO_CONFIRM,Inflow
+2026-01-15,4513,Money In,Revenue,HTMall,TO_CONFIRM,4513.0,Inflow,TO_CONFIRM,Inflow
+2026-01-18,1966,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1966.0,Inventory,TO_CONFIRM,Inventory
+2026-01-20,2383,Money In,Revenue,deplomacyMall,TO_CONFIRM,2383.0,Inflow,TO_CONFIRM,Inflow
+2026-01-21,2426,Money In,Revenue,SeaCost,TO_CONFIRM,2426.0,Inflow,TO_CONFIRM,Inflow
+2026-01-15,700,Money Out,TO_CONFIRM,TO_CONFIRM,تكميل تصميم الراكون,-700.0,Review,TO_CONFIRM,Review
+2026-01-22,300,Money Out,TO_CONFIRM,TO_CONFIRM,تصميم الماكينه,-300.0,Review,TO_CONFIRM,Review
+2026-01-22,3397,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3397.0,Inventory,TO_CONFIRM,Inventory
+2026-01-23,2000,Money Out,storage,TO_CONFIRM,اجار المخزن,-2000.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-01-23,3614,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,3614.0,Inflow,TO_CONFIRM,Inflow
+2026-01-25,320,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-320.0,Review,TO_CONFIRM,Review
+2026-01-25,140,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-140.0,Review,TO_CONFIRM,Review
+2026-01-27,2085,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2085.0,Inventory,TO_CONFIRM,Inventory
+2026-01-25,3621,Money In,Revenue,HTMall,TO_CONFIRM,3621.0,Inflow,TO_CONFIRM,Inflow
+2026-01-31,3018,Money In,Revenue,Istiklal,TO_CONFIRM,3018.0,Inflow,TO_CONFIRM,Inflow
+2026-01-31,1265,Money In,Revenue,SeaCost,TO_CONFIRM,1265.0,Inflow,TO_CONFIRM,Inflow
+2026-01-31,2210,Money In,Revenue,HTMall,TO_CONFIRM,2210.0,Inflow,TO_CONFIRM,Inflow
+2026-01-31,3000,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-3000.0,Review,TO_CONFIRM,Review
+2026-01-31,2921,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-2921.0,Review,TO_CONFIRM,Review
+2026-01-31,511,Money In,Revenue,deplomacyMall,TO_CONFIRM,511.0,Inflow,TO_CONFIRM,Inflow
+2026-01-31,1378,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1378.0,Inflow,TO_CONFIRM,Inflow
+2026-02-02,500,Money Out,TO_CONFIRM,TO_CONFIRM,صمصار المخزن,-500.0,Review,TO_CONFIRM,Review
+2026-02-02,500,Money Out,Rent,TO_CONFIRM,ايجار seacoast,-500.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-02-03,3197,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3197.0,Inventory,TO_CONFIRM,Inventory
+2026-02-03,6000,Money In,ads,TO_CONFIRM,"دعاية توربو شهر 3,4,5",6000.0,Inflow,TO_CONFIRM,Inflow
+2026-02-03,1500,Money Out,Ahmed,TO_CONFIRM,مرتب شهر طناش وواحد,-1500.0,Operations,TO_CONFIRM,Operations
+2026-02-05,950,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-950.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-02-07,557,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,557.0,Inflow,TO_CONFIRM,Inflow
+2026-02-07,1824,Money In,Revenue,AlTahaddy,TO_CONFIRM,1824.0,Inflow,TO_CONFIRM,Inflow
+2026-02-07,2487,Money In,Revenue,HTMall,TO_CONFIRM,2487.0,Inflow,TO_CONFIRM,Inflow
+2026-02-07,771,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-771.0,Inventory,TO_CONFIRM,Inventory
+2026-02-08,1727,Money In,Revenue,SeaCost,TO_CONFIRM,1727.0,Inflow,TO_CONFIRM,Inflow
+2026-02-08,167,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-167.0,Inventory,TO_CONFIRM,Inventory
+2026-02-09,340,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-340.0,Inventory,TO_CONFIRM,Inventory
+2026-02-11,1251,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1251.0,Inflow,TO_CONFIRM,Inflow
+2026-02-11,1196,Money In,Revenue,SeaCost,TO_CONFIRM,1196.0,Inflow,TO_CONFIRM,Inflow
+2026-02-11,700,Money In,Revenue,HTMall,TO_CONFIRM,700.0,Inflow,TO_CONFIRM,Inflow
+2026-02-12,1050,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1050.0,Inventory,TO_CONFIRM,Inventory
+2026-02-13,2217,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2217.0,Inventory,TO_CONFIRM,Inventory
+2026-02-14,1753,Money In,Revenue,AlTahaddy,TO_CONFIRM,1753.0,Inflow,TO_CONFIRM,Inflow
+2026-02-14,1146,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1146.0,Inventory,TO_CONFIRM,Inventory
+2026-02-15,1661,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1661.0,Inventory,TO_CONFIRM,Inventory
+2026-02-15,979,Money In,Revenue,SeaCost,TO_CONFIRM,979.0,Inflow,TO_CONFIRM,Inflow
+2026-02-15,1667,Money In,Revenue,HTLand,TO_CONFIRM,1667.0,Inflow,TO_CONFIRM,Inflow
+2026-02-15,1300,Money In,Revenue,HTMall,TO_CONFIRM,1300.0,Inflow,TO_CONFIRM,Inflow
+2026-02-16,1501,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1501.0,Inventory,TO_CONFIRM,Inventory
+2026-02-17,1882,Money In,Revenue,deplomacyMall,TO_CONFIRM,1882.0,Inflow,TO_CONFIRM,Inflow
+2026-02-17,2385,Money In,Revenue,Istiklal,TO_CONFIRM,2385.0,Inflow,TO_CONFIRM,Inflow
+2026-02-18,987,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-987.0,Inventory,TO_CONFIRM,Inventory
+2026-02-18,690,Money Out,TO_CONFIRM,TO_CONFIRM,تركيب وتصميم ملصق التحدي,-690.0,Review,TO_CONFIRM,Review
+2026-02-12,700,Money Out,TO_CONFIRM,TO_CONFIRM,نقل عدد اثنان ماكينه,-700.0,Review,TO_CONFIRM,Review
+2026-02-13,130,Money Out,TO_CONFIRM,TO_CONFIRM,ايجار وعمال,-130.0,Review,TO_CONFIRM,Review
+2026-02-15,3000,Money Out,Rent,deplomacyMall,ايجارسته شهور دبلوماسي من شهر 9 - الى شهر 2,-3000.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-02-16,2800,Money Out,Rent,HTMall,ايجار اتش تي ,-2800.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-02-17,260,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-260.0,Review,TO_CONFIRM,Review
+2026-02-20,7500,Money Out,TO_CONFIRM,TO_CONFIRM,تعديل ميزانيه,-7500.0,Review,TO_CONFIRM,Review
+2026-02-20,500,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-500.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-02-21,1487,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1487.0,Inventory,TO_CONFIRM,Inventory
+2026-02-28,2308,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2308.0,Inventory,TO_CONFIRM,Inventory
+2026-02-28,549,Money In,Revenue,SeaCost,TO_CONFIRM,549.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,2380,Money In,Revenue,SeaCost2,TO_CONFIRM,2380.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,2433,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2433.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,1129,Money In,Revenue,Istiklal,TO_CONFIRM,1129.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,505,Money In,Revenue,deplomacyMall,TO_CONFIRM,505.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,2486,Money In,Revenue,HTLand,TO_CONFIRM,2486.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,2987,Money In,Revenue,HTMall,TO_CONFIRM,2987.0,Inflow,TO_CONFIRM,Inflow
+2026-02-28,328.75,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-328.75,Owner Draw,TO_CONFIRM,Owner Draw
+2026-03-01,1600,Money Out,Ahmed,TO_CONFIRM,TO_CONFIRM,-1600.0,Operations,TO_CONFIRM,Operations
+2026-03-03,1058,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1058.0,Inventory,TO_CONFIRM,Inventory
+2026-03-07,2006,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2006.0,Inventory,TO_CONFIRM,Inventory
+2026-03-10,2844,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2844.0,Inventory,TO_CONFIRM,Inventory
+2026-03-13,561,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-561.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-03-15,3184,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3184.0,Inventory,TO_CONFIRM,Inventory
+2026-03-17,3093,Money In,Revenue,deplomacyMall,TO_CONFIRM,3093.0,Inflow,TO_CONFIRM,Inflow
+2026-03-17,841,Money In,Revenue,SeaCost2,TO_CONFIRM,841.0,Inflow,TO_CONFIRM,Inflow
+2026-03-19,2076,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2076.0,Inventory,TO_CONFIRM,Inventory
+2026-03-22,1215,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1215.0,Inventory,TO_CONFIRM,Inventory
+2026-03-23,1084,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1084.0,Inventory,TO_CONFIRM,Inventory
+2026-03-24,5020,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-5020.0,Inventory,TO_CONFIRM,Inventory
+2026-03-25,789,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-789.0,Inventory,TO_CONFIRM,Inventory
+2026-03-26,613,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-613.0,Inventory,TO_CONFIRM,Inventory
+2026-03-27,338,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-338.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-03-26,840,Money Out,charity,TO_CONFIRM,TO_CONFIRM,-840.0,Operations,TO_CONFIRM,Operations
+2026-03-27,100,Money Out,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,-100.0,Review,TO_CONFIRM,Review
+2026-03-28,950,Money Out,Rent,HTMall,ايجار,-950.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-03-23,2756,Money In,Revenue,deplomacyMall,TO_CONFIRM,2756.0,Inflow,TO_CONFIRM,Inflow
+2026-03-23,9865,Money In,Revenue,HTMall,TO_CONFIRM,9865.0,Inflow,TO_CONFIRM,Inflow
+2026-03-23,3805,Money In,Revenue,HTLand,TO_CONFIRM,3805.0,Inflow,TO_CONFIRM,Inflow
+2026-03-23,3161,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,3161.0,Inflow,TO_CONFIRM,Inflow
+2026-03-24,1395,Money In,Revenue,HTMall,TO_CONFIRM,1395.0,Inflow,TO_CONFIRM,Inflow
+2026-03-28,2820,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2820.0,Inventory,TO_CONFIRM,Inventory
+2026-03-31,2604,Money In,Revenue,deplomacyMall,TO_CONFIRM,2604.0,Inflow,TO_CONFIRM,Inflow
+2026-03-31,1553,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1553.0,Inflow,TO_CONFIRM,Inflow
+2026-03-31,3086,Money In,Revenue,HTMall,TO_CONFIRM,3086.0,Inflow,TO_CONFIRM,Inflow
+2026-03-31,1081,Money In,Revenue,AlTahaddy,TO_CONFIRM,1081.0,Inflow,TO_CONFIRM,Inflow
+2026-03-31,2778,Money In,Revenue,HTLand,TO_CONFIRM,2778.0,Inflow,TO_CONFIRM,Inflow
+2026-03-31,350,Money Out,TO_CONFIRM,TO_CONFIRM,نقل اله,-350.0,Review,TO_CONFIRM,Review
+2026-03-31,150,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-150.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-04-02,3657,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3657.0,Inventory,TO_CONFIRM,Inventory
+2026-04-04,2000,Money Out,storage,TO_CONFIRM,ايجار مخزن,-2000.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-04-04,1225,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1225.0,Inventory,TO_CONFIRM,Inventory
+2026-04-06,180,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-180.0,Inventory,TO_CONFIRM,Inventory
+2026-04-07,283,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-283.0,Inventory,TO_CONFIRM,Inventory
+2026-03-31,1500,Money Out,Ahmed,TO_CONFIRM,TO_CONFIRM,-1500.0,Operations,TO_CONFIRM,Operations
+2026-04-08,546,Money Out,TO_CONFIRM,TO_CONFIRM,جزء الى نوري تركيب لصقه,-546.0,Review,TO_CONFIRM,Review
+2026-04-09,1355,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1355.0,Inventory,TO_CONFIRM,Inventory
+2026-04-11,1651,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1651.0,Inflow,TO_CONFIRM,Inflow
+2026-04-11,2170,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2170.0,Inventory,TO_CONFIRM,Inventory
+2026-04-12,3494,Money In,Revenue,AlTahaddy,TO_CONFIRM,3494.0,Inflow,TO_CONFIRM,Inflow
+2026-04-12,1810,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1810.0,Inflow,TO_CONFIRM,Inflow
+2026-04-14,1575,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1575.0,Inventory,TO_CONFIRM,Inventory
+2026-04-14,6568,Money In,Revenue,Istiklal,TO_CONFIRM,6568.0,Inflow,TO_CONFIRM,Inflow
+2026-04-15,1888,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1888.0,Inflow,TO_CONFIRM,Inflow
+2026-04-15,1008,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1008.0,Inventory,TO_CONFIRM,Inventory
+2026-04-16,4312,Money In,Revenue,HTMall,TO_CONFIRM,4312.0,Inflow,TO_CONFIRM,Inflow
+2026-04-16,2954,Money In,Revenue,HTLand,TO_CONFIRM,2954.0,Inflow,TO_CONFIRM,Inflow
+2026-04-17,1460,Money In,Revenue,AlTahaddy,TO_CONFIRM,1460.0,Inflow,TO_CONFIRM,Inflow
+2026-04-17,488,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-488.0,Inventory,TO_CONFIRM,Inventory
+2026-04-18,1077,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1077.0,Inflow,TO_CONFIRM,Inflow
+2026-04-18,2220,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-2220.0,Inventory,TO_CONFIRM,Inventory
+2026-04-19,653,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-653.0,Inventory,TO_CONFIRM,Inventory
+2026-04-20,3068,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-3068.0,Inventory,TO_CONFIRM,Inventory
+2026-04-22,1000,Money Out,Rent,HTMall,ايجار شهر 4,-1000.0,Fixed Costs,TO_CONFIRM,Fixed Costs
+2026-04-23,1700,Money Out,TO_CONFIRM,TO_CONFIRM,لنوري تركيب تصاميم,-1700.0,Review,TO_CONFIRM,Review
+2026-04-23,1758,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1758.0,Inflow,TO_CONFIRM,Inflow
+2026-04-24,1699,Money In,Revenue,AlTahaddy,TO_CONFIRM,1699.0,Inflow,TO_CONFIRM,Inflow
+2026-04-25,2944,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,2944.0,Inflow,TO_CONFIRM,Inflow
+2026-04-25,1187,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1187.0,Inflow,TO_CONFIRM,Inflow
+2026-04-26,2513,Money In,Revenue,HTMall,TO_CONFIRM,2513.0,Inflow,TO_CONFIRM,Inflow
+2026-04-25,1972,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1972.0,Inventory,TO_CONFIRM,Inventory
+2026-04-26,1967,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1967.0,Inventory,TO_CONFIRM,Inventory
+2026-04-28,400,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-400.0,Inventory,TO_CONFIRM,Inventory
+2026-04-28,4680,Money Out,TO_CONFIRM,TO_CONFIRM,شراء دولار,-4680.0,Review,TO_CONFIRM,Review
+2026-04-29,900,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-900.0,Inventory,TO_CONFIRM,Inventory
+2026-04-29,1566,Money In,Revenue,KhalijUniversity,TO_CONFIRM,1566.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,118,Money Out,TO_CONFIRM,TO_CONFIRM,تفعيل مصرف,-118.0,Review,TO_CONFIRM,Review
+2026-04-30,1430,Money Out,Anas,TO_CONFIRM,TO_CONFIRM,-1430.0,Owner Draw,TO_CONFIRM,Owner Draw
+2026-04-30,1610,Money In,Revenue,AlTahaddy,TO_CONFIRM,1610.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,2564,Money In,Revenue,HTLand,TO_CONFIRM,2564.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,1276,Money In,Revenue,AlmouasafatHospital,TO_CONFIRM,1276.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,2335,Money In,Revenue,Istiklal,TO_CONFIRM,2335.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,874,Money In,Revenue,HTMall,TO_CONFIRM,874.0,Inflow,TO_CONFIRM,Inflow
+2026-04-30,544,Money In,Revenue,KhalijUniversity,TO_CONFIRM,544.0,Inflow,TO_CONFIRM,Inflow
+2026-05-01,1488,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1488.0,Inventory,TO_CONFIRM,Inventory
+2026-05-02,1201,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-1201.0,Inventory,TO_CONFIRM,Inventory
+2026-05-03,827,Money Out,Product Restocking,TO_CONFIRM,TO_CONFIRM,-827.0,Inventory,TO_CONFIRM,Inventory
+2026-05-05,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,0.0,Review,TO_CONFIRM,Review
+2026-05-14,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,0.0,Review,TO_CONFIRM,Review
+2026-05-15,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,TO_CONFIRM,0.0,Review,TO_CONFIRM,Review

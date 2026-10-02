@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+import * as domain from '../src/lib/crm-workspace.ts';
+const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/crm-lead-list.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,URLSearchParams,Intl,Date,require:n=>{assert.equal(n,'./crm-workspace');return domain;}});
+test('choosing Declined inside Open opportunities switches the visible lifecycle instead of showing a false empty list',()=>{const f=exports.leadFilters({group:'active',focus:'active',status:'rejected',q:'kept',assigned_to:'kept'});assert.equal(f.group,'declined');assert.equal(f.focus,undefined);assert.equal(f.q,'kept');assert.equal(f.assigned_to,'kept');});
+test('installed and reopened status choices cannot conflict with a hidden lifecycle field',()=>{assert.equal(exports.leadFilters({group:'active',status:'machine_placed'}).group,'installed');assert.equal(exports.leadFilters({group:'declined',status:'contacted'}).group,'active');assert.equal(exports.leadFilters({group:'active',status:'accepted'}).group,'agreed');});
+test('legacy status-only URLs do not acquire an unsupported focus-specific filter',()=>{const f=exports.leadFilters({status:'rejected',scope:'mine'});assert.equal(f.group,undefined);assert.equal(f.status,'rejected');});

@@ -1,0 +1,1343 @@
+import Link from "next/link";
+import { KpiSection } from "@/components/KpiDashboard";
+import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
+import { StatCard } from "@/components/StatCard";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
+import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { isAdminRole, isOwnerAdminRole } from "@/lib/authz";
+import { isMissingRouteInventoryReviewSchema } from "@/lib/route-inventory-discrepancies";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { lyd } from "@/lib/format";
+import {
+  buildMachineRefillForecasts,
+  type MachineRefillForecast,
+  type RefillFillLine,
+  type RefillMachine,
+  type RefillStockHistory,
+} from "@/lib/refill-forecast";
+import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
+import {
+  loadRestockPriorityData,
+  type RestockPriorityLoadResult,
+} from "@/lib/restock-priority-data";
+import { getServerI18n } from "@/lib/i18n/server";
+import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
+import {
+  activeDetailedBatches,
+  activeStockBatches,
+  batchDateRangeLabel,
+  batchImportedRows,
+  formatVmsDateTime,
+  isActiveImportedVmsBatch,
+  queryVmsDashboardBatches,
+  sourceFileName,
+  type VmsDashboardBatch,
+} from "@/lib/vms-dashboard-source";
+
+export const dynamic = "force-dynamic";
+
+type MonthlyRevenueSummaryRow = {
+  revenue_amount: number | string | null;
+  successful_sales_count: number | string | null;
+  rows_used: number | string | null;
+};
+
+type RefillRow = {
+  product_id: string | null;
+  machine_id: string | null;
+  machine_name: string | null;
+  import_batch_id?: string | null;
+  product_name: string | null;
+  current_qty: number | string | null;
+  capacity: number | string | null;
+  available_storage_qty: number | string | null;
+  suggested_qty: number | string | null;
+  final_qty_to_take: number | string | null;
+  priority: string | null;
+};
+
+type IssueRow = {
+  id: string;
+  issue_type: string | null;
+  priority: string | null;
+  status: string | null;
+  description: string | null;
+  created_at: string | null;
+  sla_due_at?: string | null;
+  machines?: { name?: string | null } | Array<{ name?: string | null }> | null;
+};
+
+type RouteRow = {
+  id: string;
+  route_date: string | null;
+  status: string | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+  completed_at?: string | null;
+  last_completion_error?: string | null;
+  operator?: { full_name?: string | null } | Array<{ full_name?: string | null }> | null;
+};
+
+type MissingCostRow = {
+  product_id: string | null;
+  product_name: string | null;
+};
+
+type DashboardFinanceHealthSummary = {
+  purchasesMissingFinance: number;
+  cashCollectionsMissingFinance: number;
+  brokenLinks: number;
+  balanceInconsistencies: number;
+  missingCategories: number;
+  ignoredSourceRows: number;
+};
+
+type DashboardSection =
+  | "revenue"
+  | "cashWaiting"
+  | "cashVariance"
+  | "purchaseDrafts"
+  | "purchaseUnpaid"
+  | "routes"
+  | "recentIssues"
+  | "criticalIssues"
+  | "refill"
+  | "refillForecast"
+  | "missingCost"
+  | "vmsBatches"
+  | "restockPriority"
+  | "financeHealth"
+  | "routeInventoryReview"
+  | "machineQuantityUpdates";
+
+type DashboardErrors = Partial<Record<DashboardSection, string>>;
+
+type DashboardData = {
+  today: string;
+  weekStart: string;
+  monthStart: string;
+  monthlyRevenueSummary: MonthlyRevenueSummaryRow | null;
+  monthlyRevenueReportEnd: string | null;
+  cashWaitingCount: number;
+  varianceReviewCount: number;
+  draftPurchaseCount: number;
+  unpaidPurchaseCount: number;
+  routeRows: RouteRow[];
+  recentIssues: IssueRow[];
+  criticalIssueCount: number;
+  refillRows: RefillRow[];
+  refillForecasts: MachineRefillForecast[];
+  missingCostRows: MissingCostRow[];
+  vmsBatchRows: VmsDashboardBatch[];
+  restockItems: RestockPriorityItem[];
+  restockWarnings: string[];
+  financeDiagnostics: DashboardFinanceHealthSummary;
+  canReviewRouteInventory: boolean;
+  routeInventoryDiscrepancyCount: number;
+  canManageMachineQuantityUpdates: boolean;
+  pendingMachineQuantityUpdateCount: number;
+  errors: DashboardErrors;
+};
+
+type ActionItem = {
+  key: string;
+  title: string;
+  detail: string;
+  href: string;
+  cta: string;
+};
+
+type DashboardI18n = {
+  t: (key: string, fallback?: string) => string;
+  locale: "en" | "ar";
+};
+
+const HEALTHY_IMPORT_STATUSES = ["imported", "imported_with_warnings", "partially_imported"];
+const ROUTE_PENDING_STATUSES = new Set<string>(ROUTE_RESERVATION_STATUSES);
+const dashboardSectionLabels: Record<DashboardSection, { en: string; ar: string }> = {
+  revenue: { en: "Revenue", ar: "الإيرادات" },
+  cashWaiting: { en: "Cash waiting", ar: "النقد بانتظار العد" },
+  cashVariance: { en: "Cash variance", ar: "فروقات النقد" },
+  purchaseDrafts: { en: "Purchase drafts", ar: "مسودات المشتريات" },
+  purchaseUnpaid: { en: "Unpaid purchases", ar: "المشتريات غير المسددة" },
+  routes: { en: "Routes", ar: "الجولات" },
+  recentIssues: { en: "Recent issues", ar: "الأعطال الأخيرة" },
+  criticalIssues: { en: "Critical issues", ar: "الأعطال الحرجة" },
+  refill: { en: "Refill recommendations", ar: "توصيات التعبئة" },
+  refillForecast: { en: "Machine refill forecast", ar: "توقعات تعبئة الأجهزة" },
+  missingCost: { en: "Missing product cost", ar: "تكلفة المنتج المفقودة" },
+  vmsBatches: { en: "VMS imports", ar: "استيرادات VMS" },
+  restockPriority: { en: "Restock priority", ar: "أولوية إعادة التخزين" },
+  financeHealth: { en: "Finance health", ar: "صحة المالية" },
+  routeInventoryReview: { en: "Route inventory review", ar: "مراجعة مخزون الجولات" },
+  machineQuantityUpdates: { en: "Machine quantity updates", ar: "تحديثات كميات الأجهزة" },
+};
+
+function relationRecord<T extends Record<string, unknown>>(value: T | T[] | null | undefined) {
+  if (Array.isArray(value)) return (value[0] ?? null) as T | null;
+  return (value ?? null) as T | null;
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function textValue(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function errorText(error: unknown) {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).filter(Boolean).join(" ");
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown };
+    return String(row.message ?? row.details ?? row.hint ?? "Unknown Supabase error");
+  }
+  return "Unknown Supabase error";
+}
+
+function isMissingColumn(error: unknown, columns: string[]) {
+  const text = errorText(error).toLowerCase();
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
+  return columns.some((column) => text.includes(column.toLowerCase()));
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-US");
+}
+
+function dateOnlyUtc(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function monthStartUtc(value: string) {
+  return `${value.slice(0, 7)}-01`;
+}
+
+function weekStartUtc(date: Date) {
+  const day = date.getUTCDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + offset);
+  return dateOnlyUtc(copy);
+}
+
+function machineNeedsRefill(row: RefillRow) {
+  return Math.max(numberValue(row.final_qty_to_take), numberValue(row.suggested_qty)) > 0;
+}
+
+function refillPriorityRank(priority: string | null | undefined) {
+  const value = String(priority ?? "").toLowerCase();
+  if (value === "critical") return 0;
+  if (value === "high") return 1;
+  if (value === "normal") return 2;
+  return 3;
+}
+
+function sortRefillRows(rows: RefillRow[]) {
+  return [...rows].sort((left, right) => {
+    const priorityDifference = refillPriorityRank(left.priority) - refillPriorityRank(right.priority);
+    if (priorityDifference) return priorityDifference;
+    const takeDifference = Math.max(numberValue(right.final_qty_to_take), numberValue(right.suggested_qty))
+      - Math.max(numberValue(left.final_qty_to_take), numberValue(left.suggested_qty));
+    if (takeDifference) return takeDifference;
+    return String(left.machine_name ?? "").localeCompare(String(right.machine_name ?? ""));
+  });
+}
+
+function issueMachineName(issue: IssueRow, fallback: string) {
+  return textValue(relationRecord<{ name?: string | null }>(issue.machines)?.name) ?? fallback;
+}
+
+function trimText(value: string | null | undefined, max = 140) {
+  const text = String(value ?? "").trim();
+  if (!text) return "-";
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function routeIsPending(route: RouteRow) {
+  return ROUTE_PENDING_STATUSES.has(String(route.status ?? ""));
+}
+
+function dashboardStatusLabel(status: string | null | undefined, t: DashboardI18n["t"]) {
+  const value = String(status ?? "").toLowerCase();
+  switch (value) {
+    case "critical":
+      return t("Critical");
+    case "high":
+      return t("High");
+    case "normal":
+      return t("Normal");
+    case "open":
+      return t("Open");
+    case "resolved":
+      return t("Resolved");
+    case "closed":
+    case "cancelled":
+    case "canceled":
+      return t("cancelled");
+    case "pending":
+      return t("pending");
+    case "assigned":
+      return t("assigned");
+    case "in_progress":
+      return t("in_progress");
+    case "completed":
+      return t("completed");
+    case "available":
+      return t("available");
+    case "imported":
+      return t("Imported");
+    case "imported_with_warnings":
+      return t("Imported with warnings");
+    case "partially_imported":
+      return t("Partially imported");
+    default:
+      return t("Unknown");
+  }
+}
+
+function routeIsBroken(route: RouteRow, today: string) {
+  if (!routeIsPending(route)) return false;
+  if (textValue(route.last_completion_error)) return true;
+  return Boolean(route.route_date && route.route_date < today);
+}
+
+function importNeedsAttention(batch: VmsDashboardBatch) {
+  const status = String(batch.status ?? "");
+  if (!HEALTHY_IMPORT_STATUSES.includes(status)) return true;
+  return false;
+}
+
+function importHasWarnings(batch: VmsDashboardBatch) {
+  return statusValue(batch.status) === "imported_with_warnings"
+    || numberValue(batch.error_count) > 0
+    || numberValue(batch.rows_needing_review) > 0;
+}
+
+function statusValue(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+async function safeDashboardQuery<T>({
+  key,
+  label,
+  promise,
+  fallback,
+  errors,
+}: {
+  key: DashboardSection;
+  label: string;
+  promise: PromiseLike<{ data?: T | null; error?: unknown; count?: number | null }>;
+  fallback: T;
+  errors: DashboardErrors;
+}) {
+  try {
+    const result = await promise;
+    if (result.error) {
+      const message = errorMessage(result.error);
+      console.error("[dashboard] Supabase query failed", { section: key, query: label, error: result.error });
+      errors[key] = message;
+      return { data: fallback, count: 0 };
+    }
+    return { data: (result.data ?? fallback) as T, count: result.count ?? 0 };
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Supabase query threw", { section: key, query: label, error });
+    errors[key] = message;
+    return { data: fallback, count: 0 };
+  }
+}
+
+async function safeDashboardCount({
+  key,
+  label,
+  promise,
+  errors,
+}: {
+  key: DashboardSection;
+  label: string;
+  promise: PromiseLike<{ error?: unknown; count?: number | null }>;
+  errors: DashboardErrors;
+}) {
+  try {
+    const result = await promise;
+    if (result.error) {
+      const message = errorMessage(result.error);
+      console.error("[dashboard] Supabase count failed", { section: key, query: label, error: result.error });
+      errors[key] = message;
+      return 0;
+    }
+    return Number(result.count ?? 0);
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Supabase count threw", { section: key, query: label, error });
+    errors[key] = message;
+    return 0;
+  }
+}
+
+async function safeRouteInventoryReviewCount({
+  promise,
+  errors,
+}: {
+  promise: PromiseLike<{ error?: unknown; count?: number | null }>;
+  errors: DashboardErrors;
+}) {
+  try {
+    const result = await promise;
+    if (result.error) {
+      if (isMissingRouteInventoryReviewSchema(result.error)) return 0;
+      const message = errorMessage(result.error);
+      console.error("[dashboard] Supabase count failed", {
+        section: "routeInventoryReview",
+        query: "route_inventory_discrepancies open review",
+        error: result.error,
+      });
+      errors.routeInventoryReview = message;
+      return 0;
+    }
+    return Number(result.count ?? 0);
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Supabase count threw", {
+      section: "routeInventoryReview",
+      query: "route_inventory_discrepancies open review",
+      error,
+    });
+    errors.routeInventoryReview = message;
+    return 0;
+  }
+}
+
+async function safeRestockPriorityForDashboard(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  errors: DashboardErrors,
+  recommendationsPromise: PromiseLike<RefillRow[]>,
+): Promise<RestockPriorityLoadResult> {
+  try {
+    return await loadRestockPriorityData(supabase, {
+      salesQueryTimeoutMs: 1000,
+      repairMissingRouteStockLines: false,
+      recommendationsPromise,
+    });
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
+    errors.restockPriority = message;
+    return { items: [], errors: {}, productCount: 0, storageLoaded: false, usedProductFallback: false };
+  }
+}
+
+async function safeFinanceHealthForDashboard(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  errors: DashboardErrors,
+): Promise<DashboardFinanceHealthSummary> {
+  try {
+    const result = await supabase
+      .rpc("finance_health_report")
+      .abortSignal(AbortSignal.timeout(1000));
+
+    if (!result.error && result.data && typeof result.data === "object") {
+      const report = result.data as Record<string, unknown>;
+      return {
+        purchasesMissingFinance: Math.max(0, numberValue(report.purchases_missing_finance_transaction)),
+        cashCollectionsMissingFinance: Math.max(0, numberValue(report.cash_collections_missing_finance_transaction)),
+        brokenLinks: Math.max(0, numberValue(report.broken_link_count)),
+        balanceInconsistencies: Math.max(0, numberValue(report.balance_inconsistency_count)),
+        missingCategories: Math.max(0, numberValue(report.missing_category_count)),
+        ignoredSourceRows: Math.max(0, numberValue(report.ignored_source_count)),
+      };
+    }
+
+    const message = result.error ? errorMessage(result.error) : "Finance health summary returned no data.";
+    console.warn("[dashboard] finance_health_report unavailable", { error: result.error ?? null });
+    errors.financeHealth = message;
+    return {
+      purchasesMissingFinance: 0,
+      cashCollectionsMissingFinance: 0,
+      brokenLinks: 0,
+      balanceInconsistencies: 0,
+      missingCategories: 0,
+      ignoredSourceRows: 0,
+    };
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Finance health failed", { section: "financeHealth", error });
+    errors.financeHealth = message;
+    return {
+      purchasesMissingFinance: 0,
+      cashCollectionsMissingFinance: 0,
+      brokenLinks: 0,
+      balanceInconsistencies: 0,
+      missingCategories: 0,
+      ignoredSourceRows: 0,
+    };
+  }
+}
+
+async function loadRouteRows(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+) {
+  const withError = await supabase
+    .from("routes")
+    .select("id, route_date, status, started_at, completed_at, last_completion_error, operator:team_members!routes_operator_id_fkey(full_name)")
+    .order("route_date", { ascending: true })
+    .limit(80);
+
+  if (!withError.error || !isMissingColumn(withError.error, ["last_completion_error"])) return withError;
+
+  return supabase
+    .from("routes")
+    .select("id, route_date, status, started_at, completed_at, operator:team_members!routes_operator_id_fkey(full_name)")
+    .order("route_date", { ascending: true })
+    .limit(80);
+}
+
+async function loadIssueRows(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+) {
+  const withSla = await supabase
+    .from("issues")
+    .select("id, issue_type, priority, status, description, created_at, sla_due_at, machines(name)")
+    .neq("status", "resolved")
+    .neq("status", "closed")
+    .order("created_at", { ascending: false })
+    .limit(6);
+
+  if (!withSla.error || !isMissingColumn(withSla.error, ["sla_due_at"])) return withSla;
+
+  return supabase
+    .from("issues")
+    .select("id, issue_type, priority, status, description, created_at, machines(name)")
+    .neq("status", "resolved")
+    .neq("status", "closed")
+    .order("created_at", { ascending: false })
+    .limit(6);
+}
+
+async function loadForecastMachines(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+) {
+  const enriched = await supabase
+    .from("machines")
+    .select("id, name, machine_code, status, refill_open_days, refill_critical_percent, refill_today_percent, refill_target_percent, refill_minimum_units, refill_manual_daily_units")
+    .eq("status", "active")
+    .order("name");
+
+  if (!enriched.error || !isMissingColumn(enriched.error, [
+    "refill_open_days",
+    "refill_critical_percent",
+    "refill_today_percent",
+    "refill_target_percent",
+    "refill_minimum_units",
+    "refill_manual_daily_units",
+  ])) return enriched;
+
+  return supabase
+    .from("machines")
+    .select("id, name, machine_code, status")
+    .eq("status", "active")
+    .order("name");
+}
+
+function refillForecastClock() {
+  const now = new Date();
+  return {
+    now,
+    since: new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+async function getDashboardData() {
+  const profile = await requireCurrentProfileForPath("/dashboard");
+  const canReviewRouteInventory = isAdminRole(profile);
+  const canManageMachineQuantityUpdates = isOwnerAdminRole(profile);
+  const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
+  if (!supabase) return { data: null };
+
+  const today = dateOnlyUtc(new Date());
+  const weekStart = weekStartUtc(new Date());
+  const monthStart = monthStartUtc(today);
+  const forecastClock = refillForecastClock();
+  const errors: DashboardErrors = {};
+  const refillRowsPromise = safeDashboardQuery<RefillRow[]>({
+    key: "refill",
+    label: "refill_recommendations current",
+    promise: supabase
+      .from("refill_recommendations")
+      .select("product_id, machine_id, machine_name, import_batch_id, product_name, current_qty, capacity, available_storage_qty, suggested_qty, final_qty_to_take, priority")
+      .limit(4000),
+    fallback: [],
+    errors,
+  });
+
+  const [
+    monthlyRevenueSummary,
+    cashWaitingCount,
+    varianceReviewCount,
+    draftPurchaseCount,
+    unpaidPurchaseCount,
+    routeRows,
+    recentIssues,
+    criticalIssueCount,
+    refillRows,
+    forecastMachines,
+    forecastLatestStock,
+    forecastStockHistory,
+    forecastFillLines,
+    missingCostRows,
+    vmsBatchRows,
+    restockPriority,
+    financeDiagnostics,
+    routeInventoryDiscrepancyCount,
+    pendingMachineQuantityUpdateCount,
+  ] = await Promise.all([
+    safeDashboardQuery<MonthlyRevenueSummaryRow[]>({
+      key: "revenue",
+      label: "sales_dashboard_monthly_summary current month",
+      promise: supabase.rpc("sales_dashboard_monthly_summary", {
+        p_date_from: monthStart,
+        p_date_to: today,
+      }),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardCount({
+      key: "cashWaiting",
+      label: "cash_collections collected_pending_count",
+      promise: supabase
+        .from("cash_collections")
+        .select("id", { count: "exact", head: true })
+        .eq("review_status", "collected_pending_count"),
+      errors,
+    }),
+    safeDashboardCount({
+      key: "cashVariance",
+      label: "cash_collections variance_review",
+      promise: supabase
+        .from("cash_collections")
+        .select("id", { count: "exact", head: true })
+        .eq("review_status", "variance_review"),
+      errors,
+    }),
+    safeDashboardCount({
+      key: "purchaseDrafts",
+      label: "purchase_orders drafts",
+      promise: supabase
+        .from("purchase_orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "draft"),
+      errors,
+    }),
+    safeDashboardCount({
+      key: "purchaseUnpaid",
+      label: "purchase_orders received unpaid",
+      promise: supabase
+        .from("purchase_orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "received")
+        .neq("payment_status", "paid")
+        .neq("payment_status", "voided"),
+      errors,
+    }),
+    safeDashboardQuery<RouteRow[]>({
+      key: "routes",
+      label: "routes open and recent",
+      promise: loadRouteRows(supabase),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<IssueRow[]>({
+      key: "recentIssues",
+      label: "issues recent unresolved",
+      promise: loadIssueRows(supabase),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardCount({
+      key: "criticalIssues",
+      label: "issues critical unresolved",
+      promise: supabase
+        .from("issues")
+        .select("id", { count: "exact", head: true })
+        .eq("priority", "critical")
+        .neq("status", "resolved")
+        .neq("status", "closed"),
+      errors,
+    }),
+    refillRowsPromise,
+    safeDashboardQuery<RefillMachine[]>({
+      key: "refillForecast",
+      label: "machines refill forecast policies",
+      promise: loadForecastMachines(supabase),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "latest_vms_stock_by_slot refill forecast",
+      promise: supabase
+        .from("latest_vms_stock_by_slot")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id")
+        .eq("source_provider", "xy"),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "vms_stock_snapshots refill trend",
+      promise: supabase
+        .from("vms_stock_snapshots")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id, batch:vms_import_batches!inner(status, deleted_at)")
+        .eq("source_provider", "xy")
+        .eq("import_row_status", "imported")
+        .in("batch.status", ["imported", "imported_with_warnings"])
+        .is("batch.deleted_at", null)
+        .gte("captured_at", forecastClock.since)
+        .order("captured_at", { ascending: true })
+        .limit(10000),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillFillLine[]>({
+      key: "refillForecast",
+      label: "route_stop_fill_lines refill trend",
+      promise: supabase
+        .from("route_stop_fill_lines")
+        .select("machine_id, product_id, actual_qty, created_at")
+        .gte("created_at", forecastClock.since)
+        .order("created_at", { ascending: true })
+        .limit(5000),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<MissingCostRow[]>({
+      key: "missingCost",
+      label: "vms_sales_dashboard_clean missing cost products",
+      promise: supabase
+        .from("vms_sales_dashboard_clean")
+        .select("product_id, product_name")
+        .eq("cost_missing", true)
+        .limit(1000)
+        .abortSignal(AbortSignal.timeout(1000)),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<VmsDashboardBatch[]>({
+      key: "vmsBatches",
+      label: "vms_import_batches dashboard sources",
+      promise: queryVmsDashboardBatches(supabase, {
+        reportTypes: ["vms_order_details_weekly", "monthly_product_profit", "sales", "stock", "machine_stock_snapshot", "planogram"],
+      }),
+      fallback: [],
+      errors,
+    }),
+    safeRestockPriorityForDashboard(supabase, errors, refillRowsPromise.then((result) => result.data)),
+    safeFinanceHealthForDashboard(supabase, errors),
+    canReviewRouteInventory
+      ? safeRouteInventoryReviewCount({
+          promise: supabase
+            .from("route_inventory_discrepancies")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["open", "investigating"]),
+          errors,
+        })
+      : Promise.resolve(0),
+    canManageMachineQuantityUpdates
+      ? safeDashboardCount({
+          key: "machineQuantityUpdates",
+          label: "route_stop_quantity_confirmations offline pending",
+          promise: supabase
+            .from("route_stop_quantity_confirmations")
+            .select("id", { count: "exact", head: true })
+            .eq("verification_status", "offline_pending"),
+          errors,
+        })
+      : Promise.resolve(0),
+  ]);
+
+  const currentMonthlyRevenueBatch = vmsBatchRows.data
+    .filter((batch) => batch.report_type === "monthly_product_profit" && isActiveImportedVmsBatch(batch))
+    .filter((batch) => {
+      const start = batch.report_start_date ?? "";
+      const end = batch.report_end_date ?? "";
+      return (!start || start <= today) && (!end || end >= monthStart);
+    })
+    .sort((a, b) => String(b.report_end_date ?? b.detected_max_datetime ?? b.imported_at ?? "").localeCompare(String(a.report_end_date ?? a.detected_max_datetime ?? a.imported_at ?? "")))[0] ?? null;
+  const monthlyRevenueReportEnd = currentMonthlyRevenueBatch?.report_end_date
+    ?? currentMonthlyRevenueBatch?.detected_max_datetime?.slice(0, 10)
+    ?? null;
+
+  const latestXyBatchIds = new Set(
+    forecastLatestStock.data.map((row) => textValue(row.import_batch_id)).filter((id): id is string => Boolean(id)),
+  );
+  const xyRefillRows = latestXyBatchIds.size > 0
+    ? refillRows.data.filter((row) => row.import_batch_id && latestXyBatchIds.has(row.import_batch_id))
+    : [];
+  const storageCoverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
+  xyRefillRows.forEach((row) => {
+    const machineId = textValue(row.machine_id);
+    if (!machineId) return;
+    const current = storageCoverageByMachine.get(machineId) ?? { machineId, requestedUnits: 0, fillableUnits: 0 };
+    current.requestedUnits += Math.max(0, numberValue(row.suggested_qty));
+    current.fillableUnits += Math.max(0, numberValue(row.final_qty_to_take));
+    storageCoverageByMachine.set(machineId, current);
+  });
+  const refillForecasts = buildMachineRefillForecasts({
+    machines: forecastMachines.data,
+    latestStock: forecastLatestStock.data,
+    stockHistory: forecastStockHistory.data,
+    fills: forecastFillLines.data,
+    storageCoverage: Array.from(storageCoverageByMachine.values()),
+    now: forecastClock.now,
+  });
+
+  return {
+    data: {
+      today,
+      weekStart,
+      monthStart,
+      monthlyRevenueSummary: monthlyRevenueSummary.data[0] ?? null,
+      monthlyRevenueReportEnd,
+      cashWaitingCount,
+      varianceReviewCount,
+      draftPurchaseCount,
+      unpaidPurchaseCount,
+      routeRows: routeRows.data,
+      recentIssues: recentIssues.data,
+      criticalIssueCount,
+      refillRows: xyRefillRows,
+      refillForecasts,
+      missingCostRows: missingCostRows.data,
+      vmsBatchRows: vmsBatchRows.data,
+      restockItems: restockPriority.items,
+      restockWarnings: Object.values(restockPriority.errors ?? {}).filter(Boolean),
+      financeDiagnostics,
+      canReviewRouteInventory,
+      routeInventoryDiscrepancyCount,
+      canManageMachineQuantityUpdates,
+      pendingMachineQuantityUpdateCount,
+      errors,
+    } satisfies DashboardData,
+  };
+}
+
+function SectionLoadError({ message, prefix }: { message?: string | null; prefix: string }) {
+  if (!message) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+      {prefix} {message}
+    </div>
+  );
+}
+
+function SectionEmpty({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-center">
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <p className="mt-1 text-sm text-slate-500">{body}</p>
+    </div>
+  );
+}
+
+function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: DashboardI18n["t"]; locale: DashboardI18n["locale"] }) {
+  const isArabic = locale === "ar";
+  const localize = (en: string, ar: string) => (isArabic ? ar : en);
+  const errors = data.errors;
+  const restockItems = data.restockItems;
+  const restockSummary = restockCounts(restockItems);
+  const restockWarnings = data.restockWarnings;
+  const recentIssues = data.recentIssues;
+  const routeRows = data.routeRows;
+  const pendingRoutes = routeRows.filter(routeIsPending);
+  const brokenRouteCount = routeRows.filter((route) => routeIsBroken(route, data.today)).length;
+  const overdueRouteCount = pendingRoutes.filter((route) => route.route_date && route.route_date < data.today).length;
+  const recentRefillRows = sortRefillRows(data.refillRows.filter(machineNeedsRefill)).slice(0, 8);
+  const machinesNeedingRefillCount = new Set(
+    data.refillRows
+      .filter(machineNeedsRefill)
+      .map((row) => textValue(row.machine_id) ?? textValue(row.machine_name) ?? ""),
+  ).size;
+  const purchasesWaitingCount = data.draftPurchaseCount + data.unpaidPurchaseCount;
+  const monthRevenue = numberValue(data.monthlyRevenueSummary?.revenue_amount);
+  const monthSalesCount = Math.max(0, Math.floor(numberValue(data.monthlyRevenueSummary?.successful_sales_count)));
+  const monthRevenueRows = Math.max(0, Math.floor(numberValue(data.monthlyRevenueSummary?.rows_used)));
+  const monthlyRevenueAvailable = !errors.revenue
+    && Boolean(data.monthlyRevenueReportEnd)
+    && monthRevenueRows > 0;
+  const missingCostProducts = errors.missingCost
+    ? 0
+    : new Set(data.missingCostRows.map((row) => textValue(row.product_id) ?? textValue(row.product_name) ?? "")).size;
+  const financeGapCount =
+    data.financeDiagnostics.purchasesMissingFinance
+    + data.financeDiagnostics.cashCollectionsMissingFinance
+    + data.financeDiagnostics.brokenLinks;
+  const financeWarningCount =
+    data.financeDiagnostics.balanceInconsistencies
+    + data.financeDiagnostics.missingCategories
+    + data.financeDiagnostics.ignoredSourceRows;
+  const failedImportCount = data.vmsBatchRows.filter(importNeedsAttention).length;
+  const warningImportCount = data.vmsBatchRows.filter(importHasWarnings).length;
+  const activeDetailedCount = activeDetailedBatches(data.vmsBatchRows).length;
+  const activeStockCount = activeStockBatches(data.vmsBatchRows).length;
+  const partialSections = Object.entries(errors).filter(([, message]) => Boolean(message));
+
+  const actionItems: ActionItem[] = [];
+  if (data.canManageMachineQuantityUpdates && data.pendingMachineQuantityUpdateCount > 0) {
+    actionItems.push({
+      key: "machine-quantity-updates",
+      title: localize("Update machines that had no electricity", "تحديث الأجهزة التي كانت بدون كهرباء"),
+      detail: localize(
+        `${data.pendingMachineQuantityUpdateCount} machine quantity update${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} are waiting for you.`,
+        `${data.pendingMachineQuantityUpdateCount} من تحديثات كميات الأجهزة بانتظارك.`,
+      ),
+      href: "/routes/quantity-updates",
+      cta: localize("Open quantity updates", "فتح تحديثات الكميات"),
+    });
+  }
+  if (data.canReviewRouteInventory && data.routeInventoryDiscrepancyCount > 0) {
+    actionItems.push({
+      key: "route-inventory-review",
+      title: localize("Review route inventory differences", "مراجعة فروق مخزون الجولات"),
+      detail: localize(
+        `${data.routeInventoryDiscrepancyCount} route inventory case${data.routeInventoryDiscrepancyCount === 1 ? "" : "s"} need manager review.`,
+        `${data.routeInventoryDiscrepancyCount} حالة فرق في مخزون الجولات تحتاج إلى مراجعة إدارية.`,
+      ),
+      href: "/routes/inventory-review",
+      cta: localize("Open inventory review", "فتح مراجعة المخزون"),
+    });
+  }
+  if (!activeDetailedCount) {
+    actionItems.push({
+      key: "missing-detailed-sales",
+      title: t("Import a detailed VMS sales file"),
+      detail: localize("Today/week sales detail is unavailable until an active Order Details file is imported. Month-to-date revenue still comes from the Monthly Profit Report.", "تفاصيل مبيعات اليوم والأسبوع غير متاحة حتى يتم استيراد ملف Order Details نشط. تظل مبيعات الشهر حتى الآن مأخوذة من تقرير الأرباح الشهري."),
+      href: "/vms-import",
+      cta: t("Open VMS import"),
+    });
+  }
+  if (!activeStockCount) {
+    actionItems.push({
+      key: "missing-stock-snapshot",
+      title: t("Import a stock snapshot"),
+      detail: t("Route refill signals work best when the latest machine stock snapshot is active."),
+      href: "/vms-import",
+      cta: t("Upload stock file"),
+    });
+  }
+  if (failedImportCount > 0) {
+    actionItems.push({
+      key: "failed-imports",
+      title: t("Review failed imports"),
+      detail: localize(
+        `${failedImportCount} VMS import batch${failedImportCount === 1 ? "" : "es"} still need attention.`,
+        `${failedImportCount} دفعة استيراد من VMS لا تزال بحاجة إلى مراجعة.`,
+      ),
+      href: "/vms-import/sources",
+      cta: t("Review imports"),
+    });
+  }
+  if (financeGapCount > 0) {
+    actionItems.push({
+      key: "finance-gaps",
+      title: t("Repair finance links"),
+      detail: localize(
+        `${financeGapCount} purchase or cash row${financeGapCount === 1 ? "" : "s"} are missing finance coverage.`,
+        `${financeGapCount} صف شراء أو كاش لا يملك تغطية مالية.`,
+      ),
+      href: "/admin/system-health",
+      cta: t("Open system health"),
+    });
+  }
+  if (data.cashWaitingCount > 0) {
+    actionItems.push({
+      key: "cash-waiting",
+      title: t("Count waiting cash collections"),
+      detail: localize(
+        `${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} still need finance counting.`,
+        `${data.cashWaitingCount} عملية تحصيل نقد لا تزال بحاجة إلى العد.`,
+      ),
+      href: "/cash-collections?status=collected_pending_count",
+      cta: t("Open cash queue"),
+    });
+  }
+  if (restockSummary.critical > 0) {
+    actionItems.push({
+      key: "critical-restock",
+      title: t("Buy critical products"),
+      detail: localize(
+        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
+        `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
+      ),
+      href: "/restock-priority?filter=critical",
+      cta: t("Open restock priority"),
+    });
+  }
+  if (machinesNeedingRefillCount > 0) {
+    actionItems.push({
+      key: "refill-routes",
+      title: t("Build the next refill route"),
+      detail: localize(
+        `${machinesNeedingRefillCount} machine${machinesNeedingRefillCount === 1 ? "" : "s"} have active refill recommendations.`,
+        `${machinesNeedingRefillCount} جهاز${machinesNeedingRefillCount === 1 ? "" : "ات"} لديه توصيات تعبئة نشطة.`,
+      ),
+      href: "/routes/new",
+      cta: t("Create route"),
+    });
+  }
+  if (pendingRoutes.length > 0) {
+    actionItems.push({
+      key: "pending-routes",
+      title: t("Close open routes"),
+      detail: localize(
+        `${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} are still open${overdueRouteCount ? `, including ${overdueRouteCount} overdue` : ""}.`,
+        `${pendingRoutes.length} جولة${pendingRoutes.length === 1 ? "" : "ات"} ما زالت مفتوحة${overdueRouteCount ? `، منها ${overdueRouteCount} متأخرة` : ""}.`,
+      ),
+      href: "/routes",
+      cta: t("Open routes"),
+    });
+  }
+  if (data.criticalIssueCount > 0) {
+    actionItems.push({
+      key: "critical-issues",
+      title: t("Resolve critical issues"),
+      detail: localize(
+        `${data.criticalIssueCount} critical machine issue${data.criticalIssueCount === 1 ? "" : "s"} are still unresolved.`,
+        `${data.criticalIssueCount} عطل جهاز حرِج ما زال غير محلول.`,
+      ),
+      href: "/issues",
+      cta: t("Open issues"),
+    });
+  }
+
+  const criticalProductsUnavailable = Boolean(errors.restockPriority);
+  const routesUnavailable = Boolean(errors.routes);
+
+  return (
+    <>
+      <PageHeader
+        title={t("Dashboard")}
+        subtitle={t("What needs action today, which machines should be filled, and what is blocking operations.")}
+        action={(
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton href="/routes/new">{t("Create Route")}</PrimaryButton>
+            <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
+          </div>
+        )}
+      />
+
+      <div className="mb-6">
+        {errors.refillForecast ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <div className="text-lg font-semibold text-amber-950">{localize("Machine refill forecast needs attention", "توقع تعبئة الماكينات يحتاج إلى متابعة")}</div>
+            <p className="mt-1 text-sm text-amber-900">{localize("Snacky OS could not safely calculate machine timing from the latest XY data. Product assignment remains protected by storage validation.", "لم يتمكن Snacky OS من حساب موعد تعبئة الماكينات بأمان من أحدث بيانات XY. لا يزال تخصيص المنتجات محمياً بالتحقق من مخزون المستودع.")}</p>
+            <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{localize("Open refill dashboard", "فتح لوحة التعبئة")}</SecondaryButton><SecondaryButton href="/vms-import/sources">{localize("Check XY data", "فحص بيانات XY")}</SecondaryButton></div>
+          </section>
+        ) : (
+          <RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />
+        )}
+      </div>
+
+      <section className="mb-6">
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-slate-900">{t("Other priorities today")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("Only the queues that can change today's work, purchasing, cash, or machine availability.")}</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <StatCard
+            label={t("Critical products")}
+            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
+            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more products are low`, `${restockSummary.low} منتجات منخفضة إضافية`)}
+          />
+          <StatCard
+            label={t("Routes still open")}
+            value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
+            note={routesUnavailable ? t("Route queue unavailable") : localize(`${overdueRouteCount} overdue · ${brokenRouteCount} with errors`, `${overdueRouteCount} متأخرة · ${brokenRouteCount} بها أخطاء`)}
+          />
+          <StatCard
+            label={t("Critical machine issues")}
+            value={errors.criticalIssues ? "-" : data.criticalIssueCount.toLocaleString("en-US")}
+            note={t("Unresolved issues that can stop sales or filling")}
+          />
+          <StatCard
+            label={t("Cash waiting to be counted")}
+            value={errors.cashWaiting ? "-" : data.cashWaitingCount.toLocaleString("en-US")}
+            note={errors.cashVariance ? t("Variance review unavailable") : localize(`${data.varianceReviewCount} in variance review`, `${data.varianceReviewCount} قيد مراجعة الفروقات`)}
+          />
+          <StatCard
+            label={t("Purchases waiting")}
+            value={errors.purchaseDrafts || errors.purchaseUnpaid ? "-" : purchasesWaitingCount.toLocaleString("en-US")}
+            note={localize(`Draft ${data.draftPurchaseCount} · unpaid received ${data.unpaidPurchaseCount}`, `مسودات ${data.draftPurchaseCount} · مستلمة غير مسددة ${data.unpaidPurchaseCount}`)}
+          />
+          <StatCard
+            label={localize("Sales MTD", "مبيعات الشهر حتى الآن")}
+            value={monthlyRevenueAvailable ? lyd(monthRevenue) : "-"}
+            note={monthlyRevenueAvailable
+              ? localize(
+                  `Through ${data.monthlyRevenueReportEnd} · ${monthSalesCount.toLocaleString("en-US")} sales`,
+                  `حتى ${data.monthlyRevenueReportEnd} · ${monthSalesCount.toLocaleString("en-US")} عملية بيع`,
+                )
+              : localize("Waiting for the active Monthly Profit Report", "بانتظار تقرير الأرباح الشهري النشط")}
+          />
+        </div>
+        <div className="mt-3 text-xs text-slate-500">{localize("Revenue report through", "تقرير الإيرادات حتى")}: {data.monthlyRevenueReportEnd ?? t("Not available")} · {t("Active stock snapshot files")}: {activeStockCount}</div>
+      </section>
+
+      {partialSections.length ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          {t("Dashboard stayed online in partial mode. Some sections could not load:")}
+          {" "}
+          {partialSections.map(([key]) => {
+            const label = dashboardSectionLabels[key as DashboardSection];
+            return localize(label.en, label.ar);
+          }).join(" / ")}.
+        </div>
+      ) : null}
+
+      {!errors.restockPriority && restockWarnings.length ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          {t("Some restock inputs are still partial, so critical product counts are based on the signals that are currently healthy.")}
+        </div>
+      ) : null}
+
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold text-slate-900">{t("What Needs Attention")}</h2>
+        <p className="mt-1 text-sm text-slate-500">{t("Operations pressure from issues, refill demand, finance gaps, and import health.")}</p>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
+        <div className="space-y-4">
+          <KpiSection title={t("Recent issues")} subtitle={t("Unresolved issues should stay visible until someone owns the fix.")}>
+            <SectionLoadError message={errors.recentIssues} prefix={t("This section could not load:")} />
+            {errors.recentIssues ? null : !recentIssues.length ? (
+              <SectionEmpty title={t("No open issues")} body={t("Operators have not reported unresolved machine problems yet.")} />
+            ) : (
+              <div className="space-y-3">
+                {recentIssues.map((issue) => (
+                  <div key={issue.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{issueMachineName(issue, t("Unknown machine"))}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {textValue(issue.issue_type) ?? t("Issue")} / {t("logged")} {formatDateTime(issue.created_at)}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusBadge status={issue.priority ?? "unknown"} label={dashboardStatusLabel(issue.priority, t)} />
+                        <StatusBadge status={issue.status ?? "unknown"} label={dashboardStatusLabel(issue.status, t)} />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">{trimText(issue.description)}</p>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <div>{t("SLA due")}: {issue.sla_due_at ? formatDateTime(issue.sla_due_at) : t("not set")}</div>
+                      <Link href="/issues" className="font-semibold text-amber-700 hover:text-amber-800">{t("Open issues")}</Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </KpiSection>
+
+          <KpiSection title={t("Machines needing refill now")} subtitle={t("The route builder should pull from the same live recommendation queue shown here.")}>
+            <SectionLoadError message={errors.refill} prefix={t("This section could not load:")} />
+            {errors.refill ? null : !recentRefillRows.length ? (
+              <SectionEmpty title={t("No refill pressure")} body={t("No active machine refill recommendations are asking for stock right now.")} />
+            ) : (
+              <div className="space-y-3">
+                {recentRefillRows.map((row, index) => {
+                  const refillQty = Math.max(numberValue(row.final_qty_to_take), numberValue(row.suggested_qty));
+                  return (
+                    <div key={`${textValue(row.machine_id) ?? textValue(row.machine_name) ?? "machine"}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{textValue(row.machine_name) ?? t("Unknown machine")}</div>
+                          <div className="mt-1 text-xs text-slate-500">{textValue(row.product_name) ?? t("Unknown product")}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <StatusBadge status={row.priority ?? "normal"} label={dashboardStatusLabel(row.priority, t)} />
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{t("Take")} {refillQty}</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 text-sm text-slate-600 sm:grid-cols-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Machine stock")}</div>
+                          <div className="mt-1">{numberValue(row.current_qty)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Capacity")}</div>
+                          <div className="mt-1">{numberValue(row.capacity)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Storage available")}</div>
+                          <div className="mt-1">{numberValue(row.available_storage_qty)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="flex justify-end">
+                  <SecondaryButton href="/routes/new">{t("Create route from recommendations")}</SecondaryButton>
+                </div>
+              </div>
+            )}
+          </KpiSection>
+        </div>
+
+        <div className="space-y-4">
+          <KpiSection title={t("What should I do next?")} subtitle={t("A short operating queue based on the current dashboard signals.")}>
+            {!actionItems.length ? (
+              <SectionEmpty title={t("No urgent queue")} body={t("The highest-priority queues are clear. Review routes or restock priority when you want the next task.")} />
+            ) : (
+              <div className="space-y-3">
+                {actionItems.map((item) => (
+                  <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+                      </div>
+                      <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </KpiSection>
+
+          <KpiSection title={t("System health summary")} subtitle={t("Counts that usually send teams into repair mode.")}>
+            {errors.financeHealth || errors.routes || errors.missingCost || errors.vmsBatches ? (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {t("Some health counters are partial right now, but the dashboard kept running.")}
+              </div>
+            ) : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Failed imports")}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.vmsBatches ? "-" : failedImportCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Warnings")}: {errors.vmsBatches ? "-" : warningImportCount}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Missing finance links")}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.financeHealth ? "-" : financeGapCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Warnings")}: {errors.financeHealth ? "-" : financeWarningCount}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Broken routes")}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.routes ? "-" : brokenRouteCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Overdue open routes")}: {errors.routes ? "-" : overdueRouteCount}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Products without cost")}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.missingCost ? "-" : missingCostProducts}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Critical issues")}: {errors.criticalIssues ? "-" : data.criticalIssueCount}</div>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <SecondaryButton href="/admin/system-health">{t("Open System Health")}</SecondaryButton>
+              <SecondaryButton href="/admin/finance-health">{t("Open Finance Health")}</SecondaryButton>
+            </div>
+          </KpiSection>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <VmsDataSourceCard
+          batches={data.vmsBatchRows}
+          error={errors.vmsBatches}
+          title={t("VMS Import Status")}
+          subtitle={t("Dashboard totals only use the active detailed sales and stock snapshot files listed below.")}
+          showSales
+          showStock
+        />
+      </div>
+
+      {!errors.vmsBatches && data.vmsBatchRows.length ? (
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">{t("Latest import status")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t("The newest files feeding sales, refill, and inventory logic right now.")}</p>
+            </div>
+            <SecondaryButton href="/vms-import/sources">{t("Open VMS Data Sources")}</SecondaryButton>
+          </div>
+          <div className="space-y-3">
+            {data.vmsBatchRows.slice(0, 4).map((batch) => (
+              <div key={batch.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900">
+                      <Link href={`/vms-import/${batch.id}`} className="link-secondary">{sourceFileName(batch)}</Link>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {batch.report_type ?? t("Unknown")} / {batchDateRangeLabel(batch)}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusBadge status={batch.status ?? "unknown"} label={dashboardStatusLabel(batch.status, t)} />
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                      {batchImportedRows(batch).toLocaleString("en-US")} {t("rows")}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-slate-500">
+                  {t("Updated")} {formatVmsDateTime(batch.imported_at ?? batch.uploaded_at)} / {t("Active")}: {batch.is_active === false || batch.deleted_at ? t("No") : t("Yes")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
+async function DashboardPageContentLoader({ t, locale }: DashboardI18n) {
+  const result = await getDashboardData();
+
+  if (!result.data) {
+    return (
+      <>
+        <PageHeader title={t("Dashboard")} subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")} />
+        <EmptyState title={t("Connect Supabase to activate the dashboard")} body={t("Add the Snacky OS environment variables and restart the app.")} />
+      </>
+    );
+  }
+
+  return <DashboardPageContent data={result.data} t={t} locale={locale} />;
+}
+
+export default async function DashboardPage() {
+  const { t, locale } = await getServerI18n();
+  try {
+    return await DashboardPageContentLoader({ t, locale });
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    console.error("[dashboard] Page-level render guard caught an unexpected error", error);
+    return (
+      <>
+        <PageHeader title={t("Dashboard")} subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")}
+        />
+        <EmptyState title={t("Dashboard recovered from an error")} body={t("One of the dashboard render paths failed unexpectedly. Please contact admin if the issue keeps happening.")} />
+      </>
+    );
+  }
+}

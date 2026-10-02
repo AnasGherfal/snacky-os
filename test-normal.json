@@ -1,0 +1,11 @@
+﻿{
+  "business_slug": "snk",
+  "customer": {
+    "name": "Ali",
+    "phone": "0933333333",
+    "external_id": "test_user_normal"
+  },
+  "channel": "in_app",
+  "message": "السلام عليكم",
+  "metadata": {}
+}

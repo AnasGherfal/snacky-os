@@ -1,0 +1,52 @@
+name: Product planning and packaging checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/product-planning/**"
+      - "src/app/inventory/page.tsx"
+      - "src/app/operator/routes/**"
+      - "src/app/api/operator/routes/**"
+      - "src/components/module-tabs-config.ts"
+      - "src/lib/authz.ts"
+      - "src/lib/product-planning.ts"
+      - "src/lib/product-quantity.ts"
+      - "supabase/migrations/202607160001_product_monthly_purchase_plans.sql"
+      - "scripts/test-product-planning-packaging.mjs"
+      - "scripts/ts-alias-loader.mjs"
+      - ".github/workflows/product-planning-packaging-check.yml"
+  push:
+    branches:
+      - feature/product-planning-packaging
+    paths:
+      - "src/app/product-planning/**"
+      - "src/app/inventory/page.tsx"
+      - "src/app/operator/routes/**"
+      - "src/app/api/operator/routes/**"
+      - "src/components/module-tabs-config.ts"
+      - "src/lib/authz.ts"
+      - "src/lib/product-planning.ts"
+      - "src/lib/product-quantity.ts"
+      - "supabase/migrations/202607160001_product_monthly_purchase_plans.sql"
+      - "scripts/test-product-planning-packaging.mjs"
+      - "scripts/ts-alias-loader.mjs"
+      - ".github/workflows/product-planning-packaging-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test product planning and packaging
+        run: node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-product-planning-packaging.mjs
+      - name: Build Snacky OS
+        run: npm run build

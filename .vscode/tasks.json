@@ -1,0 +1,30 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Supabase DB Reset",
+			"type": "shell",
+			"command": "npx",
+			"args": [
+				"supabase",
+				"db",
+				"reset"
+			]
+		},
+		{
+			"label": "Supabase Start Debug",
+			"type": "shell",
+			"command": "npx"
+		},
+		{
+			"label": "Supabase Start Debug",
+			"type": "shell",
+			"command": "npx",
+			"args": [
+				"supabase",
+				"start",
+				"--debug"
+			]
+		}
+	]
+}

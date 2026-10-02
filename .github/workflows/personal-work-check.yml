@@ -1,0 +1,92 @@
+name: My Work Today release checks
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/lib/personal-work*'
+      - 'src/components/PersonalWorkToday.tsx'
+      - 'src/app/my-day/**'
+      - 'src/app/api/personal-work/**'
+      - 'src/lib/authz.ts'
+      - 'src/components/Sidebar.tsx'
+      - 'src/components/Topbar.tsx'
+      - 'supabase/migrations/*personal_work_today*'
+      - 'scripts/*personal-work*'
+      - '.github/workflows/personal-work-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: personal-work-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: personal_work_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/personal_work_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Personal work and existing access regressions
+        run: |
+          node --experimental-strip-types --test scripts/test-personal-work.mjs scripts/test-authz-permissions.mjs
+          node --test scripts/test-assigned-storage-stocktake.mjs scripts/test-crm-operator-dispatch.mjs scripts/test-owner-operations.mjs
+      - name: TypeScript and focused lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/personal-work.ts src/lib/personal-work-server.ts src/lib/authz.ts src/app/api/personal-work/route.ts src/app/my-day/page.tsx src/components/PersonalWorkToday.tsx src/components/Sidebar.tsx src/components/Topbar.tsx
+      - name: Database privacy, assignment scope, pagination and no writes
+        run: |
+          python3 scripts/prepare-personal-work-db.py
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f scripts/.personal-work-db.sql
+      - name: Prepare actual component browser fixture
+        run: |
+          python3 -m venv .qa/personal-browser
+          .qa/personal-browser/bin/pip install playwright==1.55.0
+          .qa/personal-browser/bin/playwright install --with-deps chromium
+          mkdir -p src/app/login/qa-personal-work diagnostics/personal-work
+          cp scripts/personal-work-fixture.tsx src/app/login/qa-personal-work/page.tsx
+          node scripts/next-build.mjs
+      - name: English and Arabic phone layout, work states and recovery
+        run: |
+          node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000 > diagnostics/personal-work/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" >/dev/null 2>&1 || true; rm -rf src/app/login/qa-personal-work' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/login/qa-personal-work >/dev/null; then break; fi
+            if [ "$attempt" -eq 60 ]; then cat diagnostics/personal-work/server.log; exit 1; fi
+            sleep 0.5
+          done
+          .qa/personal-browser/bin/python scripts/personal-work-browser.py
+          kill "$server_pid" >/dev/null 2>&1 || true
+          rm -rf src/app/login/qa-personal-work .next
+          trap - EXIT
+      - name: Existing critical workflow safety
+        run: npm run test:critical-workflows
+      - name: Production build with no temporary fixture
+        run: |
+          test ! -e src/app/login/qa-personal-work
+          npm run build
+      - name: Preserve review evidence
+        if: always()
+        run: |
+          mkdir -p diagnostics/personal-work
+          git rev-parse HEAD > diagnostics/personal-work/commit.txt
+          tar -czf diagnostics/personal-work/review-source.tar.gz src scripts supabase docs .github package.json package-lock.json tsconfig.json next.config.ts eslint.config.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: personal-work-review
+          path: diagnostics/personal-work/**

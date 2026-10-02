@@ -1,0 +1,32 @@
+name: Whole-box purchasing checks
+on:
+  pull_request:
+    paths:
+      - 'src/lib/purchase-boxes.ts'
+      - 'src/lib/purchase-list*'
+      - 'src/lib/restock-shopping-list.ts'
+      - 'src/components/*Purchase*'
+      - 'src/components/RestockBuyingList.tsx'
+      - 'src/app/restock-priority/**'
+      - 'scripts/test-purchase-boxes.mjs'
+      - 'scripts/test-smart-purchase-list*'
+      - '.github/workflows/purchase-boxes-check.yml'
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Whole boxes, saved list, draft boundary and page error regressions
+        run: node --experimental-strip-types --test scripts/test-purchase-boxes.mjs scripts/test-smart-purchase-list.mjs scripts/test-smart-purchase-list-page.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

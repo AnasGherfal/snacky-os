@@ -1,0 +1,197 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canManagePayroll, normalizeRoles } from "@/lib/authz";
+import { moneyLabel } from "@/lib/payroll";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, listOperatorPayProfileVersionsResult, logPayrollQueryIssue, type OperatorPayProfileVersionRow, type PayrollQueryIssue } from "@/lib/payroll-v2";
+
+export const dynamic = "force-dynamic";
+
+type PayrollProfileTeamMemberRow = {
+  id: string;
+  full_name?: string | null;
+  role?: string | null;
+  roles?: string[] | null;
+  active?: boolean | null;
+  active_status?: string | null;
+};
+
+function activeProfileForOperator(rows: OperatorPayProfileVersionRow[]) {
+  return rows.find((row) => Boolean(row.is_active)) ?? rows[0] ?? null;
+}
+
+export default async function OperatorPayProfilesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; saved?: string }>;
+}) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canManagePayroll(profile)) redirect("/unauthorized");
+
+  const params = await searchParams;
+  const supabase = await getPayrollV2ServerClient();
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Payroll profiles unavailable" body="Supabase is not configured, so Snacky OS cannot load operator pay profiles." />
+      </>
+    );
+  }
+
+  const [membersResult, payProfilesResult] = await Promise.all([
+    supabase
+      .from("team_members")
+      .select("id, full_name, role, roles, active, active_status")
+      .or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}")
+      .order("full_name"),
+    listOperatorPayProfileVersionsResult(supabase),
+  ]);
+
+  const members = membersResult.data ?? [];
+  const payProfiles = payProfilesResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "team_members", step: "load_payroll_profile_members", error: membersResult.error, resultEmpty: !membersResult.error && members.length === 0 },
+    {
+      table: "operator_pay_profile_versions",
+      step: "load_payroll_profile_versions",
+      error: payProfilesResult.error,
+      resultEmpty: !payProfilesResult.error && payProfiles.length === 0,
+    },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:profiles",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
+    return (
+      <>
+        <ErrorState
+          title="Could not load payroll profiles"
+          body={buildPayrollLoadFailureBody({
+            noun: "payroll profiles",
+            issues,
+            defaultBody: "Snacky OS could not load operator pay profile settings.",
+          })}
+          action={<SecondaryButton href="/payroll">Back to payroll</SecondaryButton>}
+        />
+      </>
+    );
+  }
+
+  const profilesByOperatorId = payProfiles.reduce((map, row) => {
+    const rows = map.get(row.operator_id) ?? [];
+    rows.push(row);
+    map.set(row.operator_id, rows);
+    return map;
+  }, new Map<string, OperatorPayProfileVersionRow[]>());
+
+  const rows = (members as PayrollProfileTeamMemberRow[]).map((member) => {
+    const operatorProfiles = profilesByOperatorId.get(member.id) ?? [];
+    const payProfile = activeProfileForOperator(operatorProfiles);
+    return {
+      member,
+      payProfile,
+      historyCount: operatorProfiles.length,
+      roles: normalizeRoles(member.roles, member.role),
+    };
+  });
+
+  return (
+    <>
+      <PageHeader
+        title="Operator Pay Profiles"
+        subtitle="Save only the normal pay rules here. Deductions now come from approved incidents, not from the pay profile."
+        action={<PrimaryButton href="/payroll">Back to payroll</PrimaryButton>}
+      />
+
+      {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
+      {params.saved ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Operator pay profile saved.</div> : null}
+      {!payProfiles.length && rows.length ? (
+        <div className="mb-5">
+          <EmptyState
+            title="No operator pay profiles yet"
+            body="Choose an operator below to create the first pay profile."
+            action={<PrimaryButton href={`/payroll/profiles/${rows[0]?.member.id}`}>Create first pay profile</PrimaryButton>}
+          />
+        </div>
+      ) : null}
+
+      {!rows.length ? (
+        <EmptyState title="No route performers found" body="Create at least one active operator before configuring payroll." />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {rows.map(({ member, payProfile, historyCount, roles }) => {
+            const isActive = Boolean(payProfile?.is_active) && member.active !== false && member.active_status !== "inactive";
+            return (
+              <article key={member.id} className="surface-card rounded-2xl border border-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">{member.full_name}</h2>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {roles.map((role) => <StatusBadge key={role} status={role} />)}
+                      <StatusBadge status={isActive ? "active" : "inactive"} />
+                    </div>
+                  </div>
+                  <Link href={`/payroll/profiles/${member.id}`} className="btn-secondary">
+                    {payProfile ? "Edit profile" : "Create profile"}
+                  </Link>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Base monthly salary</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{payProfile ? moneyLabel(payProfile.base_monthly_salary_lyd ?? 0) : "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Pay per route</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{payProfile ? moneyLabel(payProfile.pay_per_route_lyd ?? 0) : "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Pay per stop</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{payProfile ? moneyLabel(payProfile.pay_per_stop_lyd ?? 0) : "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Pay per km</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{payProfile ? moneyLabel(payProfile.pay_per_km_lyd ?? 0) : "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Fuel allowance per km</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{payProfile ? moneyLabel(payProfile.fuel_allowance_per_km_lyd ?? 0) : "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Profile history</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{historyCount}</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                  <div className="font-medium text-slate-900">Current formula</div>
+                  <div className="mt-1">
+                    Base salary + completed routes x route rate + completed stops x stop rate + total payroll km x km rate + total payroll km x fuel allowance - approved incident deductions
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {payProfile
+                      ? `Effective since ${payProfile.active_from ?? "not set"}${payProfile.active_to ? ` until ${payProfile.active_to}` : ""}.`
+                      : "No active pay profile saved yet."}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-4">
+        <SecondaryButton href="/payroll">Back to overview</SecondaryButton>
+      </div>
+    </>
+  );
+}

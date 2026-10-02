@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import test from 'node:test';
+import ts from 'typescript';
+import * as domain from '../src/lib/company-hub.ts';
+import * as authz from '../src/lib/authz.ts';
+const id='11111111-1111-4111-8111-111111111111', file='22222222-2222-4222-8222-222222222222', draftId='33333333-3333-4333-8333-333333333333';
+const read=p=>fs.readFileSync(p,'utf8');
+function load(path,imports){const exports={};vm.runInNewContext(ts.transpileModule(read(path),{fileName:path,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,console,URLSearchParams,require(name){assert.ok(name in imports,name);return imports[name];}});return exports;}
+const docs=load('src/lib/company-documents.ts',{'./company-hub':domain});
+const jsx=(type,props)=>({type,props});
+export function* nodes(n){if(Array.isArray(n)){for(const c of n)yield*nodes(c);}else if(n&&typeof n==='object'){yield n;yield*nodes(n.props?.children);}}
+export function text(n){if(Array.isArray(n))return n.map(text).join(' ');if(n==null||typeof n==='boolean')return '';if(typeof n!=='object')return String(n);return text(n.props?.children);}
+export const published=()=>({id,revision:4,current_version:2,archived:false,owner_name:'Management',published_at:'2026-09-21T10:00:00Z',data:{...domain.emptyCompanyContent('documents'),title_en:'Official Snacky Logo',title_ar:'شعار سناكي الرسمي',summary_en:'Current approved artwork.',summary_ar:'ملف الهوية المنشور للاستخدام المعتمد.',file_id:file,external_shareable:true,review_date:'2026-12-15'}});
+export const unfinished=()=>({...published(),id:draftId,current_version:0,data:{...published().data,file_id:'',title_en:'Approved Arabic profile — PDF pending',title_ar:'الملف التعريفي العربي — بانتظار المرفق'}});
+export async function page({role='owner',active=true,enabled=true,rows=[published(),unfinished()],q={},error=null,total=rows.length,ar=false}={}){
+ const calls=[];const component=load('src/components/CompanyDocuments.tsx',{
+  'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'fragment'},'next/link':{default:'a'},'next/navigation':{redirect(to){throw Error('REDIRECT:'+to);}},
+  '@/lib/auth':{getCurrentProfile:async()=>role?{id,role,roles:[role],active_status:active?'active':'inactive'}:null,getAuthenticatedSupabaseServerClient:async()=>({rpc:async(name,args)=>{calls.push({name,args});return {error,data:error?null:{rows,total,manager:['owner','admin'].includes(role),offset:docs.companyDocumentQuery(q).offset}};}})},
+  '@/lib/authz':authz,'@/lib/i18n/server':{getServerI18n:async()=>({locale:ar?'ar':'en'})},'@/components/ui':{PageHeader:'page-header',ErrorState:'error-state'},
+  '@/lib/company-hub':{...domain,companyHubEnabled:enabled},'@/lib/company-documents':docs
+ });return {tree:await component.CompanyDocuments({searchParams:q}),calls};
+}
+test('ready means published, unarchived, with an actual attachment or allowed master',()=>{assert.equal(docs.companyDocumentReady(published()),true);for(const r of [unfinished(),{...published(),archived:true},{...published(),data:{...published().data,file_id:'',source_url:'javascript:bad'}}])assert.equal(docs.companyDocumentReady(r),false);});
+test('download binds to the published attachment ID, never an application logo copy',async()=>{const {tree}=await page();const links=[...nodes(tree)].map(n=>n.props?.href).filter(Boolean);assert.ok(links.includes('/api/company/files/'+file));assert.ok(!links.some(p=>p.startsWith('/brand/')));assert.ok(!links.includes('https://snacky.ly/logo.webp'));});
+test('an approved-sounding draft stays unfinished with an attach action and no download',async()=>{const {tree}=await page({rows:[unfinished()]});assert.match(text(tree),/Not ready to use/);assert.doesNotMatch(text(tree),/Approved for external sharing/);const links=[...nodes(tree)].map(n=>n.props?.href);assert.ok(links.includes('/company/items/'+draftId+'?edit=1'));assert.ok(!links.some(x=>String(x).startsWith('/api/company/files/')));});
+test('private drafts never leak through the staff renderer even in an unexpected payload',async()=>{const {tree}=await page({role:'operator'});assert.doesNotMatch(text(tree),/PDF pending|Attach file|Create a missing material/);assert.ok(![...nodes(tree)].some(n=>String(n.props?.href).includes(draftId)));});
+test('unpublished edits do not replace a currently published download',async()=>{const {tree}=await page({rows:[{...published(),has_unpublished_changes:true}]});assert.match(text(tree),/Published.*v2/);assert.match(text(tree),/Review unpublished edits/);assert.ok([...nodes(tree)].some(n=>n.props?.href==='/api/company/files/'+file));});
+test('references are explicitly separate from approved documents',async()=>{const {tree}=await page();assert.match(text(tree),/Internal reference pages/);assert.match(text(tree),/not the approved company profile/);assert.doesNotMatch(text(tree),/Ready to use/);});
+test('unavailable data is not shown as an empty library or replaced with built-in files',async()=>{const {tree}=await page({error:{code:'unavailable'}});assert.equal(tree.type,'error-state');assert.match(tree.props.body,/not an empty library/);assert.equal([...nodes(tree)].filter(n=>n.props?.href).length,0);});
+test('disabled Company does not query the database',async()=>{const {tree,calls}=await page({enabled:false});assert.equal(tree.type,'error-state');assert.equal(calls.length,0);});
+test('inactive, unauthenticated, investor and viewer access is denied',async()=>{for(const opts of [{role:null},{role:'viewer'},{role:'investor'},{active:false}])await assert.rejects(()=>page(opts),/REDIRECT:\/unauthorized/);});
+test('staff draft/edit query gates remain intact',async()=>{for(const q of [{draft:'1'},{edit:'1'}])await assert.rejects(()=>page({role:'operator',q}),/REDIRECT:\/unauthorized/);});
+test('search is server-side, bounded, and uses one authenticated RPC',async()=>{const {calls,tree}=await page({q:{q:'logo',offset:'20'},total:45});assert.equal(calls.length,1);assert.equal(calls[0].name,'snacky_company_workspace_v1');assert.equal(calls[0].args.p_filters.q,'logo');assert.equal(calls[0].args.p_filters.offset,'20');assert.ok([...nodes(tree)].some(n=>n.props?.href==='/company/documents?q=logo&offset=40'));});
+test('query and pagination preserve text safely and handle malformed offsets',()=>{for(const raw of ['-1','abc','1.5'])assert.equal(docs.companyDocumentQuery({offset:raw}).offset,0);assert.equal(docs.companyDocumentQuery({q:'x'.repeat(201)}).q.length,200);assert.equal(docs.companyDocumentQuery({q:['hidden']}).q,'');assert.equal(docs.companyDocumentQuery({offset:'99999999999'}).offset,100000);assert.match(docs.companyDocumentHref('a&b',20),/q=a%26b&offset=20/);});
+test('Arabic uses RTL and readable localized approval/attachment actions',async()=>{const {tree}=await page({ar:true});assert.equal(tree.props.dir,'rtl');assert.match(text(tree),/غير جاهز للاستخدام/);assert.match(text(tree),/تنزيل الملف المنشور/);});
+test('approved external sharing remains distinct from an internal file',async()=>{const {tree}=await page({rows:[{...published(),data:{...published().data,external_shareable:false}}]});assert.match(text(tree),/Internal use only/);assert.doesNotMatch(text(tree),/Approved for external sharing/);});
+test('actual route selects the controlled document library; reference notices survive printing',()=>{assert.match(read('src/app/company/documents/page.tsx'),/CompanyDocuments/);for(const p of ['profile','brand-guide'])assert.match(read(`src/app/company/${p}/page.tsx`),/CompanyReferenceNotice/);assert.doesNotMatch(read('src/components/CompanyReferenceNotice.tsx'),/print:hidden/);assert.doesNotMatch(read('src/app/company/brand-guide/page.tsx'),/src="\/brand\//);});
+test('library does not create another write or storage surface',()=>{const s=read('src/components/CompanyDocuments.tsx');assert.doesNotMatch(s,/service.role|SUPABASE_SERVICE|\.insert\(|\.update\(|snacky_company_command|createSignedUrl|getPublicUrl/);assert.equal((s.match(/\.rpc\(/g)||[]).length,1);});

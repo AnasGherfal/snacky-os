@@ -1,0 +1,32 @@
+name: Rent period and owner assignment
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/components/CrmWorkspace.tsx'
+      - 'src/components/CrmObligationAdminForm.tsx'
+      - 'src/app/api/crm/obligation-admin/route.ts'
+      - 'supabase/migrations/20260924121500_rent_period_and_owner_assignment.sql'
+      - 'scripts/test-rent-period-owner-assignment.mjs'
+      - '.github/workflows/rent-period-owner-assignment.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Rent period and owner assignment checks
+        run: node --test scripts/test-rent-period-owner-assignment.mjs
+      - name: Critical workflow regressions
+        run: npm run test:critical-workflows
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

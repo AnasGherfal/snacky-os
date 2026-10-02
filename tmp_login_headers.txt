@@ -1,0 +1,32 @@
+HTTP/1.1 303 See Other
+X-DNS-Prefetch-Control: off
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: microphone=(), payment=(), usb=(), serial=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=()
+Vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+Cache-Control: no-cache, must-revalidate
+Set-Cookie: snacky-auth-access-token=eyJhbGciOiJFUzI1NiIsImtpZCI6ImI4MTI2OWYxLTIxZDgtNGYyZS1iNzE5LWMyMjQwYTg0MGQ5MCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjU0MzIxL2F1dGgvdjEiLCJzdWIiOiJiN2IwZmM4NC1mODJmLTRkZDYtODhiZC05Y2JjZWQxOGEzNDMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzgxMTk1NTAyLCJpYXQiOjE3ODExOTE5MDIsImVtYWlsIjoiYW5hc0BzbmFja3kubHkiLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJmdWxsX25hbWUiOiJBbmFzIn0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3ODExOTE5MDJ9XSwic2Vzc2lvbl9pZCI6IjZhM2Y5YjhmLWNlMTUtNGE3NC1iOTVmLWNmODYxNWY4OWJkNSIsImlzX2Fub255bW91cyI6ZmFsc2V9.X0sEVa4Ej_HVm72ovTpXs0fZziE7gB_AVyESr3E22_nveBe9nTLzvYfMK3oaPSyIaD4RG0rWsWwSHK0P3-Xy2Q; Path=/; Expires=Thu, 11 Jun 2026 16:31:43 GMT; Max-Age=3600; HttpOnly; SameSite=lax
+Set-Cookie: snacky-auth-refresh-token=x6hycwzmxt5g; Path=/; Expires=Sat, 11 Jul 2026 15:31:43 GMT; Max-Age=2592000; HttpOnly; SameSite=lax
+Location: /dashboard
+Date: Thu, 11 Jun 2026 15:31:43 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+HTTP/1.1 200 OK
+X-DNS-Prefetch-Control: off
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: microphone=(), payment=(), usb=(), serial=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=()
+Vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding
+link: </_next/static/css/app/layout.css?v=1781191907583>; rel=preload; as="style"
+Cache-Control: no-cache, must-revalidate
+X-Powered-By: Next.js
+Content-Type: text/html; charset=utf-8
+Date: Thu, 11 Jun 2026 15:31:49 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+

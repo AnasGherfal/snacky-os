@@ -1,0 +1,32 @@
+name: Monthly operations report checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/reports/page.tsx"
+      - "src/app/reports/route-performance/page.tsx"
+      - "src/components/ModuleTabs.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "src/lib/monthly-operations-report.ts"
+      - "scripts/test-route-performance-dashboard.mjs"
+      - "package.json"
+      - ".github/workflows/monthly-operations-report-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test monthly operations accounting
+        run: npm run test:monthly-operations-report
+      - name: Build Snacky OS
+        run: npm run build

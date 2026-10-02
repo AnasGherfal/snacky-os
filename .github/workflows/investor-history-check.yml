@@ -1,0 +1,56 @@
+name: Historical investor records
+on:
+  pull_request:
+    paths:
+      - 'src/lib/investor-history*.ts'
+      - 'src/components/InvestorHistory*.tsx'
+      - 'src/app/investor/layout.tsx'
+      - 'src/app/finance/investors/layout.tsx'
+      - 'supabase/migrations/*investor_historical*'
+      - 'supabase/migrations/*investor_history*'
+      - 'scripts/test-investor-history*'
+      - '.github/workflows/investor-history-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: investor-history-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-history-only
+          POSTGRES_DB: investor_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Source cells, rendered history table, existing investor calculations
+        run: node --experimental-strip-types --test scripts/test-investor-history.mjs scripts/test-investor-access-accounting.mjs scripts/test-growth-investor-portal.mjs
+      - name: Historical source SQL, no-money effects and row-level privacy
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: isolated-history-only
+          PGDATABASE: investor_tests
+        run: psql -X -v ON_ERROR_STOP=1 -f scripts/test-investor-history-db.sql
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

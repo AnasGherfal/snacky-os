@@ -1,0 +1,251 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BellRing, Loader2 } from "lucide-react";
+import { useLanguage } from "@/components/I18nProvider";
+import { getPushRegistration, needsHomeScreenInstall, subscriptionMatchesPublicKey, supportsPush, urlBase64ToUint8Array, withPushTimeout } from "@/lib/push-browser";
+import { canShowNotificationPrompt, clearNotificationDeviceDisabled, markNotificationPromptShown, rememberNotificationDeviceDisabled, shouldOfferNotificationPrompt, snoozeNotificationPrompt } from "@/lib/notification-prompt";
+
+type SetupStatus = {
+  configured: boolean; schemaReady: boolean; publicKey: string;
+  activeSubscriptions: number | null; deviceRegistered: boolean;
+  workAlerts?: { enabled: boolean; worker_recent: boolean; pending: number; failed: number } | null;
+};
+type BrowserState = "checking" | "unsupported" | "install" | "blocked" | "available" | "enabled" | "error";
+
+async function responseBody(response: Response) {
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error ?? "Could not contact the notification service.");
+  return body;
+}
+
+export function NotificationActivationCard({ compact = false, autoPromptFor }: { compact?: boolean; autoPromptFor?: string }) {
+  const { locale } = useLanguage();
+  const ar = locale === "ar";
+  const [status, setStatus] = useState<SetupStatus | null>(null);
+  const [browserState, setBrowserState] = useState<BrowserState>("checking");
+  const [busy, setBusy] = useState<"enable" | "test" | "disable" | null>(null);
+  const [message, setMessage] = useState("");
+  const [promptVisible, setPromptVisible] = useState(false);
+  const [promptRegistered, setPromptRegistered] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const promptDecided = useRef(false);
+  const generation = useRef(0);
+  const working = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (working.current) return;
+    const current = ++generation.current;
+    const live = () => current === generation.current;
+    setBrowserState("checking");
+    try {
+      const payload = await responseBody(await withPushTimeout(fetch("/api/notifications/push-status", { cache: "no-store" })));
+      if (!live()) return;
+      setStatus(payload);
+      if (needsHomeScreenInstall()) { setBrowserState("install"); return; }
+      if (!supportsPush()) { setBrowserState("unsupported"); return; }
+      if (Notification.permission === "denied") { setBrowserState("blocked"); return; }
+      if (Notification.permission !== "granted" || !payload.configured || !payload.schemaReady) { setBrowserState("available"); return; }
+      const registration = await withPushTimeout(navigator.serviceWorker.getRegistration("/"));
+      const subscription = registration ? await withPushTimeout(registration.pushManager.getSubscription()) : null;
+      if (!live()) return;
+      if (!subscription || !subscriptionMatchesPublicKey(subscription, payload.publicKey)) { setBrowserState("available"); return; }
+      const verified = await responseBody(await withPushTimeout(fetch("/api/notifications/push-status", {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: subscription.toJSON() }),
+      })));
+      if (!live()) return;
+      setStatus(verified);
+      setBrowserState(verified.configured && verified.schemaReady && verified.deviceRegistered ? "enabled" : "available");
+    } catch {
+      if (live()) { setStatus(null); setBrowserState("error"); }
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void refresh(); }, 0);
+    const visible = () => { if (!document.hidden) void refresh(); };
+    window.addEventListener("focus", visible);
+    window.addEventListener("snacky-push-changed", visible);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearTimeout(timer); generation.current += 1;
+      window.removeEventListener("focus", visible);
+      window.removeEventListener("snacky-push-changed", visible);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [refresh]);
+
+  const serverReady = Boolean(status?.configured && status.schemaReady);
+  const promptEligible = shouldOfferNotificationPrompt(browserState, serverReady);
+  useEffect(() => {
+    if (!autoPromptFor || promptDecided.current || !promptEligible) return;
+    // Let the workspace settle. This only shows our invitation, never the OS dialog.
+    const timer = window.setTimeout(() => {
+      promptDecided.current = true;
+      if (!canShowNotificationPrompt(autoPromptFor)) return;
+      markNotificationPromptShown(autoPromptFor);
+      setPromptVisible(true);
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [autoPromptFor, promptEligible]);
+
+  function dismissPrompt() {
+    if (!autoPromptFor || working.current) return;
+    snoozeNotificationPrompt(autoPromptFor, browserState === "blocked");
+    setPromptVisible(false);
+  }
+
+  function begin(action: "enable" | "test" | "disable") {
+    if (working.current) return false;
+    working.current = true; generation.current += 1; setBusy(action); setMessage("");
+    return true;
+  }
+  function finish() {
+    working.current = false; setBusy(null);
+    window.dispatchEvent(new Event("snacky-push-changed"));
+  }
+
+  async function enable() {
+    if (!begin("enable")) return;
+    try {
+      const publicKey = status?.publicKey ?? "";
+      if (!supportsPush() || needsHomeScreenInstall() || !status?.configured || !status.schemaReady || !publicKey) throw new Error("Notification setup is not ready.");
+      if (Notification.permission === "denied") throw new Error(ar ? "اسمح بالإشعارات من إعدادات الجهاز أو المتصفح أولاً." : "Allow notifications in your device or browser settings first.");
+      // Keep this request BEFORE any asynchronous setup so iOS retains the tap gesture.
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") throw new Error(ar ? "لم يتم السماح بالإشعارات. يمكنك متابعة العمل وتفعيلها لاحقاً." : "Notifications were not allowed. You can keep working and enable them later.");
+      const registration = await getPushRegistration();
+      let existing = await withPushTimeout(registration.pushManager.getSubscription());
+      if (existing && !subscriptionMatchesPublicKey(existing, publicKey)) {
+        if (!await withPushTimeout(existing.unsubscribe())) throw new Error("Could not replace the previous subscription.");
+        existing = null;
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const subscription = existing ?? await withPushTimeout(registration.pushManager.subscribe({
+          userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey),
+        }));
+        const response = await withPushTimeout(fetch("/api/push-subscriptions", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: subscription.toJSON(), locale, deviceLabel: /Mobile|Android|iPhone|iPad/.test(navigator.userAgent) ? "Phone / tablet" : "Desktop" }),
+        }));
+        if (response.status === 409 && attempt === 0) {
+          if (!await withPushTimeout(subscription.unsubscribe())) throw new Error("Could not replace the previous subscription.");
+          existing = null; continue;
+        }
+        const saved = await responseBody(response);
+        if (saved?.saved !== true) throw new Error("The server did not confirm this device.");
+        clearNotificationDeviceDisabled();
+        if (autoPromptFor) setPromptRegistered(true);
+        setMessage(ar ? "تم تسجيل هذا الجهاز. جرّب إشعاراً للتأكد من ظهوره." : "This device is registered. Send a test to confirm it appears.");
+        break;
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : ar ? "تعذر التفعيل. أعد المحاولة." : "Could not enable notifications. Please retry.");
+    } finally { finish(); }
+  }
+
+  async function sendTest(delaySeconds: 0 | 15) {
+    if (!begin("test")) return;
+    try {
+      const registration = await withPushTimeout(navigator.serviceWorker.getRegistration("/"));
+      const subscription = registration ? await withPushTimeout(registration.pushManager.getSubscription()) : null;
+      if (!subscription) throw new Error(ar ? "فعّل الإشعارات أولاً." : "Enable notifications first.");
+      const body = await responseBody(await withPushTimeout(fetch("/api/notifications/test", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint, delaySeconds, locale }),
+      }), 20000));
+      if (delaySeconds === 15 && body?.scheduled === true) {
+        setMessage(ar ? "أغلق سناكي الآن. سيحاول الخادم إرسال الإشعار لهذا الجهاز بعد 15 ثانية." : "Close Snacky OS now. The server will attempt to send this device a notification in 15 seconds.");
+      } else if (body?.sent === true && body?.acceptedCount > 0) {
+        setMessage(ar ? "قبلت خدمة الإشعارات الطلب. تأكد من ظهور الإشعار؛ قبول الطلب لا يؤكد عرضه." : "The push service accepted the test. Check for the notification; acceptance does not confirm it was displayed.");
+      } else throw new Error(ar ? "لم يتم تأكيد إرسال الإشعار." : "The test was not confirmed.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Test failed. Please retry."); }
+    finally { finish(); }
+  }
+
+  async function disable() {
+    if (!begin("disable")) return;
+    try {
+      const registration = await withPushTimeout(navigator.serviceWorker.getRegistration("/"));
+      const subscription = registration ? await withPushTimeout(registration.pushManager.getSubscription()) : null;
+      if (subscription) {
+        const result = await responseBody(await withPushTimeout(fetch("/api/push-subscriptions", {
+          method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: subscription.endpoint }),
+        })));
+        if (result?.disabled !== true) throw new Error("The server did not confirm disabling this device.");
+        // Server deactivation is authoritative, even if browser cleanup fails.
+        await withPushTimeout(subscription.unsubscribe()).catch(() => false);
+      }
+      rememberNotificationDeviceDisabled();
+      setMessage(ar ? "تم إيقاف الإشعارات لهذا الجهاز فقط." : "Notifications are disabled for this device only.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not disable this device."); }
+    finally { finish(); }
+  }
+
+  const enabled = serverReady && browserState === "enabled";
+  const stateText: Record<BrowserState, string> = {
+    checking: ar ? "جارٍ التحقق…" : "Checking…",
+    enabled: ar ? "مسجل ومسموح له بالإشعارات" : "Registered and permission granted",
+    available: ar ? "غير مفعلة على هذا الجهاز" : "Not enabled on this device",
+    blocked: ar ? "محظورة؛ اسمح بها من إعدادات الإشعارات ثم أعد التحقق." : "Blocked. Allow notifications in device/browser settings, then recheck.",
+    install: ar ? "على الآيفون والآيباد: أضف سناكي للشاشة الرئيسية، ثم افتحه من الأيقونة (iOS 16.4 أو أحدث)." : "On iPhone/iPad: Add Snacky OS to the Home Screen, then open its icon (iOS 16.4 or later).",
+    unsupported: ar ? "هذا المتصفح لا يدعم الإشعارات هنا. استخدم متصفحاً مدعوماً واتصال HTTPS." : "Push is unavailable in this browser. Use a supported browser over HTTPS.",
+    error: ar ? "تعذر التحقق من الجهاز أو الخادم؛ الحالة غير مؤكدة." : "Could not verify this device or server. Status is unknown.",
+  };
+
+  if (autoPromptFor) {
+    if (!promptVisible || (!promptRegistered && !promptEligible && !busy && !message)) return null;
+    const helpNeeded = browserState === "install" || browserState === "blocked";
+    return (
+      <section data-testid="notification-opt-in" aria-label={ar ? "تفعيل إشعارات العمل" : "Work notification invitation"} dir={ar ? "rtl" : "ltr"} className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-start shadow-sm">
+        <div className="flex items-start gap-3">
+          <BellRing aria-hidden="true" className="mt-1 h-5 w-5 shrink-0 text-emerald-700" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-slate-950">{promptRegistered ? (ar ? "تم تسجيل هذا الجهاز للإشعارات" : "This device is registered for notifications") : (ar ? "لا تفوّت تحديثات عملك" : "Stay up to date with your work")}</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">{ar ? "فعّل إشعارات هذا الجهاز لتصلك المهام والمتابعات المهمة. يمكنك متابعة عملك دون تفعيلها الآن." : "Enable notifications on this device for important assignments and follow-ups. You can keep working without enabling them now."}</p>
+          </div>
+        </div>
+        {showHelp && helpNeeded ? <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+          {browserState === "install" ? <p>{ar ? "من قائمة المشاركة في المتصفح اختر «إضافة إلى الشاشة الرئيسية»، ثم افتح Snacky OS من أيقونته وفعّل الإشعارات. يتطلب iOS 16.4 أو أحدث." : "From your browser's Share menu choose Add to Home Screen, then open Snacky OS from its icon and enable notifications. Requires iOS 16.4 or later."}</p> : <p>{stateText.blocked}</p>}
+          {browserState === "blocked" ? <button type="button" onClick={() => void refresh()} disabled={busy !== null} className="btn-secondary mt-2 min-h-11">{ar ? "إعادة التحقق" : "Recheck"}</button> : null}
+        </div> : null}
+        {message ? <p role="status" className="mt-3 text-sm leading-6 text-slate-700">{message}</p> : null}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {promptRegistered ? <button type="button" onClick={() => void sendTest(0)} disabled={busy !== null} className="btn-primary min-h-11 disabled:opacity-50">{busy === "test" ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}{ar ? "اختبار الإشعار" : "Test notification"}</button> : helpNeeded ? <button type="button" onClick={() => setShowHelp(true)} className="btn-primary min-h-11">{browserState === "install" ? (ar ? "طريقة الإضافة" : "How to install") : (ar ? "طريقة السماح" : "How to allow")}</button> : <button type="button" onClick={() => void enable()} disabled={busy !== null || !serverReady || browserState !== "available"} className="btn-primary min-h-11 disabled:opacity-50">{busy === "enable" ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}{ar ? "تفعيل الإشعارات" : "Enable notifications"}</button>}
+          <button type="button" onClick={dismissPrompt} disabled={busy !== null} className="btn-secondary min-h-11 disabled:opacity-50">{promptRegistered ? (ar ? "تم" : "Done") : (ar ? "لاحقاً" : "Later")}</button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className={`${compact ? "rounded-xl border border-slate-200 bg-slate-50 p-3" : "surface-card p-4"} text-start`} aria-label={ar ? "إشعارات الجهاز" : "Device notifications"}>
+      <div className="flex items-start gap-3">
+        <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-slate-950">{ar ? "إشعارات الجهاز" : "Device notifications"}</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-600">{ar ? "تصلك إسنادات العمل وتحديثاته المهمة حتى والتطبيق مغلق. فعّل الإشعارات على كل جهاز تستخدمه." : "Receive assignments and important work updates while Snacky OS is closed. Enable notifications separately on each device."}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-sm font-medium text-slate-800" role="status">{stateText[browserState]}</p>
+      {!compact ? <div className="mt-3 grid gap-2 text-sm">
+        <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "الخادم" : "Server"}</span><strong>{status === null ? "—" : serverReady ? (ar ? "جاهز" : "Ready") : (ar ? "يحتاج إعداد" : "Needs setup")}</strong></div>
+        <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "تنبيهات إسناد العمل" : "Work assignment alerts"}</span><strong>{status?.workAlerts?.enabled ? (ar ? "مفعّلة" : "Active") : (ar ? "بانتظار تفعيل الخادم" : "Awaiting server activation")}</strong></div>
+        {status?.workAlerts?.enabled && !status.workAlerts.worker_recent ? <p className="text-sm text-amber-800">{ar ? "إرسال التنبيهات يحتاج مراجعة؛ تظل الإشعارات محفوظة في النظام." : "Background delivery needs attention; notifications remain saved in the inbox."}</p> : null}
+        {Boolean(status?.workAlerts?.failed) ? <p className="text-sm text-amber-800">{ar ? "تعذر إرسال بعض إشعارات الهاتف. راجعها في قائمة الإشعارات." : "Some phone alerts could not be sent. Review them in your notification inbox."}</p> : null}
+        <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "الأجهزة المسجلة لحسابك" : "Registered account devices"}</span><strong>{status?.activeSubscriptions ?? "—"}</strong></div>
+      </div> : null}
+      {status && !serverReady ? <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{ar ? "إعداد الإشعارات غير مكتمل في الخادم. الإذن في الهاتف وحده لا يكفي." : "Server notification setup is incomplete. Phone permission alone is not enough."}</p> : null}
+      {message ? <p className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700" role="status">{message}</p> : null}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {enabled ? <>
+          <button type="button" onClick={() => void sendTest(0)} disabled={busy !== null} className="btn-primary disabled:opacity-50">{busy === "test" ? <Loader2 className="h-4 w-4 animate-spin" /> : ar ? "اختبار الآن" : "Test now"}</button>
+          <button type="button" onClick={() => void sendTest(15)} disabled={busy !== null} className="btn-secondary disabled:opacity-50">{ar ? "اختبار بعد إغلاق التطبيق" : "Test after closing app"}</button>
+          <button type="button" onClick={() => void disable()} disabled={busy !== null} className="btn-secondary disabled:opacity-50">{ar ? "إيقاف لهذا الجهاز" : "Disable this device"}</button>
+        </> : <button type="button" onClick={() => void enable()} disabled={busy !== null || !serverReady || !["available", "error"].includes(browserState)} className="btn-primary disabled:opacity-50">{busy === "enable" ? <Loader2 className="h-4 w-4 animate-spin" /> : ar ? "تفعيل الإشعارات" : "Enable notifications"}</button>}
+        <button type="button" onClick={() => void refresh()} disabled={busy !== null} className="btn-secondary disabled:opacity-50">{ar ? "إعادة التحقق" : "Recheck"}</button>
+      </div>
+    </section>
+  );
+}
