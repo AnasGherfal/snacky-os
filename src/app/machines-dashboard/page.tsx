@@ -21,7 +21,7 @@ export default async function MachinesDashboardPage() {
         }),
         safeSupabaseQuery<any>({
           label: "machines-dashboard.machines",
-          promise: supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
+          promise: supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, vms_machine_id, vms_online_status, last_vms_status_at, vms_last_synced_at, location:locations(id, name)").order("name"),
         }),
         safeSupabaseQuery<any>({
           label: "machines-dashboard.refill_orders",
@@ -105,6 +105,9 @@ export default async function MachinesDashboardPage() {
       openIssueCount: openIssues.get(String(machine.id)) ?? 0,
       cashVariance: cashVariance.get(String(machine.id)) ?? 0,
       profitAfterRent,
+      xyConnected:Boolean(machine.vms_machine_id),
+      xyOnline:String(machine.vms_online_status??"")==="1",
+      xyLastContact:machine.last_vms_status_at??machine.vms_last_synced_at??null,
     };
   });
 
@@ -149,6 +152,17 @@ export default async function MachinesDashboardPage() {
           {!machines.length ? <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." /> : null}
           {!sales.length ? <EmptyState title="No machine sales yet" body="VMS sales snapshots are required for sales, NSM, and profit metrics." /> : null}
 
+          <KpiSection title="XY machine health">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                ["XY linked",machineMetrics.filter(row=>row.xyConnected).length],
+                ["XY online",machineMetrics.filter(row=>row.xyConnected&&row.xyOnline).length],
+                ["XY offline",machineMetrics.filter(row=>row.xyConnected&&!row.xyOnline).length],
+                ["No XY link",machineMetrics.filter(row=>!row.xyConnected).length],
+              ].filter(([,value])=>Number(value)>0).map(([label,value])=><div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">{label}</div><strong className="mt-1 block text-2xl">{Number(value)}</strong></div>)}
+            </div>
+          </KpiSection>
+
           <KpiSection title="Maintenance attention">
             <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {[
@@ -180,11 +194,11 @@ export default async function MachinesDashboardPage() {
           </div>
 
           <KpiSection title="Machine KPI table">
-            <DataTable headers={["Machine", "Status", "Location", "Sales", "NSM", "Target", "Refills", "Stockouts", "Issues", "Cash variance", "Profit after rent"]}>
+            <DataTable headers={["Machine", "Status", "XY", "Location", "Sales", "NSM", "Target", "Refills", "Stockouts", "Issues", "Cash variance", "Profit after rent"]}>
               {machineMetrics.map((row) => (
                 <tr key={row.id}>
                   <td><div className="font-medium text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.code}</div></td>
-                  <td><StatusBadge status={row.status} /></td><td>{row.location}</td><td>{lyd(row.revenue)}</td><td>{sales.length ? lyd(row.nsm) : "-"}</td><td>{row.targetNsm > 0 ? lyd(row.targetNsm) : "-"}</td><td>{formatInteger(row.refillCount)}</td><td>{formatInteger(row.stockoutCount)}</td><td>{formatInteger(row.issueCount)}</td><td>{lyd(row.cashVariance)}</td><td>{formatLydOrDash(row.profitAfterRent)}</td>
+                  <td><StatusBadge status={row.status} /></td><td>{row.xyConnected?<div><StatusBadge status={row.xyOnline?"active":"offline"} label={row.xyOnline?"Online":"Offline"}/><div className="mt-1 text-xs text-slate-500">{row.xyLastContact?new Date(row.xyLastContact).toLocaleString("en-US"):"Never synced"}</div></div>:<span className="text-slate-400">No XY</span>}</td><td>{row.location}</td><td>{lyd(row.revenue)}</td><td>{sales.length ? lyd(row.nsm) : "-"}</td><td>{row.targetNsm > 0 ? lyd(row.targetNsm) : "-"}</td><td>{formatInteger(row.refillCount)}</td><td>{formatInteger(row.stockoutCount)}</td><td>{formatInteger(row.issueCount)}</td><td>{lyd(row.cashVariance)}</td><td>{formatLydOrDash(row.profitAfterRent)}</td>
                 </tr>
               ))}
             </DataTable>
