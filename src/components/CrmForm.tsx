@@ -47,6 +47,7 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
   const [repeatCount,setRepeatCount] = useState(0);
   const [duplicateCheckBusy,setDuplicateCheckBusy] = useState(false);
   const [duplicateAcknowledged,setDuplicateAcknowledged] = useState(false);
+  const duplicateBlocked=issueIntake&&duplicates.length>0&&!duplicateAcknowledged;
   const canAddAnother = stay && (action === 'note.add' || (!recordId && ['task.save', 'contact.save'].includes(action)));
 
   useEffect(() => {
@@ -92,7 +93,7 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
   }
 
   async function submit() {
-    if (lock.current || !ready || blocked || done || stale) return;
+    if (lock.current || !ready || blocked || done || stale || duplicateBlocked) return;
     let receipt = saved;
     if (!receipt && storageAvailable.current) {
       let raw: string | null = null;
@@ -147,8 +148,6 @@ export function CrmForm({ action, recordId = null, userId, fields, hidden = {}, 
       {field.hint ? <span className="mt-1 block text-xs leading-5 text-slate-500">{field.hint}</span> : null}
     </label>;
   };
-
-  const duplicateBlocked=issueIntake&&duplicates.length>0&&!duplicateAcknowledged;
 
   return <form action={submit} className="space-y-4" dir={ar ? 'rtl' : 'ltr'}>
     {message ? <p role={done ? 'status' : 'alert'} className={`rounded-lg border p-3 text-sm ${done ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>{message}</p> : null}
