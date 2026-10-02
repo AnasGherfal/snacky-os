@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { LocalDraftForm } from "@/components/LocalDraft";
+import { MachineSiteDistanceFields } from "@/components/MachineSiteDistanceFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -36,6 +37,9 @@ async function updateMachine(formData: FormData) {
   const todayPercent = Math.max(criticalPercent, numberBetween(formData.get("refill_today_percent"), 30, 0, 100));
   const targetPercent = Math.max(todayPercent, numberBetween(formData.get("refill_target_percent"), 90, 0, 100));
   const manualDailyUnitsText = cleanText(formData.get("refill_manual_daily_units"));
+  const distanceText = cleanText(formData.get("distance_from_storage_km"));
+  const distanceFromStorageKm = distanceText === null ? null : Number(distanceText);
+  if (distanceFromStorageKm !== null && (!Number.isFinite(distanceFromStorageKm) || distanceFromStorageKm < 0)) return;
   const payload = {
     machine_code: machineCode,
     machine_display_name: machineDisplayName,
@@ -83,6 +87,10 @@ async function updateMachine(formData: FormData) {
       .maybeSingle();
   }
   const afterMachine = updateResult.data;
+  if (afterMachine?.location_id) {
+    const distanceUpdate = await supabase.from("locations").update({ distance_from_storage_km: distanceFromStorageKm, updated_at: new Date().toISOString() }).eq("id", afterMachine.location_id).select("id").maybeSingle();
+    if (distanceUpdate.error) console.error("[machines] Could not save site distance while updating machine", { machine_id: id, location_id: afterMachine.location_id, error: distanceUpdate.error });
+  }
 
   await logActivity({
     profile,
@@ -98,6 +106,8 @@ async function updateMachine(formData: FormData) {
   revalidatePath(`/machines/${id}`);
   revalidatePath("/machines-dashboard");
   revalidatePath("/refills");
+  revalidatePath("/locations");
+  revalidatePath("/payroll/distances");
   redirect("/machines");
 }
 
@@ -160,16 +170,14 @@ export default async function EditMachinePage({ params }: { params: Promise<{ id
         </FormSection>
         <FormSection title="Active site" description="Choose the exact current site here. The area stays with the location record, not the machine itself.">
           <div className="grid gap-4 md:grid-cols-2">
-            <FormField label="Current active site">
-              <select name="location_id" defaultValue={machine.location_id || ""} className="field-input">
-                <option value="">No site assigned</option>
-                {locations?.map((location: { id: string; name?: string | null; area?: string | null; city?: string | null }) => (
-                  <option key={location.id} value={location.id}>
-                    {formatSiteLabel(location, { includeArea: true, fallback: location.name ?? "Unknown site" })}
-                  </option>
-                ))}
-              </select>
-            </FormField>
+            <MachineSiteDistanceFields
+              initialLocationId={machine.location_id || ""}
+              locations={(locations ?? []).map((location: any) => ({
+                id: location.id,
+                label: formatSiteLabel(location, { includeArea: true, fallback: location.name ?? "Unknown site" }),
+                distance_from_storage_km: location.distance_from_storage_km,
+              }))}
+            />
             <FormField label="Rent LYD">
               <input type="number" step="0.01" name="rent_amount" defaultValue={machine.rent_amount ?? 0} className="field-input" />
             </FormField>
