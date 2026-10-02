@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { DataHealthActionButton } from "@/components/DataHealthActionButton";
+import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
 
@@ -78,7 +79,7 @@ export default async function OperationsHealthPage() {
         <td>{row.product_name}</td>
         <td className={Number(row.current_quantity??0)<0?"font-semibold text-rose-700":"font-semibold text-emerald-700"}>{row.current_quantity??0}</td>
         <td>{row.case_id?<StatusBadge status={row.ready_to_resolve?"corrected_waiting_close":"open"}/>:<span className="text-xs text-amber-700">Scan cases first</span>}</td>
-        <td>{row.ready_to_resolve&&row.case_id?<DataHealthActionButton action="resolve_inventory_case" targetId={row.case_id} label="Close corrected case" defaultReason="Physical and ledger balance verified after correction"/>:<Link className="link-secondary" href="/inventory/reconciliation">Review inventory</Link>}</td>
+        <td>{row.ready_to_resolve&&row.case_id?<DataHealthActionButton action="resolve_inventory_case" targetId={row.case_id} label="Close corrected case" defaultReason="Physical and ledger balance verified after correction"/>:row.case_id&&row.location_type==="operator_bag"&&Number(row.current_quantity??0)<0?<OperatorBagReconcileControl caseId={row.case_id} currentQty={Number(row.current_quantity??0)} operatorName={row.location_name??"Operator"} productName={row.product_name??"Product"}/>:<Link className="link-secondary" href="/inventory/reconciliation">Review inventory</Link>}</td>
       </tr>)}</DataTable>}
     </section>
 
