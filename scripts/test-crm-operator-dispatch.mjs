@@ -18,6 +18,7 @@ const reliability=read('supabase/migrations/20261002104000_operations_reliabilit
 const crmOwnedAssignment=read('supabase/migrations/20261002214500_crm_owned_operator_issue_assignment.sql');
 const fieldQueueForm=read('src/components/CrmIssueFieldQueue.tsx');
 const fieldQueueApi=read('src/app/api/crm/field-queue/route.ts');
+const crmCommandApi=read('src/app/api/crm/command/route.ts');
 const operatorIssues=read('src/app/operator/issues/page.tsx');
 const routeStopApi=read('src/app/api/operator/routes/[id]/stops/[stopId]/route.ts');
 const routeStopPage=read('src/app/operator/routes/[id]/stops/[stopId]/page.tsx');
@@ -145,6 +146,18 @@ test('CRM assigns field work to one named active operator',()=>{
  assert.match(fieldQueueForm,/Assign field action/);
  assert.match(fieldQueueForm,/operator_id:operatorId/);
  assert.match(workspace,/operators=\{\(context\.directory/);
+});
+
+test('quick CRM machine report records the issue without broadcasting operator work',()=>{
+ assert.match(crmOwnedAssignment,/create or replace function public\.snacky_report_machine_issue_v1/i);
+ assert.match(crmOwnedAssignment,/'operator_notified',false/);
+ assert.match(crmOwnedAssignment,/'needs_field_assignment',not v_has_field_work/);
+ const quickReportSection=crmOwnedAssignment.slice(crmOwnedAssignment.indexOf('create or replace function public.snacky_report_machine_issue_v1'));
+ assert.doesNotMatch(quickReportSection,/snacky_issue_field_queue_command_v1\('create'/);
+ assert.match(forms,/Record machine issue/);
+ assert.doesNotMatch(forms,/Report & notify operators/);
+ assert.match(crmCommandApi,/Machine issue recorded\. Assign an operator from the issue if a field visit is needed\./);
+ assert.doesNotMatch(crmCommandApi,/Machine issue sent to operators\./);
 });
 
 test('operators cannot claim or release customer issue work from the shared queue',()=>{
