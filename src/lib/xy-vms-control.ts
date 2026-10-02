@@ -81,7 +81,7 @@ export async function setXySlotProduct(args: {
       }
     : businessParams;
 
-  const response = await fetch(`${config.baseUrl}/addInstructionByApi`, {
+  const response = await fetch(`${config.baseUrl}/addInstructionSpxxByApi`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

@@ -59,7 +59,7 @@ export async function GET(request: Request) {
   }
 
   const results = [];
-  for (const path of ["/api/addInstructionSpxxByApi", "/api/addInstructionByApi"]) {
+  for (const path of ["/api/addInstructionSpxxByApi"]) {
     try { results.push(await probe(path)); }
     catch (error) {
       results.push({
