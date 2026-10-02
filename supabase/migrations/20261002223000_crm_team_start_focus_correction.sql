@@ -32,10 +32,19 @@ where status='open'
 insert into crm_lead_private.focus(
   lead_id,starts_on,ends_on,removed_at,revision,updated_by,updated_at
 )
-values
-  ('9cdbd65b-50f8-4d92-b2d7-8cd30ec2179c',date '2026-10-01',date '2026-10-15',null,1,'bef7c60f-2040-451f-9ea0-a1799964360b',clock_timestamp()),
-  ('63bb3e26-159e-429f-b06c-07831f16b22b',date '2026-10-01',date '2026-10-15',null,1,'bef7c60f-2040-451f-9ea0-a1799964360b',clock_timestamp()),
-  ('b54aebf7-3ec2-4cfc-ab9b-e49ee6c00dd7',date '2026-10-01',date '2026-10-15',null,1,'bef7c60f-2040-451f-9ea0-a1799964360b',clock_timestamp())
+select v.lead_id,v.starts_on,v.ends_on,null,1,'bef7c60f-2040-451f-9ea0-a1799964360b',clock_timestamp()
+from (
+  values
+    ('9cdbd65b-50f8-4d92-b2d7-8cd30ec2179c'::uuid,date '2026-10-01',date '2026-10-15'),
+    ('63bb3e26-159e-429f-b06c-07831f16b22b'::uuid,date '2026-10-01',date '2026-10-15'),
+    ('b54aebf7-3ec2-4cfc-ab9b-e49ee6c00dd7'::uuid,date '2026-10-01',date '2026-10-15')
+) as v(lead_id,starts_on,ends_on)
+join public.location_pipeline_leads l on l.id=v.lead_id
+where exists(
+  select 1
+  from public.team_members t
+  where t.id='bef7c60f-2040-451f-9ea0-a1799964360b'
+)
 on conflict(lead_id) do update
 set starts_on=excluded.starts_on,
     ends_on=excluded.ends_on,
