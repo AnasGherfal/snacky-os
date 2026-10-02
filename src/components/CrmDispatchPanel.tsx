@@ -1,7 +1,6 @@
 'use client';
 import {useMemo,useRef,useState,useSyncExternalStore} from 'react';
 import {useRouter} from 'next/navigation';
-import {OperatorIssueReleaseButton} from '@/components/CrmIssueFieldQueue';
 
 const subscribe=()=>()=>{};
 const clientSnapshot=()=>true;
@@ -91,7 +90,7 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
   {canAct&&!terminal?<div className="space-y-3">
    <div className="flex flex-wrap gap-2">{next?<button className="btn-primary min-h-12" disabled={busy||Boolean(pending)} onClick={()=>void send(next)}>
     {next==='accept'?(ar?'قبول المهمة':'Accept task'):next==='en_route'?(ar?'أنا في الطريق':'On my way'):(ar?'بدء / استئناف العمل':'Start / resume work')}
-   </button>:null}{['assigned','accepted','en_route'].includes(String(state))?<OperatorIssueReleaseButton taskId={task.id} ar={ar}/>:null}</div>
+   </button>:null}</div>
    {['accepted','en_route','working'].includes(String(state))?<div className="grid gap-2 sm:max-w-xl"><label className="text-sm font-medium">{ar?'إذا تعذر إكمال العمل':'If work is blocked'}<textarea className="field-input mt-1" rows={2} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} placeholder={ar?'مثال: الكهرباء مفصولة، قطعة غيار مطلوبة…':'Example: power is off, part required…'}/></label><button className="btn-secondary justify-self-start" disabled={busy||Boolean(pending)||note.trim().length<3} onClick={()=>void send('block',note)}>{ar?'تسجيل عائق':'Mark blocked'}</button></div>:null}
    {state==='working'?<div className="grid gap-3 sm:max-w-2xl"><label className="text-sm font-medium">{ar?'نتيجة الزيارة / التشخيص':'Visit result / diagnosis'}<textarea className="field-input mt-1" rows={3} maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} required placeholder={ar?'اكتب ما وجدته، وما تم إصلاحه أو ما المطلوب':'Write what you found, what was fixed, or what is still required'}/></label><p className="text-xs text-slate-500">{proofImages>0?(ar?'الصورة الميدانية موجودة ويمكن تسجيل نتيجة الزيارة.':'Field photo is attached; you can record the visit outcome.'):(ar?'أرفق صورة ميدانية من قسم المستندات أدناه قبل إنهاء الزيارة.':'Attach a field photo in Documents & proof below before completing the visit.')}</p><div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('fix',note)}>{ar?'تم الإصلاح':'Fixed'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('needs_technician',note)}>{ar?'يحتاج فني':'Needs technician'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('needs_part',note)}>{ar?'يحتاج قطعة غيار':'Needs spare part'}</button><button className="btn-secondary" disabled={busy||Boolean(pending)||note.trim().length<3||proofImages<1} onClick={()=>void send('machine_offline',note)}>{ar?'الماكينة خارج الخدمة':'Machine offline'}</button></div>{proofImages<1?<a className="text-sm text-sky-800 underline" href="#crm-documents">{ar?'الذهاب لإرفاق الصورة':'Go to photo upload'}</a>:null}</div>:null}
   </div>:null}
