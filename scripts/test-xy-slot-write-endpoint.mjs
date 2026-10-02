@@ -44,6 +44,8 @@ test('product change and swap both share the corrected fail-closed writer',()=>{
 });
 
 test('safe contract probe no longer treats generic instruction endpoint as equivalent',()=>{
- assert.match(probe,/\/api\/addInstructionSpxxByApi/);
- assert.doesNotMatch(probe,/\/api\/addInstructionByApi/);
+ assert.match(probe,/XY_SLOT_PRODUCT_WRITE_ENDPOINT/);
+ assert.match(probe,/productName: "SNACKY CONTRACT PROBE"/);
+ assert.match(probe,/priceLyd: 0\.01/);
+ assert.doesNotMatch(probe,/addInstructionByApi/);
 });

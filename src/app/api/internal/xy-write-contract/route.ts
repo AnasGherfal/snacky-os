@@ -1,18 +1,20 @@
 import { NextResponse } from "next/server";
 import { buildXySign, getXyVmsConfig } from "@/lib/xy-vms-api";
+import { buildXySlotProductWriteParams, XY_SLOT_PRODUCT_WRITE_ENDPOINT } from "@/lib/xy-slot-write-contract";
 
 type JsonRecord = Record<string, unknown>;
 
 async function probe(path: string) {
   const config = getXyVmsConfig();
   const timestamp = Date.now().toString().padStart(13, "0");
-  const businessParams = {
-    shbh: config.merchantId,
-    jqbh: "SNACKY_CONTRACT_PROBE_INVALID_MACHINE",
-    hdbh: "000",
-    spbh: "SNACKY_PROBE_INVALID_PRODUCT",
-    spjg: 1,
-  };
+  const businessParams = buildXySlotProductWriteParams({
+    merchantId: config.merchantId,
+    vmsMachineId: "SNACKY_CONTRACT_PROBE_INVALID_MACHINE",
+    slotCode: "SNACKY_PROBE_INVALID_SLOT",
+    vmsProductId: "SNACKY_PROBE_INVALID_PRODUCT",
+    productName: "SNACKY CONTRACT PROBE",
+    priceLyd: 0.01,
+  });
   const body = config.includeAuthFields
     ? {
         key: config.key,
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
   }
 
   const results = [];
-  for (const path of ["/api/addInstructionSpxxByApi"]) {
+  for (const path of [`/api/${XY_SLOT_PRODUCT_WRITE_ENDPOINT}`]) {
     try { results.push(await probe(path)); }
     catch (error) {
       results.push({
