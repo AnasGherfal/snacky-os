@@ -216,6 +216,7 @@ export async function POST(
         vmsMachineId,
         slotCode: slotCodeA,
         vmsProductId: slotA.vmsProductId,
+        productName: slotA.productName ?? slotA.vmsProductId,
         priceLyd: slotA.priceLyd,
       });
       if (!rollbackWrite.accepted) throw new Error("XY rejected rollback");
