@@ -4,6 +4,7 @@ import {
   monthlyTransactionPaymentAmount,
   monthlyTransactionPaymentMethod,
   monthlyTransactionPaymentTime,
+  monthlyTransactionNumber,
   monthlyTransactionQuantity,
   monthlyTransactionRefundAmount,
   monthlyTransactionRefundTime,
@@ -24,6 +25,7 @@ export type NormalizedXyLiveSale = {
   salesPrice: number | null;
   discountedPrice: number | null;
   paymentMethod: string;
+  purchaser: string;
   paymentAmount: number | null;
   paymentTime: Date | null;
   deliveryTime: Date | null;
@@ -51,6 +53,7 @@ const aliases = {
   salesPrice: ["sales_price", "salesPrice", "selling_price", "sellingPrice", "unit_price", "unitPrice", "price", "spjg", "spsj"],
   discountPrice: ["discount_price", "discountPrice", "discounted_price", "discountedPrice", "actual_price", "actualPrice", "sjje"],
   paymentMethod: ["mode_of_payment", "payment_method", "paymentMethod", "payment_type", "paymentType", "payType", "zffs"],
+  purchaser: ["purchaser", "buyer", "buyer_name", "buyerName", "gmr", "gmrxm"],
   paymentAmount: ["payment_amount", "paymentAmount", "paid_amount", "paidAmount", "amount", "payAmount", "zfje", "ssje"],
   paymentTime: ["payment_time", "paymentTime", "pay_time", "payTime", "paid_time", "paidTime", "zfsj", "createTime", "createdAt"],
   deliveryTime: ["delivery_time", "deliveryTime", "vend_time", "vendTime", "shipping_time", "shippingTime", "cfsj", "chsj", "ddsjt"],
@@ -136,6 +139,7 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     cargo_lane_number: first(row, aliases.cargoLane),
     sales_price: first(row, aliases.salesPrice),
     mode_of_payment: first(row, aliases.paymentMethod),
+    purchaser: first(row, aliases.purchaser),
     payment_amount: first(row, aliases.paymentAmount),
     refund_amount: first(row, aliases.refundAmount),
     discount_price: first(row, aliases.discountPrice),
@@ -164,8 +168,9 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     productNumber: canonicalRow.product_number,
     productName: canonicalRow.product_name,
     salesPrice: monthlyTransactionSalesPrice(canonicalRow),
-    discountedPrice: canonicalRow.discount_price ? Number(canonicalRow.discount_price) || null : null,
+    discountedPrice: monthlyTransactionNumber(canonicalRow.discount_price),
     paymentMethod: monthlyTransactionPaymentMethod(canonicalRow),
+    purchaser: canonicalRow.purchaser,
     paymentAmount: monthlyTransactionPaymentAmount(canonicalRow),
     paymentTime: monthlyTransactionPaymentTime(canonicalRow),
     deliveryTime: monthlyTransactionDate(canonicalRow.delivery_time),
