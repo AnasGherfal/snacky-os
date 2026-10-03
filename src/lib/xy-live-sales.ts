@@ -1,5 +1,6 @@
 import {
   monthlyTransactionBusinessDate,
+  monthlyTransactionDate,
   monthlyTransactionPaymentAmount,
   monthlyTransactionPaymentMethod,
   monthlyTransactionPaymentTime,
@@ -167,7 +168,7 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     paymentMethod: monthlyTransactionPaymentMethod(canonicalRow),
     paymentAmount: monthlyTransactionPaymentAmount(canonicalRow),
     paymentTime: monthlyTransactionPaymentTime(canonicalRow),
-    deliveryTime: canonicalRow.delivery_time ? new Date(canonicalRow.delivery_time) : null,
+    deliveryTime: monthlyTransactionDate(canonicalRow.delivery_time),
     shippingStatus: canonicalRow.shipping_status,
     refundAmount: monthlyTransactionRefundAmount(canonicalRow),
     refundTime: monthlyTransactionRefundTime(canonicalRow),
