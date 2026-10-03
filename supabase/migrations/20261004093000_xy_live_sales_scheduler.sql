@@ -3,7 +3,6 @@
 -- the protected endpoint path from /api/cron/xy-vms to /api/cron/xy-sales.
 
 create extension if not exists pg_net with schema extensions;
-create extension if not exists pg_cron with schema extensions;
 
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
