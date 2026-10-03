@@ -728,8 +728,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     .at(-1) ?? null;
   const latestSalesMs = Date.parse(String(latestSalesAt ?? ""));
   const recentTransactionSales = Number.isFinite(latestSalesMs) && now.getTime() - latestSalesMs <= 48 * 60 * 60 * 1000;
-  const verifiedSalesSync = ["completed", "already_fresh"].includes(String(salesRefresh.outcome));
-  const useTransactionSales = rawSalesSignals.length > 0 && (recentTransactionSales || verifiedSalesSync);
+  // A successful API sync proves the connector ran; it does not make old transactions fresh.
+  // Only recent successful-sale timestamps are allowed to influence smart-route ranking.
+  const useTransactionSales = rawSalesSignals.length > 0 && recentTransactionSales;
   if (rawSalesSignals.length && !useTransactionSales) {
     warnings.push("Transaction sales exist but are stale; smart ranking ignored them and used current XY stock depletion.");
   }
