@@ -264,7 +264,7 @@ async function createImportBatch(
       file_name: "XY live sales API",
       file_type: "api",
       sheet_name: config.path,
-      report_type: "monthly_transaction_details",
+      report_type: "vms_order_details_weekly",
       imported_by: profile?.team_member_id ?? null,
       uploaded_by: profile?.team_member_id ?? null,
       status: "draft",
@@ -356,7 +356,7 @@ function resolveProduct(
 }
 
 function transactionTimestamp(row: ReturnType<typeof normalizeXyLiveSalesRow>) {
-  return row.paymentTime ?? row.refundTime ?? null;
+  return row.paymentTime ?? row.deliveryTime ?? row.refundTime ?? null;
 }
 
 function toDbRow({
@@ -388,8 +388,8 @@ function toDbRow({
     commodity_price_1: normalized.salesPrice,
     commodity_price_2: null,
     discounted_price: normalized.discountedPrice,
-    delivery_time: normalized.transactionStatus === "successful_sale" ? normalized.paymentTime?.toISOString() ?? null : null,
-    shipping_status: normalized.transactionStatus,
+    delivery_time: normalized.deliveryTime?.toISOString() ?? null,
+    shipping_status: normalized.shippingStatus || normalized.transactionStatus,
     purchaser: normalized.paymentMethod || null,
     refund_time: normalized.refundTime?.toISOString() ?? null,
     remarks: "XY live sales API",
