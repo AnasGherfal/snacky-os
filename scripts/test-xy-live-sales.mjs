@@ -9,7 +9,7 @@ import {
   normalizeXyLiveSalesRow,
   renderXyLiveSalesRequestTemplate,
 } from "../src/lib/xy-live-sales.ts";
-import { createVmsMonthlyTransactionDuplicateHash } from "../src/lib/vms-transaction-details.ts";
+import { createVmsOrderDetailsDuplicateHash } from "../src/lib/vms-order-details.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const syncSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-live-sales-sync.ts"), "utf8");
@@ -99,7 +99,7 @@ test("live API and imported files use the same duplicate hash contract", () => {
   });
   assert.equal(
     normalized.duplicateHash,
-    createVmsMonthlyTransactionDuplicateHash(normalized.canonicalRow),
+    createVmsOrderDetailsDuplicateHash(normalized.canonicalRow),
   );
 });
 
