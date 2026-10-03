@@ -24,7 +24,15 @@ type CreateRoutePayload = {
   machineSlotIds?: string[];
   recommendationFinalTakeQty?: { machineId?: string; productId?: string; finalTakeQty?: number }[];
   routeStock?: { productId?: string; quantity?: number; available?: number }[];
-  manualStopItems?: { machineId?: string; productId?: string; quantity?: number }[];
+  manualStopItems?: {
+    machineId?: string;
+    productId?: string;
+    quantity?: number;
+    machineSlotId?: string | null;
+    slotCode?: string | null;
+    source?: "smart_ai_plan";
+    notes?: string | null;
+  }[];
   adminOverride?: boolean;
 };
 
@@ -443,6 +451,10 @@ export async function POST(request: Request) {
       machineId: String(item.machineId ?? "").trim(),
       productId: String(item.productId ?? "").trim(),
       quantity: planQuantity(item.quantity),
+      machineSlotId: String(item.machineSlotId ?? "").trim() || null,
+      slotCode: String(item.slotCode ?? "").trim() || null,
+      source: item.source === "smart_ai_plan" ? "smart_ai_plan" as const : "manual_admin_assignment" as const,
+      notes: String(item.notes ?? "").trim().slice(0, 2000) || null,
     }))
     .filter((item) => item.machineId && item.productId && item.quantity > 0);
 
@@ -649,15 +661,16 @@ export async function POST(request: Request) {
       route_stop_id: stopByMachine.get(item.machineId),
       machine_id: item.machineId,
       product_id: item.productId,
-      machine_slot_id: null,
-      slot_code: null,
+      machine_slot_id: item.machineSlotId,
+      slot_code: item.slotCode,
       planned_quantity: item.quantity,
       recommended_take_qty: item.quantity,
       final_take_qty: item.quantity,
       picked_quantity: null,
       filled_quantity: null,
       returned_quantity: null,
-      source: "manual_admin_assignment",
+      source: item.source,
+      notes: item.notes,
     })),
   ].filter((item) => Boolean(item.route_stop_id && item.product_id && planQuantity(item.planned_quantity) > 0));
 
@@ -745,8 +758,8 @@ export async function POST(request: Request) {
     const manualLines = manualStopItems
       .map((item): RefillLineInsert => ({
         refill_order_id: orderByMachine.get(item.machineId),
-        machine_slot_id: null,
-        slot_code: null,
+        machine_slot_id: item.machineSlotId,
+        slot_code: item.slotCode,
         product_id: item.productId,
         current_qty_vms: 0,
         par_qty: item.quantity,
@@ -755,7 +768,7 @@ export async function POST(request: Request) {
         final_qty_to_take: item.quantity,
         recommended_take_qty: item.quantity,
         final_take_qty: item.quantity,
-        source: "manual_admin_assignment",
+        source: item.source,
       }))
       .filter((line): line is RefillLineInsert => Boolean(line.refill_order_id));
     const refillLines = [...recommendationLines, ...manualLines];
