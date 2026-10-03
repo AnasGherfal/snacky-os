@@ -5,7 +5,7 @@ import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
 
 export const dynamic = "force-dynamic";
 
-// The plaintext scheduler token lives only in Supabase Vault. Keeping only its
+// The plaintext cron token lives only in Supabase Vault. Keeping only its
 // SHA-256 digest in source lets pg_cron authenticate without adding another
 // plaintext secret to Vercel or GitHub.
 const SUPABASE_SCHEDULER_TOKEN_SHA256 = "6a8316c2ea6b58c928921ca0c141ff9f683d279eb8e2abbe682c1d7d52167d89";
