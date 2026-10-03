@@ -1042,6 +1042,7 @@ export function RouteCreateForm({
     || (Boolean(search.trim()) && selectedManualMachineId !== "" && visibleMachineProductCatalog.length === 0);
 
   const toggleRouteMachine = (machineId: string) => {
+    setSmartPlan(null);
     if (!machineIds.includes(machineId)) {
       const nextMachineIds = [...machineIds, machineId];
       setMachineIds(nextMachineIds);
@@ -1067,6 +1068,7 @@ export function RouteCreateForm({
   };
 
   const applySuggestedQuantities = (targetMachineIds: string[], allowedMachineIds = machineIds) => {
+    setSmartPlan(null);
     const allowedMachineIdSet = new Set(allowedMachineIds);
     const selectedTargets = targetMachineIds.filter((machineId) => allowedMachineIdSet.has(machineId) && !staleRecommendationMachineIds.has(machineId));
     if (!selectedTargets.length) {
