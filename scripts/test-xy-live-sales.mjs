@@ -147,6 +147,8 @@ test("sales-signal RPC only counts mapped successful sales from active imported 
   assert.match(migrationSource, /t\.mapped_machine_id is not null/);
   assert.match(migrationSource, /t\.mapped_product_id is not null/);
   assert.match(migrationSource, /coalesce\(b\.is_active, false\) = true/);
+  assert.match(migrationSource, /coalesce\(t\.payment_time, t\.delivery_time\)/);
+  assert.doesNotMatch(migrationSource, /t\.created_at/);
   assert.match(migrationSource, /revoke all on function public\.snacky_smart_route_sales_signals\(integer\)\s+from public, anon, authenticated/);
   assert.match(migrationSource, /grant execute on function public\.snacky_smart_route_sales_signals\(integer\)\s+to service_role/);
 });
