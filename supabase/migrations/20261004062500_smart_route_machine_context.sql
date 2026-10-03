@@ -37,6 +37,9 @@ alter table public.smart_route_location_product_rules
   drop constraint if exists smart_route_location_product_rules_check;
 
 alter table public.smart_route_location_product_rules
+  drop constraint if exists smart_route_location_product_rules_target_check;
+
+alter table public.smart_route_location_product_rules
   add constraint smart_route_location_product_rules_target_check
   check (num_nonnulls(machine_id, location_id, location_type) = 1);
 
