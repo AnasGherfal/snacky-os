@@ -3,6 +3,7 @@ import "server-only";
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
+import { ensureFreshXyLiveSales } from "@/lib/xy-live-sales-sync";
 
 type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 
@@ -93,6 +94,17 @@ type DemandRow = {
   latest_observed_at: string | null;
 };
 
+type SalesSignalRow = {
+  machine_id: string;
+  location_id: string | null;
+  location_type: string | null;
+  product_id: string;
+  units_sold: number | string;
+  transaction_count: number | string;
+  revenue_amount: number | string;
+  latest_sale_at: string | null;
+};
+
 type FitHistoryRow = {
   machine_id: string;
   slot_code: string;
@@ -113,6 +125,10 @@ type Candidate = {
   locationTypeDemandUnits: number;
   networkDemandUnits: number;
   recentRouteFillUnits: number;
+  machineSalesUnits: number;
+  locationTypeSalesUnits: number;
+  networkSalesUnits: number;
+  salesTransactions: number;
   original: boolean;
 };
 
@@ -166,7 +182,7 @@ export type SmartRoutePlanResult = {
   plannerMode: "ai" | "deterministic_fallback";
   model: string | null;
   summary: string;
-  demandSource: "xy_stock_depletion";
+  demandSource: "xy_live_sales" | "xy_live_sales_plus_stock_depletion" | "xy_stock_depletion";
   manualStopItems: SmartRoutePlanItem[];
   substitutions: Array<{
     machineId: string;
@@ -183,6 +199,8 @@ export type SmartRoutePlanResult = {
   freshness: {
     xyOutcome: string;
     latestStockAt: string | null;
+    latestSalesAt: string | null;
+    salesSyncOutcome: string;
     generatedAt: string;
   };
 };
@@ -309,6 +327,30 @@ function demandMaps(rows: DemandRow[]) {
   return { machine, locationType, network };
 }
 
+function salesMaps(rows: SalesSignalRow[]) {
+  const machine = new Map<string, number>();
+  const locationType = new Map<string, number>();
+  const network = new Map<string, number>();
+  const transactions = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const productId = String(row.product_id ?? "");
+    const machineId = String(row.machine_id ?? "");
+    const type = String(row.location_type ?? "");
+    const sold = units(row.units_sold);
+    const count = units(row.transaction_count);
+    if (!productId) return;
+    if (machineId) {
+      machine.set(`${machineId}:${productId}`, (machine.get(`${machineId}:${productId}`) ?? 0) + sold);
+      transactions.set(`${machineId}:${productId}`, (transactions.get(`${machineId}:${productId}`) ?? 0) + count);
+    }
+    if (type) locationType.set(`${type}:${productId}`, (locationType.get(`${type}:${productId}`) ?? 0) + sold);
+    network.set(productId, (network.get(productId) ?? 0) + sold);
+  });
+
+  return { machine, locationType, network, transactions };
+}
+
 function candidateScore({
   original,
   historicallySeen,
@@ -318,6 +360,10 @@ function candidateScore({
   typeDemand,
   networkDemand,
   recentFill,
+  machineSales,
+  typeSales,
+  networkSales,
+  salesTransactions,
   sameBrand,
 }: {
   original: boolean;
@@ -328,6 +374,10 @@ function candidateScore({
   typeDemand: number;
   networkDemand: number;
   recentFill: number;
+  machineSales: number;
+  typeSales: number;
+  networkSales: number;
+  salesTransactions: number;
   sameBrand: boolean;
 }) {
   let score = original ? 70 : 0;
@@ -337,9 +387,13 @@ function candidateScore({
   if (locationRule?.rule === "preferred") score += 30;
   if (locationRule?.rule === "avoid") score -= 35;
   score += signed(locationRule?.score_adjustment);
-  score += Math.log1p(machineDemand) * 18;
-  score += Math.log1p(typeDemand) * 8;
-  score += Math.log1p(networkDemand) * 3;
+  score += Math.log1p(machineSales) * 30;
+  score += Math.log1p(typeSales) * 13;
+  score += Math.log1p(networkSales) * 5;
+  score += Math.log1p(salesTransactions) * 3;
+  score += Math.log1p(machineDemand) * 12;
+  score += Math.log1p(typeDemand) * 6;
+  score += Math.log1p(networkDemand) * 2;
   score += Math.log1p(recentFill) * 4;
   return Math.round(score * 100) / 100;
 }
@@ -370,6 +424,10 @@ async function callPlannerAI(tasks: PlanTask[]) {
       locationTypeDemandUnits: candidate.locationTypeDemandUnits,
       networkDemandUnits: candidate.networkDemandUnits,
       recentRouteFillUnits: candidate.recentRouteFillUnits,
+      machineSalesUnits: candidate.machineSalesUnits,
+      locationTypeSalesUnits: candidate.locationTypeSalesUnits,
+      networkSalesUnits: candidate.networkSalesUnits,
+      salesTransactions: candidate.salesTransactions,
       original: candidate.original,
     })),
   }));
@@ -380,7 +438,7 @@ async function callPlannerAI(tasks: PlanTask[]) {
     "Never invent a product ID and never exceed neededQty or candidate availableUnits.",
     "The candidate list is already filtered by storage, physical fit, and location hard rules.",
     "Prefer keeping the original product when it is sufficiently available and has reasonable local demand.",
-    "If the original is unavailable and the lane is empty, choose the strongest compatible substitute using exact-machine demand first, then same location type, then network demand and route history.",
+    "If the original is unavailable and the lane is empty, choose the strongest compatible substitute. Prefer verified transaction sales: exact-machine sales first, then same venue-type sales, then network sales. Use stock-depletion demand and route history as secondary evidence.",
     "Respect preferred/avoid location signals. Avoid low-confidence novelty when a proven-fit seller exists.",
     "Give short operational reasons. Do not create routes or reserve stock; this is only a review draft.",
     JSON.stringify({ tasks: compactTasks }),
@@ -584,6 +642,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   if (!machineIds.length) throw new Error("Choose at least one machine before generating a smart plan.");
 
   const xyRefresh = await ensureFreshXyRoutePlanningData();
+  const salesRefresh = await ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 });
   const now = new Date();
   const recentFillSince = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -600,6 +659,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     slotRulesResult,
     locationRulesResult,
     demandResult,
+    salesSignalResult,
     fitHistoryResult,
     refillHistoryResult,
   ] = await Promise.all([
@@ -615,6 +675,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     supabase.from("smart_route_slot_product_rules").select("machine_slot_id, product_id, rule"),
     supabase.from("smart_route_location_product_rules").select("machine_id, location_id, location_type, product_id, rule, score_adjustment"),
     supabase.rpc("snacky_smart_route_demand_signals", { p_days: 21 }),
+    supabase.rpc("snacky_smart_route_sales_signals", { p_days: 21 }),
     supabase.rpc("snacky_smart_route_slot_fit_history", { p_machine_ids: machineIds, p_days: 180 }),
     supabase.from("route_stop_fill_lines").select("machine_id, product_id, actual_qty, created_at").in("machine_id", machineIds).gte("created_at", recentFillSince),
   ]);
@@ -640,7 +701,11 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   }
 
   const warnings: string[] = [];
-  if (refillHistoryResult.error) warnings.push("Past route-fill history could not be loaded; demand ranking used XY stock depletion only.");
+  if (refillHistoryResult.error) warnings.push("Past route-fill history could not be loaded.");
+  if (salesSignalResult.error) warnings.push("True transaction-sales signals could not be loaded; ranking fell back to XY stock depletion.");
+  if (salesRefresh.outcome === "failed" || salesRefresh.outcome === "unavailable") {
+    warnings.push(`Live XY sales refresh is ${salesRefresh.outcome}: ${salesRefresh.reason ?? "configuration or vendor API issue"}`);
+  }
 
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const machineById = new Map(machines.map((machine) => [machine.id, machine]));
@@ -655,6 +720,24 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const fitHistory = (fitHistoryResult.data ?? []) as FitHistoryRow[];
   const fitSeen = new Set(fitHistory.map((row) => `${row.machine_id}:${row.slot_code}:${row.product_id}`));
   const demand = demandMaps((demandResult.data ?? []) as DemandRow[]);
+  const rawSalesSignals = salesSignalResult.error ? [] : (salesSignalResult.data ?? []) as SalesSignalRow[];
+  const latestSalesAt = rawSalesSignals
+    .map((row) => row.latest_sale_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+  const latestSalesMs = Date.parse(String(latestSalesAt ?? ""));
+  const recentTransactionSales = Number.isFinite(latestSalesMs) && now.getTime() - latestSalesMs <= 48 * 60 * 60 * 1000;
+  // A successful API sync proves the connector ran; it does not make old transactions fresh.
+  // Only recent successful-sale timestamps are allowed to influence smart-route ranking.
+  const useTransactionSales = rawSalesSignals.length > 0 && recentTransactionSales;
+  if (rawSalesSignals.length && !useTransactionSales) {
+    warnings.push("Transaction sales exist but are stale; smart ranking ignored them and used current XY stock depletion.");
+  }
+  const sales = salesMaps(useTransactionSales ? rawSalesSignals : []);
+  const demandSource: SmartRoutePlanResult["demandSource"] = useTransactionSales
+    ? "xy_live_sales_plus_stock_depletion"
+    : "xy_stock_depletion";
   const recentFill = routeFillMap((refillHistoryResult.data ?? []) as Array<{ machine_id?: string | null; product_id?: string | null; actual_qty?: unknown }>);
 
   const storageByProduct = new Map<string, number>();
@@ -750,6 +833,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
         const typeDemand = locationType ? demand.locationType.get(`${locationType}:${candidate.id}`) ?? 0 : 0;
         const networkDemand = demand.network.get(candidate.id) ?? 0;
         const fills = recentFill.get(`${machine.id}:${candidate.id}`) ?? 0;
+        const machineSales = sales.machine.get(`${machine.id}:${candidate.id}`) ?? 0;
+        const typeSales = locationType ? sales.locationType.get(`${locationType}:${candidate.id}`) ?? 0 : 0;
+        const networkSales = sales.network.get(candidate.id) ?? 0;
+        const salesTransactions = sales.transactions.get(`${machine.id}:${candidate.id}`) ?? 0;
         const sameBrand = Boolean(normalize(product.brand) && normalize(product.brand) === normalize(candidate.brand));
         const fitEvidence = original
           ? "current_product"
@@ -772,6 +859,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
             typeDemand,
             networkDemand,
             recentFill: fills,
+            machineSales,
+            typeSales,
+            networkSales,
+            salesTransactions,
             sameBrand,
           }),
           fitProfile: candidateFit,
@@ -781,6 +872,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
           locationTypeDemandUnits: typeDemand,
           networkDemandUnits: networkDemand,
           recentRouteFillUnits: fills,
+          machineSalesUnits: machineSales,
+          locationTypeSalesUnits: typeSales,
+          networkSalesUnits: networkSales,
+          salesTransactions,
           original,
         };
       })
@@ -822,11 +917,17 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       plannerMode: "deterministic_fallback",
       model: null,
       summary: "No refill lines could be generated from current verified XY stock and storage.",
-      demandSource: "xy_stock_depletion",
+      demandSource,
       manualStopItems: [],
       substitutions: [],
       warnings,
-      freshness: { xyOutcome: xyRefresh.outcome, latestStockAt, generatedAt },
+      freshness: {
+        xyOutcome: xyRefresh.outcome,
+        latestStockAt,
+        latestSalesAt,
+        salesSyncOutcome: salesRefresh.outcome,
+        generatedAt,
+      },
     };
   }
 
@@ -878,7 +979,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     plannerMode,
     model,
     summary,
-    demandSource: "xy_stock_depletion",
+    demandSource,
     manualStopItems,
     substitutions,
   };
@@ -889,8 +990,14 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     machine_ids: machineIds,
     planner_mode: plannerMode,
     model,
-    demand_source: "xy_stock_depletion",
-    data_freshness: { xy_outcome: xyRefresh.outcome, latest_stock_at: latestStockAt, generated_at: generatedAt },
+    demand_source: demandSource,
+    data_freshness: {
+      xy_outcome: xyRefresh.outcome,
+      latest_stock_at: latestStockAt,
+      latest_sales_at: latestSalesAt,
+      sales_sync_outcome: salesRefresh.outcome,
+      generated_at: generatedAt,
+    },
     plan: auditPayload,
     warnings,
   });
@@ -900,13 +1007,15 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     plannerMode,
     model,
     summary,
-    demandSource: "xy_stock_depletion",
+    demandSource,
     manualStopItems,
     substitutions,
     warnings: Array.from(new Set(warnings)),
     freshness: {
       xyOutcome: xyRefresh.outcome,
       latestStockAt,
+      latestSalesAt,
+      salesSyncOutcome: salesRefresh.outcome,
       generatedAt,
     },
   };

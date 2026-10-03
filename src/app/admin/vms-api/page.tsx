@@ -7,12 +7,14 @@ import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagi
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
+import { getXyLiveSalesConfig, latestXyLiveSalesHealth } from "@/lib/xy-live-sales-sync";
 import {
   syncXyAllAction,
   syncXyMachineGoodsAction,
   syncXyMachinesAction,
   syncXyMachineStatusAction,
   syncXyProductsAction,
+  syncXyLiveSalesAction,
   testXyOfficialApiAction,
   testXyWebDashboardAction,
 } from "@/lib/xy-vms-actions";
@@ -88,6 +90,19 @@ function webConnectionStatus(config: ReturnType<typeof getXyWebApiConfig>) {
   return { status: "ready", label: "Ready" };
 }
 
+function liveSalesConnectionStatus(
+  config: ReturnType<typeof getXyLiveSalesConfig>,
+  latestSaleAt: string | null,
+) {
+  if (!config.enabled) return { status: "disabled", label: "Disabled" };
+  if (!config.ready) return { status: "needs_configuration", label: "Needs configuration" };
+  const timestamp = Date.parse(String(latestSaleAt ?? ""));
+  if (!Number.isFinite(timestamp)) return { status: "needs_review", label: "No live sales yet" };
+  const ageMs = Date.now() - timestamp;
+  if (ageMs <= 48 * 60 * 60 * 1000) return { status: "completed", label: "Fresh" };
+  return { status: "needs_review", label: "Stale" };
+}
+
 function SyncForm({
   action,
   label,
@@ -157,6 +172,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
 
   const config = getXyVmsConfig();
   const webConfig = getXyWebApiConfig();
+  const liveSalesConfig = getXyLiveSalesConfig();
   const status = connectionStatus(config);
   const webStatus = webConnectionStatus(webConfig);
   const supabase = getSupabaseAdminClient();
@@ -220,6 +236,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     );
   }
 
+  const liveSalesHealth = await latestXyLiveSalesHealth();
+  const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt);
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
   const pagedRuns = (pagedRunsResult.data ?? []) as XySyncRunRow[];
   const lastCompleted = runs.find((run) => run.provider === "xy" && !String(run.sync_type ?? "").startsWith("test_") && run.completed_at);
@@ -251,7 +269,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         subtitle="Server-side Xingyuan sync for machines, VMS products, aisle goods stock, and machine status."
       />
 
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <section className="surface-card">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="text-sm font-medium text-slate-500">Official API</div>
@@ -277,6 +295,19 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             <div>Merchant: {webConfig.maskedMerchantId}</div>
             <div>Authorization: {webConfig.maskedAuthorization}</div>
             <div>Language/channel: {webConfig.language || "-"} / {webConfig.channel || "-"}</div>
+          </div>
+        </section>
+
+        <section className="surface-card">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="text-sm font-medium text-slate-500">Live Sales</div>
+            <StatusBadge status={liveSalesStatus.status} label={liveSalesStatus.label} />
+          </div>
+          <div className="text-sm font-semibold text-slate-900">{formatDate(liveSalesHealth.latestSaleAt)}</div>
+          <div className="mt-3 space-y-1 text-xs text-slate-600">
+            <div>Latest sale received</div>
+            <div>Last sync: {formatDate(liveSalesHealth.latestRunAt)}</div>
+            <div>Last inserted: {liveSalesHealth.latestInsertedRows}</div>
           </div>
         </section>
 
@@ -320,7 +351,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div><div className="mt-2 text-xs font-medium text-amber-800">{diagnoseMissingStock(machine)}</div></div>)}</div>
           <p className="mt-3 text-xs text-amber-800">Check whether these machines are newly added/empty, no longer present in XY, or returning only unconfigured lanes before changing their Snacky status.</p>
         </div>:null}
-        {(currentUnmappedCount??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>{currentUnmappedCount} current XY lane product{currentUnmappedCount===1?"":"s"} need mapping</strong><p className="mt-1 text-xs text-amber-800">{Math.max(0,(needsReviewCount.count??0)-(currentUnmappedCount??0))} catalog-only/unused mapping entries are not blocking current operations.</p></div><a className="btn-secondary" href="/vms-mappings?status=needs_review">Review current mappings</a></div>:null}
+        {(currentUnmappedCount??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>XY products need mapping: {currentUnmappedCount} current XY lane product{currentUnmappedCount===1?"":"s"}</strong><p className="mt-1 text-xs text-amber-800">{Math.max(0,(needsReviewCount.count??0)-(currentUnmappedCount??0))} catalog-only/unused mapping entries are not blocking current operations.</p></div><a className="btn-secondary" href="/vms-mappings?status=needs_review">Review current mappings</a></div>:null}
       </section>
 
       {!config.ready ? (
@@ -332,6 +363,13 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
       {webConfig.enabled && !webConfig.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
           Missing server-side XY web dashboard fallback configuration: {webConfig.missing.join(", ")}. Keep the Authorization token server-only and do not use `NEXT_PUBLIC_`.
+        </div>
+      ) : null}
+
+      {liveSalesConfig.enabled && !liveSalesConfig.ready ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          Live sales sync is enabled but not ready: {liveSalesConfig.missing.join(", ")}.
+          Copy the verified XY sales endpoint/request and Authorization token into server-only environment variables before enabling it.
         </div>
       ) : null}
 
@@ -350,10 +388,16 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <SyncForm action={syncXyMachineGoodsAction} label="Sync Machine Goods / Stock" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
           <SyncForm action={syncXyMachineStatusAction} label="Sync Machine Status" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
           <SyncForm action={syncXyAllAction} label="Sync All" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm
+            action={syncXyLiveSalesAction}
+            label="Sync Live Sales"
+            disabled={!liveSalesConfig.ready}
+            title={!liveSalesConfig.ready ? `Live sales needs: ${liveSalesConfig.missing.join(", ")}` : undefined}
+          />
           <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Official signed calls send `shbh`, `jqbh` when needed, `key`, `timestamp`, and `sign`. The secret stays server-side and is only used to calculate the MD5 signature.
+          Official stock calls use the signed XY API. Live sales uses the separately configured server-only XY web transaction request and is deduplicated into the same canonical VMS transaction table used by imported files.
         </p>
       </section>
 

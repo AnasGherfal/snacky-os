@@ -14,6 +14,7 @@ import {
   testXyUnsignedMerchant,
 } from "@/lib/xy-vms-sync";
 import { testXyWebDashboard } from "@/lib/xy-web-sync";
+import { syncXyLiveSales } from "@/lib/xy-live-sales-sync";
 
 async function requireOwnerAdmin() {
   const profile = await getCurrentProfile();
@@ -59,6 +60,11 @@ export async function testXyUnsignedMerchantAction() {
 export async function testXyWebDashboardAction() {
   const profile = await requireOwnerAdmin();
   await testXyWebDashboard({ profile });
+}
+
+export async function syncXyLiveSalesAction() {
+  const profile = await requireOwnerAdmin();
+  await syncXyLiveSales({ profile });
 }
 
 export async function refreshXyRoutePlanningDataAction() {
