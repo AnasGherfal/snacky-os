@@ -390,7 +390,7 @@ function toDbRow({
     discounted_price: normalized.discountedPrice,
     delivery_time: normalized.deliveryTime?.toISOString() ?? null,
     shipping_status: normalized.shippingStatus || normalized.transactionStatus,
-    purchaser: normalized.paymentMethod || null,
+    purchaser: normalized.purchaser || null,
     refund_time: normalized.refundTime?.toISOString() ?? null,
     remarks: "XY live sales API",
     refund_status: normalized.transactionStatus === "refunded" ? "refunded" : null,
