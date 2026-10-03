@@ -815,9 +815,22 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     };
   }
 
-  const ai = await callPlannerAI(tasks);
-  if (ai.warning) warnings.push(ai.warning);
-  const proposed = ai.ok ? ai.decisions : tasks.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row));
+  const aiResults: Array<Awaited<ReturnType<typeof callPlannerAI>>> = [];
+  const proposed: AiDecision[] = [];
+  const AI_TASK_BATCH_SIZE = 40;
+
+  for (let offset = 0; offset < tasks.length; offset += AI_TASK_BATCH_SIZE) {
+    const batch = tasks.slice(offset, offset + AI_TASK_BATCH_SIZE);
+    const result = await callPlannerAI(batch);
+    aiResults.push(result);
+    if (result.warning) warnings.push(result.warning);
+    if (result.ok) {
+      proposed.push(...result.decisions);
+    } else {
+      proposed.push(...batch.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
+    }
+  }
+
   const decisions = validateDecisions(tasks, proposed, availableByProduct, warnings);
   const manualStopItems = aggregateManualItems(decisions);
   const substitutions = decisions
@@ -834,15 +847,21 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       confidence: decision.confidence,
     }));
 
-  const plannerMode = ai.ok ? "ai" as const : "deterministic_fallback" as const;
+  const successfulAiResults = aiResults.filter((result) => result.ok);
+  const plannerMode = successfulAiResults.length ? "ai" as const : "deterministic_fallback" as const;
+  const model = aiResults.find((result) => result.model)?.model ?? null;
   const generatedAt = new Date().toISOString();
-  const summary = ai.ok
-    ? ai.summary || `Smart plan generated ${manualStopItems.length} machine-product lines.`
+  const aiSummaries = successfulAiResults
+    .map((result) => result.summary.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const summary = plannerMode === "ai"
+    ? (aiSummaries.join(" ") || `Smart plan generated ${manualStopItems.length} machine-product lines.`)
     : `Fallback smart plan generated ${manualStopItems.length} machine-product lines from verified XY, storage, fit, location, and demand rules.`;
 
   const auditPayload = {
     plannerMode,
-    model: ai.model,
+    model,
     summary,
     demandSource: "xy_stock_depletion",
     manualStopItems,
@@ -854,7 +873,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     operator_id: input.operatorId || null,
     machine_ids: machineIds,
     planner_mode: plannerMode,
-    model: ai.model,
+    model,
     demand_source: "xy_stock_depletion",
     data_freshness: { xy_outcome: xyRefresh.outcome, latest_stock_at: latestStockAt, generated_at: generatedAt },
     plan: auditPayload,
@@ -864,7 +883,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
   return {
     plannerMode,
-    model: ai.model,
+    model,
     summary,
     demandSource: "xy_stock_depletion",
     manualStopItems,
