@@ -437,14 +437,13 @@ async function callPlannerAI(tasks: PlanTask[]) {
 }
 
 function fallbackDecision(task: PlanTask): AiDecision | null {
-  const original = task.candidates.find((candidate) => candidate.original && candidate.availableUnits > 0);
-  const selected = original ?? task.candidates[0] ?? null;
+  const selected = task.candidates[0] ?? null;
   if (!selected) return null;
   return {
     taskId: task.taskId,
     selectedProductId: selected.productId,
     quantity: Math.min(task.neededQty, selected.availableUnits),
-    reason: original
+    reason: selected.original
       ? "Kept the current product and limited the quantity to verified unreserved storage."
       : "Used the highest-ranked compatible in-stock substitute for the empty lane.",
     confidence: selected.fitEvidence === "explicit_slot_rule" || selected.fitEvidence === "historically_seen_exact_slot" ? "high" : "medium",
@@ -677,15 +676,31 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const availableByProduct = new Map<string, number>();
   products.forEach((product) => availableByProduct.set(product.id, Math.max(0, units(storageByProduct.get(product.id)) - units(reservedByProduct.get(product.id)))));
 
+  const stockRows = (stockResult.data ?? []) as StockRow[];
+  const latestCaptureByMachine = new Map<string, number>();
+  stockRows.forEach((stock) => {
+    const capturedAt = stock.captured_at ? Date.parse(stock.captured_at) : Number.NaN;
+    if (!stock.machine_id || !Number.isFinite(capturedAt)) return;
+    latestCaptureByMachine.set(stock.machine_id, Math.max(latestCaptureByMachine.get(stock.machine_id) ?? 0, capturedAt));
+  });
+
   const slotByKey = new Map(((slotsResult.data ?? []) as MachineSlotRow[]).map((slot) => [`${slot.machine_id}:${slot.slot_code}`, slot]));
   const tasks: PlanTask[] = [];
   let latestStockAt: string | null = null;
+  const SLOT_STALE_LAG_MS = 30 * 60 * 1000;
 
-  for (const stock of (stockResult.data ?? []) as StockRow[]) {
+  for (const stock of stockRows) {
     if (!stock.machine_id || !stock.slot_code || !stock.product_id) continue;
     const product = productById.get(stock.product_id);
     const machine = machineById.get(stock.machine_id);
     if (!product || !machine) continue;
+
+    const machineLatestAt = latestCaptureByMachine.get(stock.machine_id) ?? 0;
+    const rowCapturedAt = stock.captured_at ? Date.parse(stock.captured_at) : Number.NaN;
+    if (!Number.isFinite(rowCapturedAt) || (machineLatestAt > 0 && machineLatestAt - rowCapturedAt > SLOT_STALE_LAG_MS)) {
+      warnings.push(`Skipped stale XY lane ${stock.slot_code} on ${machine.name ?? machine.machine_code ?? machine.id}; verify that lane manually before refilling it.`);
+      continue;
+    }
 
     const currentQty = units(stock.current_qty);
     const capacity = units(stock.capacity) || units(slotByKey.get(`${stock.machine_id}:${stock.slot_code}`)?.capacity);
