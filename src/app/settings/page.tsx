@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { EmptyState, FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { EmptyState, FormField, FormSection, PageHeader, SectionCard, SecondaryButton, StatusBadge } from "@/components/ui";
 import { accessTokenCookie, getAuthenticatedSupabaseServerClient, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
 import { deactivatePushSubscriptionsForUser } from "@/lib/notification-delivery";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -31,7 +31,11 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="Company defaults, language preference, and account controls." />
+      <PageHeader
+        title="Settings"
+        subtitle="Company defaults, language preference, and account controls."
+        action={<SecondaryButton href="/settings/smart-routes">Smart route rules</SecondaryButton>}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
         <div className="space-y-6">
