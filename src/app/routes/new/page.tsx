@@ -672,7 +672,15 @@ export default async function NewRoutePage() {
   return (
     <>
       <FormPageLayout>
-        <PageHeader title={locale === "ar" ? "إنشاء جولة" : "Create route"} subtitle={locale === "ar" ? "أنشئ جولة مع المواقع أو توصيات التعبئة أو قائمة تحميل يدوية سريعة من المخزن." : "Build a route with stops, refill recommendations, or a fast manual pick list from storage."} />
+        <PageHeader
+          title={locale === "ar" ? "إنشاء جولة" : "Create route"}
+          subtitle={locale === "ar" ? "أنشئ جولة مع المواقع أو توصيات التعبئة أو قائمة تحميل يدوية سريعة من المخزن." : "Build a route with stops, refill recommendations, or a fast manual pick list from storage."}
+          action={isOwnerAdminRole(profile) ? (
+            <SecondaryButton href="/settings/smart-routes">
+              {locale === "ar" ? "قواعد الجولة الذكية" : "Smart route rules"}
+            </SecondaryButton>
+          ) : undefined}
+        />
         <RouteCreateForm
           operators={operators ?? []}
           machines={machineCatalog}
