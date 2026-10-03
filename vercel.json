@@ -4,10 +4,6 @@
     {
       "path": "/api/cron/xy-vms",
       "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/cron/xy-sales",
-      "schedule": "15 * * * *"
     }
   ],
   "regions": [
