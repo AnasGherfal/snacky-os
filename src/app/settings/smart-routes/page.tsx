@@ -90,14 +90,16 @@ async function deleteProductProfile(formData: FormData) {
 async function saveLocationRule(formData: FormData) {
   "use server";
   const { supabase } = await smartRuleAdmin();
-  const targetType = String(formData.get("target_type") ?? "").trim();
-  const targetValue = String(formData.get("target_value") ?? "").trim();
+  const targetSpec = String(formData.get("target") ?? "").trim();
+  const separator = targetSpec.indexOf(":");
+  const targetType = separator > 0 ? targetSpec.slice(0, separator) : "";
+  const targetValue = separator > 0 ? targetSpec.slice(separator + 1) : "";
   const productId = String(formData.get("product_id") ?? "").trim();
   const rule = String(formData.get("rule") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   const scoreRaw = Number(formData.get("score_adjustment") ?? 0);
   const scoreAdjustment = Number.isFinite(scoreRaw) ? Math.max(-100, Math.min(100, Math.trunc(scoreRaw))) : 0;
-  if (!targetValue || !productId || !["preferred", "allowed", "avoid", "prohibited"].includes(rule)) return;
+  if (!["machine", "type"].includes(targetType) || !targetValue || !productId || !["preferred", "allowed", "avoid", "prohibited"].includes(rule)) return;
 
   let deleteQuery = supabase.from("smart_route_location_product_rules").delete().eq("product_id", productId);
   if (targetType === "machine") deleteQuery = deleteQuery.eq("machine_id", targetValue);
@@ -108,7 +110,7 @@ async function saveLocationRule(formData: FormData) {
   const { error } = await supabase.from("smart_route_location_product_rules").insert({
     machine_id: targetType === "machine" ? targetValue : null,
     location_id: null,
-    location_type: targetType === "location_type" ? targetValue : null,
+    location_type: targetType === "type" ? targetValue : null,
     product_id: productId,
     rule,
     score_adjustment: scoreAdjustment,
@@ -343,19 +345,13 @@ export default async function SmartRouteRulesPage() {
         description="Use Prohibited for a hard block. Preferred boosts a product at that exact machine or venue type. Avoid lowers it without completely blocking it."
       >
         <form action={saveLocationRule} className="grid gap-4 md:grid-cols-2">
-          <FormField label="Rule scope" required>
-            <select name="target_type" className="field-input" required>
-              <option value="location_type">Venue type</option>
-              <option value="machine">Exact machine</option>
-            </select>
-          </FormField>
-          <FormField label="Target" hint="Choose from venue types or machines. Make sure Rule scope matches the option you select.">
-            <select name="target_value" className="field-input" required>
+          <FormField label="Target" required hint="Choose a venue type for a broad rule, or one exact machine for a local exception.">
+            <select name="target" className="field-input" required>
               <optgroup label="Venue types">
-                {LOCATION_TYPES.map((type) => <option key={"type:" + type} value={type}>{type}</option>)}
+                {LOCATION_TYPES.map((type) => <option key={"type:" + type} value={"type:" + type}>{type}</option>)}
               </optgroup>
-              <optgroup label="Machines">
-                {machines.map((machine) => <option key={"machine:" + machine.id} value={machine.id}>{machine.name || machine.machine_code || machine.id}</option>)}
+              <optgroup label="Exact machines">
+                {machines.map((machine) => <option key={"machine:" + machine.id} value={"machine:" + machine.id}>{machine.name || machine.machine_code || machine.id}</option>)}
               </optgroup>
             </select>
           </FormField>
