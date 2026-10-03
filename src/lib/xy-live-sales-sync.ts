@@ -726,3 +726,34 @@ export async function latestXyLiveSalesHealth() {
     latestInsertedRows: Number(run?.response_summary?.inserted_rows ?? 0),
   };
 }
+
+
+export async function ensureFreshXyLiveSales(options: SyncOptions & { maxAgeMs?: number } = {}) {
+  const config = getXyLiveSalesConfig();
+  if (!config.enabled) {
+    return { outcome: "disabled" as const, refreshed: false, reason: "XY live sales sync is disabled." };
+  }
+  if (!config.ready) {
+    return { outcome: "unavailable" as const, refreshed: false, reason: `Missing ${config.missing.join(", ")}.` };
+  }
+
+  const health = await latestXyLiveSalesHealth();
+  const maxAgeMs = Math.max(10 * 60 * 1000, options.maxAgeMs ?? 90 * 60 * 1000);
+  const latestRunMs = Date.parse(String(health.latestRunAt ?? ""));
+  const runFresh = Number.isFinite(latestRunMs)
+    && Date.now() - latestRunMs <= maxAgeMs
+    && ["completed", "completed_with_warnings"].includes(String(health.latestRunStatus ?? ""));
+
+  if (runFresh) {
+    return { outcome: "already_fresh" as const, refreshed: false, reason: null, health };
+  }
+
+  const result = await syncXyLiveSales(options);
+  return {
+    outcome: result.outcome,
+    refreshed: result.outcome === "completed" && result.insertedRows > 0,
+    reason: result.message,
+    health: await latestXyLiveSalesHealth(),
+    result,
+  };
+}
