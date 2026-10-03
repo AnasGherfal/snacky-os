@@ -27,7 +27,7 @@ as $$
     sum(greatest(1, floor(coalesce(t.quantity, 1))))::bigint as units_sold,
     count(*)::bigint as transaction_count,
     sum(greatest(0, coalesce(t.payment_amount, 0)))::numeric as revenue_amount,
-    max(coalesce(t.payment_time, t.delivery_time, t.created_at)) as latest_sale_at
+    max(coalesce(t.payment_time, t.delivery_time)) as latest_sale_at
   from public.vms_transactions_raw t
   join public.vms_import_batches b on b.id = t.import_batch_id
   join public.machines m on m.id = t.mapped_machine_id
@@ -36,7 +36,7 @@ as $$
   where t.transaction_status = 'successful_sale'
     and t.mapped_machine_id is not null
     and t.mapped_product_id is not null
-    and coalesce(t.payment_time, t.delivery_time, t.created_at)
+    and coalesce(t.payment_time, t.delivery_time)
       >= now() - make_interval(days => greatest(1, least(coalesce(p_days, 21), 60)))
     and b.deleted_at is null
     and coalesce(b.is_active, false) = true
