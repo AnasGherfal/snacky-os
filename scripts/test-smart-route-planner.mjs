@@ -10,6 +10,7 @@ const api = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/smart-plan/r
 const routeApi = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
 const form = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004061000_smart_route_planner.sql"), "utf8");
+const contextMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004062500_smart_route_machine_context.sql"), "utf8");
 
 test("smart planner is draft-only and refreshes XY before reasoning", () => {
   assert.match(planner, /import "server-only"/);
@@ -79,6 +80,20 @@ test("smart planning rule tables are server-only with RLS", () => {
     assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`));
     assert.match(migration, new RegExp(`revoke all on table public\\.${table} from public, anon, authenticated`));
   }
+  assert.match(contextMigration, /alter table public\.smart_route_machine_context enable row level security/);
+  assert.match(contextMigration, /revoke all on table public\.smart_route_machine_context from public, anon, authenticated/);
+  assert.match(contextMigration, /machine_id uuid references public\.machines\(id\) on delete cascade/);
+  assert.match(contextMigration, /num_nonnulls\(machine_id, location_id, location_type\) = 1/);
   assert.match(migration, /grant execute on function public\.snacky_smart_route_demand_signals\(integer\) to service_role/);
   assert.match(migration, /grant execute on function public\.snacky_smart_route_slot_fit_history\(uuid\[\], integer\) to service_role/);
+});
+
+test("smart planner mirrors canonical active route reservation filtering", () => {
+  assert.match(planner, /from\("routes"\)\.select\("id, status"\)\.in\("status", \[\.\.\.ROUTE_RESERVATION_STATUSES\]\)/);
+  assert.match(planner, /reservingRouteIds\.has\(routeId\)/);
+});
+
+test("smart draft is cleared when machine selection or normal XY suggestions change", () => {
+  assert.match(form, /const toggleRouteMachine = \(machineId: string\) => \{\s*setSmartPlan\(null\)/);
+  assert.match(form, /const applySuggestedQuantities = \([^)]*\) => \{\s*setSmartPlan\(null\)/);
 });
