@@ -111,6 +111,37 @@ type ManualStopItem = {
   machineId: string;
   productId: string;
   quantity: number;
+  machineSlotId?: string | null;
+  slotCode?: string | null;
+  source?: "smart_ai_plan";
+  notes?: string | null;
+};
+
+type SmartPlanSubstitution = {
+  machineId: string;
+  slotCode: string;
+  fromProductId: string;
+  fromProductName: string;
+  toProductId: string;
+  toProductName: string;
+  quantity: number;
+  reason: string;
+  confidence: "high" | "medium" | "low";
+};
+
+type SmartPlanResponse = {
+  plannerMode: "ai" | "deterministic_fallback";
+  model: string | null;
+  summary: string;
+  demandSource: "xy_stock_depletion";
+  manualStopItems: ManualStopItem[];
+  substitutions: SmartPlanSubstitution[];
+  warnings: string[];
+  freshness: {
+    xyOutcome: string;
+    latestStockAt: string | null;
+    generatedAt: string;
+  };
 };
 
 type RouteBuilderStep = "details" | "machines" | "products" | "review";
@@ -262,6 +293,8 @@ export function RouteCreateForm({
   const [recommendationKeys, setRecommendationKeys] = useState<string[]>([]);
   const [finalTakeByRecommendationGroup, setFinalTakeByRecommendationGroup] = useState<Record<string, number>>({});
   const [manualStopItems, setManualStopItems] = useState<ManualStopItem[]>([]);
+  const [smartPlanning, setSmartPlanning] = useState(false);
+  const [smartPlan, setSmartPlan] = useState<SmartPlanResponse | null>(null);
   const [manualMachineId, setManualMachineId] = useState("");
   const [search, setSearch] = useState("");
   const [barcode, setBarcode] = useState("");
@@ -1101,6 +1134,48 @@ export function RouteCreateForm({
     }
   };
 
+  const generateSmartPlan = async () => {
+    if (!machineIds.length) return showStepError(tr(locale, "Choose at least one machine before generating a smart plan.", "اختر جهازًا واحدًا على الأقل قبل إنشاء الخطة الذكية."));
+    if (creationMode !== "full") return showStepError(tr(locale, "Smart planning requires a full route.", "التخطيط الذكي يتطلب جولة كاملة."));
+
+    setSmartPlanning(true);
+    setError("");
+    setStockErrors([]);
+
+    try {
+      const response = await fetch("/api/routes/smart-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machineIds,
+          routeDate,
+          operatorId: assignmentMode === "assigned" ? operatorId : null,
+        }),
+      });
+      const result = await response.json().catch(() => ({ error: "Could not read the smart plan response." }));
+      if (!response.ok) throw new Error(result.error || "Could not generate the smart route plan.");
+
+      const plan = result as SmartPlanResponse;
+      const safeItems = Array.isArray(plan.manualStopItems)
+        ? plan.manualStopItems.filter((item) => machineIds.includes(String(item.machineId ?? "")) && unitQuantity(item.quantity) > 0)
+        : [];
+
+      setManualStopItems(safeItems);
+      setRecommendationKeys([]);
+      setFinalTakeByRecommendationGroup({});
+      setAdminOverride(false);
+      setSmartPlan(plan);
+      if (machineIds.length && !manualMachineId) setManualMachineId(machineIds[0]);
+      setBuilderStep("products");
+    } catch (err) {
+      setSmartPlan(null);
+      setScrollErrorIntoView(true);
+      setError(err instanceof Error ? err.message : "Could not generate the smart route plan.");
+    } finally {
+      setSmartPlanning(false);
+    }
+  };
+
   const continueFromProducts = () => {
     if (!plannedRouteStock.length) return showStepError(tr(locale, "Add at least one product and quantity for this route.", "أضف منتجًا واحدًا على الأقل وكمية لهذه الجولة."));
     if (plannedRouteStock.some((item) => !item.storageKnown)) return showStepError(tr(locale, "Storage quantities must be verified before products can be assigned. Retry the page, or create a stops-only route.", "يجب التحقق من كميات المخزون قبل إضافة المنتجات. أعد تحميل الصفحة أو أنشئ جولة بالمواقع فقط."));
@@ -1429,6 +1504,41 @@ export function RouteCreateForm({
           <div className="font-semibold">{tr(locale, "Calculation only — nothing has been assigned or reserved yet", "هذه حسابات فقط — لم يتم إسناد أو حجز أي مخزون بعد")}</div>
           <p className="mt-1 leading-6">{tr(locale, "Snacky calculated what the selected machines need from the latest XY quantities and verified storage availability. Review or edit every quantity here. The route and storage reservation are created only after your final confirmation.", "حسب Snacky احتياج الأجهزة المحددة من أحدث كميات XY والمخزون المؤكد. راجع أو عدّل كل كمية هنا. لا يتم إنشاء الجولة أو حجز المخزون إلا بعد تأكيدك النهائي.")}</p>
         </div>
+        {smartPlan ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-semibold">{tr(locale, "Smart route draft — review before creating", "مسودة الجولة الذكية — راجعها قبل الإنشاء")}</div>
+              <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold">
+                {smartPlan.plannerMode === "ai" ? tr(locale, "AI reasoning", "استدلال بالذكاء الاصطناعي") : tr(locale, "Safe fallback", "خطة احتياطية آمنة")}
+              </span>
+            </div>
+            <p className="mt-1 leading-6">{smartPlan.summary}</p>
+            <p className="mt-1 text-xs text-violet-800">
+              {tr(locale, "Uses verified unreserved storage, current XY lanes, fit rules, location rules, stock-depletion demand and past route fills. Nothing is reserved until you create the route.", "تستخدم المخزون المؤكد غير المحجوز، وفتحات XY الحالية، وقواعد الملاءمة والموقع، وحركة المخزون، وتاريخ التعبئة. لا يتم حجز أي مخزون حتى تنشئ الجولة.")}
+            </p>
+            {smartPlan.substitutions.length ? (
+              <div className="mt-3 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-violet-700">{tr(locale, "Suggested substitutions", "البدائل المقترحة")}</div>
+                {smartPlan.substitutions.map((item) => (
+                  <div key={`${item.machineId}:${item.slotCode}:${item.toProductId}`} className="rounded-lg border border-violet-100 bg-white px-3 py-2">
+                    <div className="font-medium text-slate-950">
+                      {tr(locale, `Slot ${item.slotCode}: ${item.fromProductName} → ${item.toProductName} × ${item.quantity}`, `الفتحة ${item.slotCode}: ${item.fromProductName} ← ${item.toProductName} × ${item.quantity}`)}
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-600">{item.reason}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {smartPlan.warnings.length ? (
+              <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
+                <summary className="cursor-pointer text-xs font-semibold">{tr(locale, `Planning warnings (${smartPlan.warnings.length})`, `تنبيهات التخطيط (${smartPlan.warnings.length})`)}</summary>
+                <ul className="mt-2 list-disc space-y-1 ps-5 text-xs">
+                  {smartPlan.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+        ) : null}
         <p className="text-sm text-slate-500">{tr(locale, "Review one selected machine at a time. Suggested quantities are already applied when fresh XY data is available, and you can edit them before creating the route.", "راجع جهازًا واحدًا في كل مرة. يتم تطبيق الكميات المقترحة تلقائيًا عندما تكون بيانات XY حديثة، ويمكنك تعديلها قبل إنشاء الجولة.")}</p>
 
         {!products.length ? (
@@ -2329,6 +2439,20 @@ export function RouteCreateForm({
                   <div className="text-sm font-semibold text-slate-950">{tr(locale, `${machineIds.length} of ${machines.length} machines selected`, `تم تحديد ${machineIds.length} من ${machines.length} أجهزة`)}</div>
                   <div className="mt-1 text-xs text-slate-500">{tr(locale, "Tap a machine once to include it. There is no second machine selector later.", "اضغط على الجهاز مرة واحدة لتضمينه. لن يوجد محدد أجهزة ثانٍ لاحقًا.")}</div>
                 </div>
+                {creationMode === "full" ? (
+                  <button
+                    type="button"
+                    className="btn-primary justify-center"
+                    onClick={() => void generateSmartPlan()}
+                    disabled={saving || smartPlanning || !machineIds.length || !fullRouteAvailable}
+                  >
+                    {smartPlanning
+                      ? tr(locale, "Generating smart plan…", "جارٍ إنشاء الخطة الذكية…")
+                      : smartPlan
+                        ? tr(locale, "Regenerate smart plan", "إعادة إنشاء الخطة الذكية")
+                        : tr(locale, "Generate smart plan", "إنشاء خطة ذكية")}
+                  </button>
+                ) : null}
                 {creationMode === "full" && machineIds.some((machineId) => (recommendationGroupsByMachine.get(machineId) ?? []).some((group) => group.defaultFinalTakeTotal > 0)) ? (
                   <button type="button" className="btn-secondary justify-center" onClick={() => applySuggestedQuantities(machineIds)} disabled={saving || machineIds.every((machineId) => staleRecommendationMachineIds.has(machineId))}>
                     {tr(locale, "Add suggestions for selected machines", "إضافة مقترحات الأجهزة المحددة")}
