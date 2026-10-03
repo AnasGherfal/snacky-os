@@ -62,6 +62,12 @@ type ProductProfileRow = {
   substitution_group: string | null;
 };
 
+type MachineContextRow = {
+  machine_id: string;
+  location_type: string | null;
+  location_label: string | null;
+};
+
 type SlotRuleRow = {
   machine_slot_id: string;
   product_id: string;
@@ -69,6 +75,7 @@ type SlotRuleRow = {
 };
 
 type LocationRuleRow = {
+  machine_id: string | null;
   location_id: string | null;
   location_type: string | null;
   product_id: string;
@@ -245,12 +252,14 @@ function fitProfileFromName(product: ProductRow, override?: string | null) {
 
 function locationRuleFor(
   rules: LocationRuleRow[],
+  machineId: string,
   locationId: string | null,
   locationType: string | null,
   productId: string,
 ) {
-  return rules.find((row) => row.product_id === productId && row.location_id === locationId)
-    ?? rules.find((row) => row.product_id === productId && !row.location_id && row.location_type === locationType)
+  return rules.find((row) => row.product_id === productId && row.machine_id === machineId)
+    ?? rules.find((row) => row.product_id === productId && !row.machine_id && row.location_id === locationId)
+    ?? rules.find((row) => row.product_id === productId && !row.machine_id && !row.location_id && row.location_type === locationType)
     ?? null;
 }
 
@@ -587,6 +596,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     storageResult,
     reservationsResult,
     profilesResult,
+    machineContextResult,
     slotRulesResult,
     locationRulesResult,
     demandResult,
@@ -600,8 +610,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     supabase.from("route_storage_stock_by_product").select("product_id, quantity_on_hand"),
     supabase.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, route:routes!inner(status)").in("route.status", [...ROUTE_RESERVATION_STATUSES]),
     supabase.from("smart_route_product_profiles").select("product_id, fit_profile, substitution_group"),
+    supabase.from("smart_route_machine_context").select("machine_id, location_type, location_label").in("machine_id", machineIds),
     supabase.from("smart_route_slot_product_rules").select("machine_slot_id, product_id, rule"),
-    supabase.from("smart_route_location_product_rules").select("location_id, location_type, product_id, rule, score_adjustment"),
+    supabase.from("smart_route_location_product_rules").select("machine_id, location_id, location_type, product_id, rule, score_adjustment"),
     supabase.rpc("snacky_smart_route_demand_signals", { p_days: 21 }),
     supabase.rpc("snacky_smart_route_slot_fit_history", { p_machine_ids: machineIds, p_days: 180 }),
     supabase.from("route_stop_fill_lines").select("machine_id, product_id, actual_qty, created_at").in("machine_id", machineIds).gte("created_at", recentFillSince),
@@ -615,6 +626,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
     ["product profiles", profilesResult.error],
+    ["machine context", machineContextResult.error],
     ["slot rules", slotRulesResult.error],
     ["location rules", locationRulesResult.error],
     ["demand signals", demandResult.error],
@@ -634,6 +646,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const productById = new Map(products.map((product) => [product.id, product]));
   const profiles = (profilesResult.data ?? []) as ProductProfileRow[];
   const profileByProduct = new Map(profiles.map((row) => [row.product_id, row]));
+  const machineContexts = (machineContextResult.data ?? []) as MachineContextRow[];
+  const contextByMachine = new Map(machineContexts.map((row) => [row.machine_id, row]));
   const slotRules = (slotRulesResult.data ?? []) as SlotRuleRow[];
   const locationRules = (locationRulesResult.data ?? []) as LocationRuleRow[];
   const fitHistory = (fitHistoryResult.data ?? []) as FitHistoryRow[];
@@ -673,9 +687,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
     const slot = slotByKey.get(`${stock.machine_id}:${stock.slot_code}`) ?? null;
     const relation = firstRelation(machine.location);
+    const machineContext = contextByMachine.get(machine.id);
     const locationId = String(relation?.id ?? machine.location_id ?? "") || null;
-    const locationType = String(relation?.location_type ?? "") || null;
-    const locationName = String(relation?.name ?? "") || null;
+    const locationType = String(machineContext?.location_type ?? relation?.location_type ?? "") || null;
+    const locationName = String(machineContext?.location_label ?? relation?.name ?? "") || null;
     const currentProfile = profileByProduct.get(product.id);
     const currentFit = fitProfileFromName(product, currentProfile?.fit_profile);
     const currentGroup = String(currentProfile?.substitution_group ?? "").trim();
@@ -705,7 +720,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
           if (!explicitAllowed && candidateFit !== currentFit) return null;
         }
 
-        const rule = locationRuleFor(locationRules, locationId, locationType, candidate.id);
+        const rule = locationRuleFor(locationRules, machine.id, locationId, locationType, candidate.id);
         if (rule?.rule === "prohibited") return null;
 
         const machineDemand = demand.machine.get(`${machine.id}:${candidate.id}`) ?? 0;
