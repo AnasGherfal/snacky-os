@@ -17,6 +17,7 @@ const plannerSource = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-p
 const cronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales/route.ts"), "utf8");
 const adminSource = fs.readFileSync(path.join(repoRoot, "src/app/admin/vms-api/page.tsx"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004090000_xy_live_sales.sql"), "utf8");
+const schedulerMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004093000_xy_live_sales_scheduler.sql"), "utf8");
 const envSource = fs.readFileSync(path.join(repoRoot, ".env.example"), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "vercel.json"), "utf8"));
 
@@ -150,15 +151,18 @@ test("sales-signal RPC only counts mapped successful sales from active imported 
   assert.match(migrationSource, /grant execute on function public\.snacky_smart_route_sales_signals\(integer\)\s+to service_role/);
 });
 
-test("hourly live sales cron is authenticated and safe while disabled", () => {
+test("hourly live sales cron is authenticated and scheduled through Supabase", () => {
   assert.match(cronSource, /process\.env\.CRON_SECRET/);
   assert.match(cronSource, /timingSafeEqual/);
   assert.match(cronSource, /syncXyLiveSales\(\)/);
   assert.match(cronSource, /result\.outcome === "disabled"/);
-  assert.deepEqual(
-    vercelConfig.crons.find((row) => row.path === "/api/cron/xy-sales"),
-    { path: "/api/cron/xy-sales", schedule: "15 * * * *" },
-  );
+  assert.doesNotMatch(JSON.stringify(vercelConfig.crons), /\/api\/cron\/xy-sales/);
+  assert.match(schedulerMigration, /create or replace function private\.enqueue_xy_sales_sync\(\)/);
+  assert.match(schedulerMigration, /xy_vms_scheduler_url/);
+  assert.match(schedulerMigration, /\/api\/cron\/xy-sales/);
+  assert.match(schedulerMigration, /'snacky-xy-sales-hourly'/);
+  assert.match(schedulerMigration, /'15 \* \* \* \*'/);
+  assert.match(schedulerMigration, /revoke all on function private\.enqueue_xy_sales_sync\(\) from public, anon, authenticated/);
 });
 
 test("XY admin exposes live-sales freshness without exposing secrets", () => {
