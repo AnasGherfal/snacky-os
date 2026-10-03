@@ -697,14 +697,25 @@ export async function latestXyLiveSalesHealth() {
     latestInsertedRows: 0,
   };
 
-  const [transactionResult, runResult] = await Promise.all([
+  const [paymentResult, deliveryResult, runResult] = await Promise.all([
     supabase
       .from("vms_transactions_raw")
-      .select("payment_time, delivery_time, created_at")
+      .select("payment_time")
       .eq("transaction_status", "successful_sale")
       .not("mapped_machine_id", "is", null)
       .not("mapped_product_id", "is", null)
-      .order("payment_time", { ascending: false, nullsFirst: false })
+      .not("payment_time", "is", null)
+      .order("payment_time", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("vms_transactions_raw")
+      .select("delivery_time")
+      .eq("transaction_status", "successful_sale")
+      .not("mapped_machine_id", "is", null)
+      .not("mapped_product_id", "is", null)
+      .not("delivery_time", "is", null)
+      .order("delivery_time", { ascending: false })
       .limit(1)
       .maybeSingle(),
     supabase
@@ -717,10 +728,15 @@ export async function latestXyLiveSalesHealth() {
       .maybeSingle(),
   ]);
 
-  const transaction = transactionResult.data as { payment_time?: string | null; delivery_time?: string | null; created_at?: string | null } | null;
+  const latestPaymentAt = String((paymentResult.data as { payment_time?: string | null } | null)?.payment_time ?? "") || null;
+  const latestDeliveryAt = String((deliveryResult.data as { delivery_time?: string | null } | null)?.delivery_time ?? "") || null;
+  const latestSaleAt = [latestPaymentAt, latestDeliveryAt]
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
   const run = runResult.data as { status?: string | null; completed_at?: string | null; response_summary?: Record<string, unknown> | null } | null;
   return {
-    latestSaleAt: transaction?.payment_time ?? transaction?.delivery_time ?? transaction?.created_at ?? null,
+    latestSaleAt,
     latestRunAt: run?.completed_at ?? null,
     latestRunStatus: run?.status ?? null,
     latestInsertedRows: Number(run?.response_summary?.inserted_rows ?? 0),
