@@ -1,5 +1,4 @@
 import {
-  createVmsMonthlyTransactionDuplicateHash,
   monthlyTransactionBusinessDate,
   monthlyTransactionPaymentAmount,
   monthlyTransactionPaymentMethod,
@@ -9,6 +8,7 @@ import {
   monthlyTransactionRefundTime,
   monthlyTransactionSalesPrice,
 } from "./vms-transaction-details.ts";
+import { createVmsOrderDetailsDuplicateHash } from "./vms-order-details.ts";
 
 export type XyLiveSalesRawRow = Record<string, unknown>;
 
@@ -25,6 +25,8 @@ export type NormalizedXyLiveSale = {
   paymentMethod: string;
   paymentAmount: number | null;
   paymentTime: Date | null;
+  deliveryTime: Date | null;
+  shippingStatus: string;
   refundAmount: number;
   refundTime: Date | null;
   quantity: number;
@@ -49,7 +51,8 @@ const aliases = {
   discountPrice: ["discount_price", "discountPrice", "discounted_price", "discountedPrice", "actual_price", "actualPrice", "sjje"],
   paymentMethod: ["mode_of_payment", "payment_method", "paymentMethod", "payment_type", "paymentType", "payType", "zffs"],
   paymentAmount: ["payment_amount", "paymentAmount", "paid_amount", "paidAmount", "amount", "payAmount", "zfje", "ssje"],
-  paymentTime: ["payment_time", "paymentTime", "pay_time", "payTime", "paid_time", "paidTime", "zfsj", "ddsjt", "createTime", "createdAt"],
+  paymentTime: ["payment_time", "paymentTime", "pay_time", "payTime", "paid_time", "paidTime", "zfsj", "createTime", "createdAt"],
+  deliveryTime: ["delivery_time", "deliveryTime", "vend_time", "vendTime", "shipping_time", "shippingTime", "cfsj", "chsj", "ddsjt"],
   refundAmount: ["refund_amount", "refundAmount", "tkje"],
   refundTime: ["refund_time", "refundTime", "tksj"],
   thirdPartyOrderNo: ["third_party_order_no", "thirdPartyOrderNo", "third_party_order_number", "dsfddh"],
@@ -125,20 +128,26 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     machine_code: first(row, aliases.machineCode),
     machine_name: first(row, aliases.machineName),
     serial_number: first(row, aliases.orderNumber),
+    order_number: first(row, aliases.orderNumber),
     product_number: first(row, aliases.productNumber),
     product_name: first(row, aliases.productName),
     cargo_lane: first(row, aliases.cargoLane),
+    cargo_lane_number: first(row, aliases.cargoLane),
     sales_price: first(row, aliases.salesPrice),
     mode_of_payment: first(row, aliases.paymentMethod),
     payment_amount: first(row, aliases.paymentAmount),
     refund_amount: first(row, aliases.refundAmount),
     discount_price: first(row, aliases.discountPrice),
     payment_time: first(row, aliases.paymentTime),
+    delivery_time: first(row, aliases.deliveryTime),
+    shipping_status: first(row, aliases.status),
     refund_time: first(row, aliases.refundTime),
     third_party_order_no: first(row, aliases.thirdPartyOrderNo),
     third_party_transaction: first(row, aliases.thirdPartyTransaction),
+    third_party_transaction_number: first(row, aliases.thirdPartyTransaction),
     logic_card_number: first(row, aliases.logicCardNumber),
     quantity: first(row, aliases.quantity),
+    refund_status: first(row, aliases.refundStatus),
     transaction_status: first(row, aliases.status),
   };
 
@@ -158,13 +167,15 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     paymentMethod: monthlyTransactionPaymentMethod(canonicalRow),
     paymentAmount: monthlyTransactionPaymentAmount(canonicalRow),
     paymentTime: monthlyTransactionPaymentTime(canonicalRow),
+    deliveryTime: canonicalRow.delivery_time ? new Date(canonicalRow.delivery_time) : null,
+    shippingStatus: canonicalRow.shipping_status,
     refundAmount: monthlyTransactionRefundAmount(canonicalRow),
     refundTime: monthlyTransactionRefundTime(canonicalRow),
     quantity: monthlyTransactionQuantity(canonicalRow),
     transactionStatus: status,
     thirdPartyOrderNo: canonicalRow.third_party_order_no,
     thirdPartyTransactionNumber: canonicalRow.third_party_transaction,
-    duplicateHash: createVmsMonthlyTransactionDuplicateHash(canonicalRow),
+    duplicateHash: createVmsOrderDetailsDuplicateHash(canonicalRow),
     canonicalRow,
   };
 }
