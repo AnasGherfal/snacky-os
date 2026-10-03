@@ -9,6 +9,7 @@ const planner = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-planner
 const api = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/smart-plan/route.ts"), "utf8");
 const routeApi = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
 const form = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
+const rulesPage = fs.readFileSync(path.join(repoRoot, "src/app/settings/smart-routes/page.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004061000_smart_route_planner.sql"), "utf8");
 const contextMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004062500_smart_route_machine_context.sql"), "utf8");
 
@@ -96,4 +97,21 @@ test("smart planner mirrors canonical active route reservation filtering", () =>
 test("smart draft is cleared when machine selection or normal XY suggestions change", () => {
   assert.match(form, /const toggleRouteMachine = \(machineId: string\) => \{\s*setSmartPlan\(null\)/);
   assert.match(form, /const applySuggestedQuantities = \([^)]*\) => \{\s*setSmartPlan\(null\)/);
+});
+
+
+test("owner rule screen exposes hard venue, fit, and lane controls", () => {
+  assert.match(rulesPage, /Smart route rules/);
+  assert.match(rulesPage, /smart_route_machine_context/);
+  assert.match(rulesPage, /smart_route_product_profiles/);
+  assert.match(rulesPage, /smart_route_location_product_rules/);
+  assert.match(rulesPage, /smart_route_slot_product_rules/);
+  assert.match(rulesPage, /isOwnerAdminRole/);
+  assert.match(rulesPage, /Prohibited products are removed before the AI sees candidates/);
+});
+
+test("large route AI reasoning is batched and each failed batch falls back safely", () => {
+  assert.match(planner, /AI_TASK_BATCH_SIZE = 40/);
+  assert.match(planner, /tasks\.slice\(offset, offset \+ AI_TASK_BATCH_SIZE\)/);
+  assert.match(planner, /batch\.map\(fallbackDecision\)/);
 });
