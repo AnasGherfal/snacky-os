@@ -595,6 +595,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     productsResult,
     storageResult,
     reservationsResult,
+    reservingRoutesResult,
     profilesResult,
     machineContextResult,
     slotRulesResult,
@@ -608,7 +609,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     supabase.from("machine_slots").select("id, machine_id, slot_code, product_id, capacity, par_qty, active").in("machine_id", machineIds).eq("active", true),
     supabase.from("products").select("id, name, category, brand, active").eq("active", true),
     supabase.from("route_storage_stock_by_product").select("product_id, quantity_on_hand"),
-    supabase.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, route:routes!inner(status)").in("route.status", [...ROUTE_RESERVATION_STATUSES]),
+    supabase.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty"),
+    supabase.from("routes").select("id, status").in("status", [...ROUTE_RESERVATION_STATUSES]),
     supabase.from("smart_route_product_profiles").select("product_id, fit_profile, substitution_group"),
     supabase.from("smart_route_machine_context").select("machine_id, location_type, location_label").in("machine_id", machineIds),
     supabase.from("smart_route_slot_product_rules").select("machine_slot_id, product_id, rule"),
@@ -625,6 +627,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["products", productsResult.error],
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
+    ["reserving route statuses", reservingRoutesResult.error],
     ["product profiles", profilesResult.error],
     ["machine context", machineContextResult.error],
     ["slot rules", slotRulesResult.error],
@@ -660,8 +663,13 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     const productId = String(row.product_id ?? "");
     if (productId) storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + signed(row.quantity_on_hand));
   });
+  const reservingRouteIds = new Set(
+    (reservingRoutesResult.data ?? []).map((row: any) => String(row.id ?? "")).filter(Boolean),
+  );
   const reservedByProduct = new Map<string, number>();
   (reservationsResult.data ?? []).forEach((row: any) => {
+    const routeId = String(row.route_id ?? "");
+    if (!routeId || !reservingRouteIds.has(routeId)) return;
     const productId = String(row.product_id ?? "");
     if (!productId) return;
     reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + Math.max(0, units(row.planned_qty) - units(row.picked_qty)));
