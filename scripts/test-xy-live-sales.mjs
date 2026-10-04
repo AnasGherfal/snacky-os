@@ -17,6 +17,8 @@ const plannerSource = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-p
 const cronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales/route.ts"), "utf8");
 const discoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-sales-discovery.ts"), "utf8");
 const discoveryCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales-discovery/route.ts"), "utf8");
+const dashboardDiscoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-dashboard-discovery.ts"), "utf8");
+const dashboardDiscoveryCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-dashboard-discovery/route.ts"), "utf8");
 
 const adminSource = fs.readFileSync(path.join(repoRoot, "src/app/admin/vms-api/page.tsx"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004090000_xy_live_sales.sql"), "utf8");
@@ -200,4 +202,24 @@ test("XY sales discovery endpoint requires the protected cron credential", () =>
   assert.match(discoveryCronSource, /process\.env\.CRON_SECRET/);
   assert.match(discoveryCronSource, /discoverXySalesEndpoints/);
   assert.match(discoveryCronSource, /status: 401/);
+});
+
+
+test("XY dashboard discovery scans only public xynetweb assets and records candidate paths", () => {
+  assert.match(dashboardDiscoverySource, /https:\/\/www\.xynetweb\.com\//);
+  assert.match(dashboardDiscoverySource, /xynetweb\\\.com/);
+  assert.match(dashboardDiscoverySource, /public_read_only_asset_scan/);
+  assert.match(dashboardDiscoverySource, /candidateMap/);
+  assert.match(dashboardDiscoverySource, /from\("vms_sync_runs"\)/);
+  assert.doesNotMatch(dashboardDiscoverySource, /XY_WEB_API_AUTHORIZATION/);
+  assert.doesNotMatch(dashboardDiscoverySource, /vms_transactions_raw/);
+  assert.doesNotMatch(dashboardDiscoverySource, /inventory_movements/);
+  assert.doesNotMatch(dashboardDiscoverySource, /routes"\)/);
+});
+
+test("XY dashboard discovery endpoint is cron-authenticated", () => {
+  assert.match(dashboardDiscoveryCronSource, /timingSafeEqual/);
+  assert.match(dashboardDiscoveryCronSource, /process\.env\.CRON_SECRET/);
+  assert.match(dashboardDiscoveryCronSource, /discoverXyDashboardSalesApi/);
+  assert.match(dashboardDiscoveryCronSource, /status: 401/);
 });
