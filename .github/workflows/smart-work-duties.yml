@@ -1,0 +1,71 @@
+name: Smart Work Part 2B - persistent duties
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-duties.yml'
+      - 'src/lib/smart-work-duties*'
+      - 'src/app/operator/daily-duties/**'
+      - 'src/app/api/operator/smart-work-duties/**'
+      - 'scripts/*smart-work-duties*'
+      - 'scripts/smart-work-duty-fixture.sql'
+      - 'supabase/feature-sql/smart_work_daily_duties.sql'
+      - 'supabase/migrations/*smart_work_daily_duties*'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-duties-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: duties_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://postgres:local_ci_only@localhost:5432/duties_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical migration name
+        run: |
+          if ! ls supabase/migrations/*_smart_work_daily_duties.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_daily_duties
+            cp supabase/feature-sql/smart_work_daily_duties.sql "$(ls supabase/migrations/*_smart_work_daily_duties.sql)"
+          fi
+          cmp supabase/feature-sql/smart_work_daily_duties.sql "$(ls supabase/migrations/*_smart_work_daily_duties.sql)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-duty-migration
+          path: supabase/migrations/*_smart_work_daily_duties.sql
+          retention-days: 3
+      - name: Isolated SQL persistence and permission checks
+        run: |
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/smart-work-duty-fixture.sql
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-db.sql
+      - name: Separate-session concurrency test
+        run: bash scripts/test-smart-work-duties-race.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Real API authorization and read/write-boundary tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-duties-api.mjs
+      - name: Type check
+        run: npx tsc --noEmit
