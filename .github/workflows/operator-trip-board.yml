@@ -1,0 +1,44 @@
+name: Operator trip board
+on:
+  push:
+    branches: [feat/operator-trip-board]
+  pull_request:
+    paths:
+      - 'src/lib/operator-dispatch*'
+      - 'src/app/operator/work/**'
+      - 'src/app/api/operator/work/**'
+      - 'src/app/settings/dispatch/**'
+      - 'scripts/test-operator-dispatch*'
+      - 'supabase/migrations/*operator_dispatch*'
+      - '.github/workflows/operator-trip-board.yml'
+permissions:
+  contents: read
+concurrency:
+  group: operator-trip-board-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Private source snapshot for local validation
+        run: git archive --format=tar HEAD | gzip > operator-trip-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: operator-trip-source
+          path: operator-trip-source.tar.gz
+          retention-days: 1
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
+      - run: node --experimental-strip-types --test scripts/test-operator-dispatch.mjs
+        if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
+      - run: npx tsc --noEmit
+        if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
