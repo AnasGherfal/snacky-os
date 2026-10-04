@@ -50,20 +50,20 @@ const aliases = {
   cargoLane: ["cargo_lane", "cargoLane", "cargo_lane_number", "lane", "laneNo", "lane_no", "hdbh", "hdh"],
   productNumber: ["product_number", "productNumber", "product_id", "productId", "goods_id", "goodsId", "sku", "spbh", "dsfspbh"],
   productName: ["product_name", "productName", "goods_name", "goodsName", "name", "spmc"],
-  salesPrice: ["sales_price", "salesPrice", "selling_price", "sellingPrice", "unit_price", "unitPrice", "price", "spjg", "spsj"],
+  salesPrice: ["sales_price", "salesPrice", "selling_price", "sellingPrice", "unit_price", "unitPrice", "price", "spjg", "spsj", "spdj"],
   discountPrice: ["discount_price", "discountPrice", "discounted_price", "discountedPrice", "actual_price", "actualPrice", "sjje"],
-  paymentMethod: ["mode_of_payment", "payment_method", "paymentMethod", "payment_type", "paymentType", "payType", "zffs"],
+  paymentMethod: ["mode_of_payment", "payment_method", "paymentMethod", "payment_type", "paymentType", "payType", "zffs", "showzffs"],
   purchaser: ["purchaser", "buyer", "buyer_name", "buyerName", "gmr", "gmrxm"],
-  paymentAmount: ["payment_amount", "paymentAmount", "paid_amount", "paidAmount", "amount", "payAmount", "zfje", "ssje"],
-  paymentTime: ["payment_time", "paymentTime", "pay_time", "payTime", "paid_time", "paidTime", "zfsj", "createTime", "createdAt"],
+  paymentAmount: ["payment_amount", "paymentAmount", "paid_amount", "paidAmount", "amount", "payAmount", "zfje", "ssje", "bzfje"],
+  paymentTime: ["payment_time", "paymentTime", "pay_time", "payTime", "paid_time", "paidTime", "zfsj", "jysj", "createTime", "createdAt"],
   deliveryTime: ["delivery_time", "deliveryTime", "vend_time", "vendTime", "shipping_time", "shippingTime", "cfsj", "chsj", "ddsjt"],
-  refundAmount: ["refund_amount", "refundAmount", "tkje"],
+  refundAmount: ["refund_amount", "refundAmount", "tkje", "btkje"],
   refundTime: ["refund_time", "refundTime", "tksj"],
   thirdPartyOrderNo: ["third_party_order_no", "thirdPartyOrderNo", "third_party_order_number", "dsfddh"],
-  thirdPartyTransaction: ["third_party_transaction", "thirdPartyTransaction", "third_party_transaction_number", "thirdPartyTransactionNumber", "dsfjyh"],
+  thirdPartyTransaction: ["third_party_transaction", "thirdPartyTransaction", "third_party_transaction_number", "thirdPartyTransactionNumber", "dsfjyh", "dsfjybh"],
   logicCardNumber: ["logic_card_number", "logicCardNumber", "card_number", "cardNumber", "ljkh"],
   quantity: ["quantity", "qty", "num", "count", "sl", "spsl"],
-  status: ["transaction_status", "transactionStatus", "order_status", "orderStatus", "vend_status", "vendStatus", "shipping_status", "shippingStatus", "status", "result", "ddzt", "zt"],
+  status: ["transaction_status", "transactionStatus", "order_status", "orderStatus", "vend_status", "vendStatus", "shipping_status", "shippingStatus", "status", "result", "ddzt", "zt", "chzt", "showchzt"],
   refundStatus: ["refund_status", "refundStatus", "tkzt"],
 } as const;
 
@@ -117,7 +117,7 @@ function transactionStatus(row: XyLiveSalesRawRow, canonical: Record<string, str
 
   if (refundAmount > 0 || refundTime || hasAny(rawStatus, ["refund", "refunded", "reversal", "chargeback", "退款"])) return "refunded" as const;
   if (hasAny(rawStatus, ["payment failed", "declined", "rejected", "unpaid", "支付失败", "付款失败"])) return "failed_payment" as const;
-  if (hasAny(rawStatus, ["vend fail", "failed vend", "not dispensed", "delivery fail", "machine error", "出货失败", "掉货失败"])) return "failed_vend" as const;
+  if (hasAny(rawStatus, ["vend fail", "failed vend", "dispensing fail", "dispense fail", "not dispensed", "delivery fail", "machine error", "出货失败", "掉货失败"])) return "failed_vend" as const;
   if (hasAny(rawStatus, ["success", "successful", "completed", "complete", "shipped", "delivered", "交易成功", "支付成功", "出货成功", "成功"])) return "successful_sale" as const;
   if (paymentAmount !== null && paymentAmount > 0) return "successful_sale" as const;
   if (hasAny(rawStatus, ["fail", "failed", "error", "cancel", "timeout", "失败", "取消", "超时"])) return "failed_vend" as const;

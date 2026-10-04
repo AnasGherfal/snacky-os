@@ -369,7 +369,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
       {liveSalesConfig.enabled && !liveSalesConfig.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
           Live sales sync is enabled but not ready: {liveSalesConfig.missing.join(", ")}.
-          Copy the verified XY sales endpoint/request and Authorization token into server-only environment variables before enabling it.
+          The XY Trade details endpoint/request is already built in. Add a current server-only XY dashboard Authorization token, then enable live sales.
         </div>
       ) : null}
 
@@ -397,7 +397,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Official stock calls use the signed XY API. Live sales uses the separately configured server-only XY web transaction request and is deduplicated into the same canonical VMS transaction table used by imported files.
+          Official stock calls use the signed XY API. Live sales uses XY's verified Trade details endpoint (queryJqjymx) with a server-only dashboard session token and deduplicates into the same canonical VMS transaction table used by imported files.
         </p>
       </section>
 

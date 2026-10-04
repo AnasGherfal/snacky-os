@@ -13,6 +13,7 @@ import { createVmsOrderDetailsDuplicateHash } from "../src/lib/vms-order-details
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const syncSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-live-sales-sync.ts"), "utf8");
+const webApiSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-web-api.ts"), "utf8");
 const plannerSource = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-planner.ts"), "utf8");
 const cronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales/route.ts"), "utf8");
 const discoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-sales-discovery.ts"), "utf8");
@@ -69,6 +70,58 @@ test("live XY rows normalize into the canonical Snacky transaction shape", () =>
   assert.equal(normalized.paymentAmount, 5);
   assert.equal(normalized.transactionStatus, "successful_sale");
   assert.equal(normalized.businessDate, "2026-10-04");
+});
+
+test("verified XY Trade details fields normalize without guessed aliases", () => {
+  const normalized = normalizeXyLiveSalesRow({
+    shbh: "6591",
+    shmc: "Snacky",
+    jqbh: "2503000217",
+    jqmc: "Diplomacy Mall",
+    dsfjybh: "TXN-9001",
+    spdj: "5",
+    hdbh: "030",
+    spbh: "0194",
+    spmc: "Gardena chocolate",
+    showzffs: "Cash",
+    bzfje: "5",
+    byhje: "0",
+    showchzt: "Dispensing success",
+    btkje: "0",
+    jysj: "2026-10-04 12:30:00",
+  });
+
+  assert.equal(normalized.machineCode, "2503000217");
+  assert.equal(normalized.cargoLane, "030");
+  assert.equal(normalized.productNumber, "0194");
+  assert.equal(normalized.productName, "Gardena chocolate");
+  assert.equal(normalized.salesPrice, 5);
+  assert.equal(normalized.paymentAmount, 5);
+  assert.equal(normalized.paymentMethod, "cash");
+  assert.equal(normalized.thirdPartyTransactionNumber, "TXN-9001");
+  assert.equal(normalized.transactionStatus, "successful_sale");
+  assert.equal(normalized.businessDate, "2026-10-04");
+});
+
+test("verified XY live-sales defaults use Trade details and no longer require endpoint templates", () => {
+  assert.match(syncSource, /VERIFIED_XY_LIVE_SALES_PATH = "\/service-order\/jqjymx\/queryJqjymx"/);
+  assert.match(syncSource, /VERIFIED_XY_LIVE_SALES_RESPONSE_ROWS_PATH = "data"/);
+  assert.match(syncSource, /"orderBy":"jysj desc"/);
+  assert.match(syncSource, /"pageNum":\{\{page\}\}/);
+  assert.match(syncSource, /"pageSize":\{\{pageSize\}\}/);
+  assert.match(syncSource, /"starttime":"\{\{startDateTime\}\}"/);
+  assert.match(syncSource, /"endtime":"\{\{endDateTime\}\}"/);
+  assert.doesNotMatch(syncSource, /path \? "" : "XY_WEB_SALES_PATH"/);
+  assert.doesNotMatch(syncSource, /requestTemplate \? "" : "XY_WEB_SALES_REQUEST_TEMPLATE"/);
+  assert.match(syncSource, /extractedRows\.filter\(isVerifiedXyTransactionRow\)/);
+});
+
+test("XY web helper accepts dashboard H0000 success and routes service-order at the XY root", () => {
+  assert.match(webApiSource, /"h0000"/);
+  assert.match(webApiSource, /value\.includes\("s9999"\)/);
+  assert.match(webApiSource, /normalizedPath\.startsWith\("\/service-"\)/);
+  assert.match(webApiSource, /xyApiOrigin/);
+  assert.match(webApiSource, /const url = requestUrl\(path, config\.baseUrl\)/);
 });
 
 test("refund and vend failures are not counted as successful sales", () => {
@@ -177,8 +230,10 @@ test("XY admin exposes live-sales freshness without exposing secrets", () => {
   assert.match(adminSource, /Sync Live Sales/);
   assert.match(adminSource, /latestXyLiveSalesHealth/);
   assert.match(envSource, /XY_WEB_LIVE_SALES_ENABLED=false/);
+  assert.match(envSource, /queryJqjymx/);
   assert.match(envSource, /XY_WEB_SALES_PATH=/);
   assert.match(envSource, /XY_WEB_SALES_REQUEST_TEMPLATE=/);
+  assert.match(envSource, /XY_WEB_SALES_PAGE_SIZE=100/);
   assert.doesNotMatch(envSource, /XY_WEB_API_AUTHORIZATION=\S+/);
 });
 
