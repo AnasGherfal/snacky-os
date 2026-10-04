@@ -3,11 +3,30 @@ import { buildXyReqData, buildXySign, normalizeXyApiResponse } from "@/lib/xy-vm
 
 export { buildXyReqData, buildXySign, normalizeXyApiResponse } from "@/lib/xy-vms-protocol";
 
-export type XyVmsEndpoint =
+export type XyKnownVmsEndpoint =
   | "queryMachine"
   | "queryMachineState"
   | "queryMachineHdGoodPlus"
   | "queryGoodDetails";
+
+export type XySalesDiscoveryEndpoint =
+  | "queryOrder"
+  | "queryOrderDetail"
+  | "queryOrderDetails"
+  | "queryMachineOrder"
+  | "queryMachineOrderDetail"
+  | "querySale"
+  | "querySaleDetail"
+  | "querySaleDetails"
+  | "queryMachineSale"
+  | "queryTrade"
+  | "queryTradeDetail"
+  | "queryTradeDetails"
+  | "queryTransaction"
+  | "queryTransactionDetail"
+  | "queryTransactionDetails";
+
+export type XyVmsEndpoint = XyKnownVmsEndpoint | XySalesDiscoveryEndpoint;
 
 export type XyVmsParamValue = string | number | boolean | null | undefined;
 export type XyVmsParams = Record<string, XyVmsParamValue>;
