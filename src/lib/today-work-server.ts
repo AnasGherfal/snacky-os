@@ -96,7 +96,7 @@ export async function loadTodayWork(profile: UserProfile, db: Admin) {
     const assignments = activeStops.filter(s=>s.machine_id===m.id).map(s=>{
       const route=routeMap.get(s.route_id)!;
       const mine=Boolean(route.operator_id && linkedIds.includes(route.operator_id));
-      return {operatorName:names.get(route.operator_id || '') || 'Assigned route',mine,
+      return {operatorName:names.get(route.operator_id || '') || 'Assigned route',operatorAssigned:Boolean(route.operator_id),mine,
         routeId:mine || canManageOperations(profile) ? route.id : null,routeDate:route.route_date};
     });
     return {...summarizeMachine(m,lanes,now),assignments};
