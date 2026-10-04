@@ -86,21 +86,12 @@ function cleanPath(value: string) {
 
 const VERIFIED_XY_LIVE_SALES_PATH = "/service-order/jqjymx/queryJqjymx";
 const VERIFIED_XY_LIVE_SALES_RESPONSE_ROWS_PATH = "data";
-const VERIFIED_XY_LIVE_SALES_REQUEST_TEMPLATE = JSON.stringify({
-  orderBy: "jysj desc",
-  userid: "",
-  pageNum: "{{page}}",
-  pageSize: "{{pageSize}}",
-  jqmc: "",
-  jqlx: "",
-  shmc: "",
-  chzt: "",
-  dsfjybh: "",
-  starttime: "{{startDateTime}}",
-  endtime: "{{endDateTime}}",
-  language: "{{language}}",
-  channel: "{{channel}}",
-});
+const VERIFIED_XY_LIVE_SALES_REQUEST_TEMPLATE = [
+  '{"orderBy":"jysj desc","userid":"","pageNum":{{page}},"pageSize":{{pageSize}},',
+  '"jqmc":"","jqlx":"","shmc":"","chzt":"","dsfjybh":"",',
+  '"starttime":"{{startDateTime}}","endtime":"{{endDateTime}}",',
+  '"language":"{{language}}","channel":"{{channel}}"}',
+].join("");
 
 export function getXyLiveSalesConfig(): XyLiveSalesConfig {
   const enabled = envFlag(process.env.XY_WEB_LIVE_SALES_ENABLED, false);
