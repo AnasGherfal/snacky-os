@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { type ReactNode } from 'react';
 import { getCurrentProfile, getAuthenticatedSupabaseServerClient } from '@/lib/auth';
-import { canExecuteRoutes } from '@/lib/authz';
+import { canExecuteRoutes, isOwnerAdminRole } from '@/lib/authz';
 import { getServerI18n } from '@/lib/i18n/server';
 
 /** Keep assigned customer work visible without changing the refill workflow. */
@@ -22,8 +22,9 @@ export default async function OperatorLayout({ children }: { children: ReactNode
       <span>{ar ? 'إجراءات مشاكل العملاء المسندة إليك' : 'Customer issue actions assigned to you'}{count !== null ? <strong className="ms-2">{count}</strong> : null}</span>
       <Link className="btn-secondary min-h-10" href="/operator/issues/actions">{ar ? 'فتح مهام العملاء' : 'Open customer tasks'}</Link>
     </div>
-    <nav aria-label={ar ? "عمل اليوم" : "Today’s Work"} dir={ar ? "rtl" : "ltr"} className="mb-4">
+    <nav aria-label={ar ? "عمل اليوم" : "Today’s Work"} dir={ar ? "rtl" : "ltr"} className="mb-4 flex flex-wrap gap-2">
       <Link className="btn-secondary min-h-11" prefetch={false} href="/operator/today-work">{ar ? "أولويات التعبئة — عرض فقط" : "Refill priorities — view only"}</Link>
+      {isOwnerAdminRole(profile) ? <Link className="btn-secondary min-h-11" prefetch={false} href="/settings/smart-work-coverage">{ar ? 'إعداد التغطية وساعات العمل' : 'Coverage & work hours setup'}</Link> : null}
     </nav>
     {children}
   </>;
