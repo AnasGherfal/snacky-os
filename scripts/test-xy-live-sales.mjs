@@ -15,6 +15,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const syncSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-live-sales-sync.ts"), "utf8");
 const plannerSource = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-planner.ts"), "utf8");
 const cronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales/route.ts"), "utf8");
+const discoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-sales-discovery.ts"), "utf8");
+const discoveryCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales-discovery/route.ts"), "utf8");
+
 const adminSource = fs.readFileSync(path.join(repoRoot, "src/app/admin/vms-api/page.tsx"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004090000_xy_live_sales.sql"), "utf8");
 const schedulerMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004093000_xy_live_sales_scheduler.sql"), "utf8");
@@ -175,4 +178,26 @@ test("XY admin exposes live-sales freshness without exposing secrets", () => {
   assert.match(envSource, /XY_WEB_SALES_PATH=/);
   assert.match(envSource, /XY_WEB_SALES_REQUEST_TEMPLATE=/);
   assert.doesNotMatch(envSource, /XY_WEB_API_AUTHORIZATION=\S+/);
+});
+
+
+test("XY sales endpoint discovery is narrow, signed, read-only, and diagnostic-only", () => {
+  assert.match(discoverySource, /callXyApiRaw/);
+  assert.match(discoverySource, /queryOrder/);
+  assert.match(discoverySource, /querySale/);
+  assert.match(discoverySource, /queryTrade/);
+  assert.match(discoverySource, /queryTransaction/);
+  assert.match(discoverySource, /pageSize: 1/);
+  assert.match(discoverySource, /from\("vms_sync_runs"\)/);
+  assert.doesNotMatch(discoverySource, /from\("vms_transactions_raw"\)/);
+  assert.doesNotMatch(discoverySource, /from\("routes"\)/);
+  assert.doesNotMatch(discoverySource, /from\("inventory_movements"\)/);
+  assert.match(discoverySource, /first_row_keys/);
+});
+
+test("XY sales discovery endpoint requires the protected cron credential", () => {
+  assert.match(discoveryCronSource, /timingSafeEqual/);
+  assert.match(discoveryCronSource, /process\.env\.CRON_SECRET/);
+  assert.match(discoveryCronSource, /discoverXySalesEndpoints/);
+  assert.match(discoveryCronSource, /status: 401/);
 });
