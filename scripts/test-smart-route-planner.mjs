@@ -10,6 +10,7 @@ const api = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/smart-plan/r
 const routeApi = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
 const form = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
 const rulesPage = fs.readFileSync(path.join(repoRoot, "src/app/settings/smart-routes/page.tsx"), "utf8");
+const operatorStop = fs.readFileSync(path.join(repoRoot, "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004061000_smart_route_planner.sql"), "utf8");
 const contextMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004062500_smart_route_machine_context.sql"), "utf8");
 
@@ -30,13 +31,26 @@ test("verified unreserved storage is a hard candidate and allocation limit", () 
   assert.match(routeApi, /validateRouteStock\(planningReadClient, stockByProduct\)/);
 });
 
-test("substitutions are allowed only for empty lanes and compatible products", () => {
-  assert.match(planner, /const allowSubstitution = currentQty === 0/);
+test("substitutions use a transition zone before an unavailable product reaches zero", () => {
+  assert.match(planner, /transitionFloorQty = Math\.max\(2, Math\.ceil\(capacity \* 0\.5\)\)/);
+  assert.match(planner, /projectedQtyAtNextService/);
+  assert.match(planner, /originalAvailableUnits <= 0/);
+  assert.match(planner, /transitionMode !== "none"/);
+  assert.match(planner, /replaceNow \? capacity : refillNeededQty/);
   assert.match(planner, /if \(!allowSubstitution\) return null/);
   assert.match(planner, /candidateFit !== currentFit/);
   assert.match(planner, /explicitlyAllowedIds/);
   assert.match(planner, /historically_seen_exact_slot/);
   assert.match(planner, /rule\?\.rule === "prohibited"/);
+});
+
+test("planned product changes return old stock before XY replacement and never mix products", () => {
+  assert.match(planner, /Returned from machine → Product replaced/);
+  assert.match(planner, /Do not mix the two products in one lane/);
+  assert.match(planner, /returnCurrentQty/);
+  assert.match(form, /Change before empty/);
+  assert.match(form, /Remove and return/);
+  assert.match(operatorStop, /item\.notes/);
 });
 
 test("AI can choose only backend-provided candidates and invalid choices fall back safely", () => {
