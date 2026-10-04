@@ -45,7 +45,14 @@ async function discover(request: NextRequest) {
       ok: true,
       runId: result.runId,
       candidateCount: result.candidateCount,
+      probeCount: result.probeCount,
       interestingCount: result.interestingCount,
+      bestCandidate: result.bestCandidate ? {
+        endpoint: result.bestCandidate.endpoint,
+        variant: result.bestCandidate.variant,
+        confidence: result.bestCandidate.confidence,
+        responseShape: result.bestCandidate.response_shape,
+      } : null,
     }, {
       status: 200,
       headers: { "Cache-Control": "no-store" },
