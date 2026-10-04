@@ -84,6 +84,32 @@ async function postJson(url: string, body: JsonRecord, authorization?: string) {
   }
 }
 
+async function getJsonWithHeaders(url: string, headers: Record<string, string>) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json,text/plain,*/*",
+        ...headers,
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let json: JsonRecord = {};
+    try {
+      json = responseText ? JSON.parse(responseText) as JsonRecord : {};
+    } catch {
+      json = { message: responseText.slice(0, 300) };
+    }
+    return { response, json };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function getJson(url: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -185,6 +211,47 @@ async function signedTradeProbe() {
   return attempts;
 }
 
+async function vdmHeaderProbe() {
+  const config = getXyVmsConfig();
+  if (!config.ready) throw new Error(`Official XY API is not configured: ${config.missing.join(", ")}`);
+
+  const endpoint = "https://xcx.xynetweb.com/service-api/vdm/VDMMaster";
+  const candidates: Array<{ method: string; headers: Record<string, string> }> = [
+    { method: "vdm_authorization_key", headers: { Authorization: config.key } },
+    { method: "vdm_authorization_secret", headers: { Authorization: config.secret } },
+    { method: "vdm_authorization_merchant", headers: { Authorization: config.merchantId } },
+    { method: "vdm_authorization_x_key", headers: { "Authorization-x": config.key } },
+    { method: "vdm_authorization_x_secret", headers: { "Authorization-x": config.secret } },
+    { method: "vdm_authorization_x_merchant", headers: { "Authorization-x": config.merchantId } },
+    { method: "vdm_pair_key_secret", headers: { Authorization: config.key, "Authorization-x": config.secret } },
+    { method: "vdm_pair_secret_key", headers: { Authorization: config.secret, "Authorization-x": config.key } },
+  ];
+
+  const attempts: ProbeSummary[] = [];
+  for (const candidate of candidates) {
+    try {
+      const { response, json } = await getJsonWithHeaders(endpoint, candidate.headers);
+      const summary = summarize(candidate.method, endpoint, response.status, json);
+      attempts.push(summary);
+      if (summary.success && summary.rowCount > 0) break;
+    } catch (error) {
+      attempts.push({
+        method: candidate.method,
+        endpoint,
+        httpStatus: null,
+        code: null,
+        message: null,
+        rowCount: 0,
+        topLevelKeys: [],
+        dataKeys: [],
+        success: false,
+        error: error instanceof Error ? compactMessage(error.message) : compactMessage(error),
+      });
+    }
+  }
+  return attempts;
+}
+
 async function freshCheckCode() {
   const { response, json } = await getJson("https://xcx.xynetweb.com/sram/comm/login/getCheckCode");
   const code = String(json.code ?? "");
@@ -270,6 +337,12 @@ export async function probeXySalesAuthBridge() {
 
   let winningMethod: string | null = attempts.find((row) => row.success && row.rowCount > 0)?.method ?? null;
   let sessionVerified = false;
+
+  if (!winningMethod) {
+    const vdmAttempts = await vdmHeaderProbe();
+    attempts.push(...vdmAttempts);
+    winningMethod = vdmAttempts.find((row) => row.success && row.rowCount > 0)?.method ?? null;
+  }
 
   if (!winningMethod) {
     for (const strategy of ["secret_as_inner_hash", "secret_as_plaintext"] as const) {
