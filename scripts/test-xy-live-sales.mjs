@@ -313,3 +313,15 @@ test("XY auth bridge endpoint requires the protected scheduler credential", () =
   assert.match(authBridgeCronSource, /probeXySalesAuthBridge/);
   assert.match(authBridgeCronSource, /status: 401/);
 });
+
+
+test("XY auth bridge probes documented VDM header auth without exposing credential values", () => {
+  assert.match(authBridgeSource, /service-api\/vdm\/VDMMaster/);
+  assert.match(authBridgeSource, /vdm_authorization_key/);
+  assert.match(authBridgeSource, /vdm_authorization_secret/);
+  assert.match(authBridgeSource, /vdm_authorization_x_key/);
+  assert.match(authBridgeSource, /vdm_authorization_x_secret/);
+  assert.match(authBridgeSource, /vdm_pair_key_secret/);
+  assert.match(authBridgeSource, /vdm_pair_secret_key/);
+  assert.doesNotMatch(authBridgeSource, /response_summary:[\s\S]{0,1000}candidate\.headers/);
+});
