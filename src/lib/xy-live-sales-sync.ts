@@ -84,12 +84,30 @@ function cleanPath(value: string) {
   return trimmed ? `/${trimmed.replace(/^\/+/, "")}` : "";
 }
 
+const VERIFIED_XY_LIVE_SALES_PATH = "/service-order/jqjymx/queryJqjymx";
+const VERIFIED_XY_LIVE_SALES_RESPONSE_ROWS_PATH = "data";
+const VERIFIED_XY_LIVE_SALES_REQUEST_TEMPLATE = JSON.stringify({
+  orderBy: "jysj desc",
+  userid: "",
+  pageNum: "{{page}}",
+  pageSize: "{{pageSize}}",
+  jqmc: "",
+  jqlx: "",
+  shmc: "",
+  chzt: "",
+  dsfjybh: "",
+  starttime: "{{startDateTime}}",
+  endtime: "{{endDateTime}}",
+  language: "{{language}}",
+  channel: "{{channel}}",
+});
+
 export function getXyLiveSalesConfig(): XyLiveSalesConfig {
   const enabled = envFlag(process.env.XY_WEB_LIVE_SALES_ENABLED, false);
-  const path = cleanPath(process.env.XY_WEB_SALES_PATH ?? "");
-  const requestTemplate = String(process.env.XY_WEB_SALES_REQUEST_TEMPLATE ?? "").trim();
-  const responseRowsPath = String(process.env.XY_WEB_SALES_RESPONSE_ROWS_PATH ?? "").trim() || null;
-  const pageSize = envNumber(process.env.XY_WEB_SALES_PAGE_SIZE, 200, 1, 1000);
+  const path = cleanPath(process.env.XY_WEB_SALES_PATH ?? VERIFIED_XY_LIVE_SALES_PATH);
+  const requestTemplate = String(process.env.XY_WEB_SALES_REQUEST_TEMPLATE ?? VERIFIED_XY_LIVE_SALES_REQUEST_TEMPLATE).trim();
+  const responseRowsPath = String(process.env.XY_WEB_SALES_RESPONSE_ROWS_PATH ?? VERIFIED_XY_LIVE_SALES_RESPONSE_ROWS_PATH).trim() || null;
+  const pageSize = envNumber(process.env.XY_WEB_SALES_PAGE_SIZE, 100, 1, 1000);
   const maxPages = envNumber(process.env.XY_WEB_SALES_MAX_PAGES, 20, 1, 100);
   const lookbackHours = envNumber(process.env.XY_WEB_SALES_LOOKBACK_HOURS, 72, 1, 24 * 31);
   const web = getXyWebApiConfig();
@@ -97,8 +115,6 @@ export function getXyLiveSalesConfig(): XyLiveSalesConfig {
     enabled ? "" : "XY_WEB_LIVE_SALES_ENABLED=true",
     web.enabled ? "" : "XY_WEB_ENABLED=true",
     web.authorization ? "" : "XY_WEB_API_AUTHORIZATION",
-    path ? "" : "XY_WEB_SALES_PATH",
-    requestTemplate ? "" : "XY_WEB_SALES_REQUEST_TEMPLATE",
   ].filter(Boolean);
   return {
     enabled,
@@ -427,6 +443,15 @@ async function saveRows(supabase: SupabaseAdmin, rows: ReturnType<typeof toDbRow
   return { insertedRows, duplicateRows };
 }
 
+function isVerifiedXyTransactionRow(row: XyLiveSalesRawRow) {
+  const normalized = normalizeXyLiveSalesRow(row);
+  return Boolean(
+    normalized.machineCode
+    && (normalized.productNumber || normalized.productName)
+    && (normalized.paymentTime || normalized.thirdPartyTransactionNumber),
+  );
+}
+
 function latestSaleAt(rows: Array<ReturnType<typeof normalizeXyLiveSalesRow>>) {
   const values = rows
     .filter((row) => row.transactionStatus === "successful_sale")
@@ -517,9 +542,10 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
         templateValues({ start, end: now, page, pageSize: config.pageSize }),
       );
       const result = await callXyWebApi(config.path, body);
-      const rows = extractXyLiveSalesRows(result.response, config.responseRowsPath);
+      const extractedRows = extractXyLiveSalesRows(result.response, config.responseRowsPath);
+      const rows = extractedRows.filter(isVerifiedXyTransactionRow);
       allRawRows.push(...rows);
-      if (rows.length < config.pageSize) break;
+      if (extractedRows.length < config.pageSize) break;
     }
 
     const normalizedRows = allRawRows.map(normalizeXyLiveSalesRow);
