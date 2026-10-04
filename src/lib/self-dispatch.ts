@@ -26,8 +26,11 @@ export function freshLane(lane: Lane, now: Date) {
   return Number.isFinite(stamp) && stamp <= now.getTime() + 60_000 && now.getTime() - stamp <= MAX_STOCK_AGE_MS;
 }
 export function summarizeMachine(machine: Machine, input: Lane[], now: Date) {
-  const lanes = input.filter(l => l.machineId === machine.id && physicalLane(l.code));
-  const known = lanes.filter(l => freshLane(l, now) && validWhole(l.quantity) && validWhole(l.capacity) && l.capacity > 0 && l.quantity! <= l.capacity);
+  const reported = input.filter(l => l.machineId === machine.id && physicalLane(l.code));
+  const seen = new Set(reported.map(l=>l.code));
+  const missing: Lane[] = [...new Set(machine.expectedLaneCodes || [])].filter(code=>physicalLane(code) && !seen.has(code)).map(code=>({machineId:machine.id,slotId:null,code,productId:null,quantity:null,capacity:null,capturedAt:null}));
+  const lanes = [...reported,...missing];
+  const known = lanes.filter(l => freshLane(l, now) && validWhole(l.quantity) && validWhole(l.capacity) && l.capacity > 0 && l.capacity <= 200 && l.quantity! <= l.capacity);
   const unknown = lanes.length - known.length;
   const empty = known.filter(l => l.quantity === 0).length;
   const low = known.filter(l => l.quantity! > 0 && (l.quantity! <= 2 || l.quantity! / l.capacity! <= .2)).length;
@@ -41,6 +44,7 @@ export function summarizeMachine(machine: Machine, input: Lane[], now: Date) {
   else if (empty >= 20 || mean! <= 25 || depleted >= .50) priority = 'urgent';
   else if (empty >= 16 || mean! <= 35 || depleted >= .35) priority = 'today';
   else if (empty > 0 || low > 0 || mean! <= 55) priority = 'monitor';
+  if (unknown>0 && ['healthy','monitor'].includes(priority)) priority='verify';
   const blocked = !openToday(machine.openDays, now);
   return { machineId: machine.id, name: machine.name, priority, empty, low, unknown, lanes: lanes.length, meanFullness: mean === null ? null : Math.round(mean), stockPercent: capacity ? Math.round(units / capacity * 100) : null, openToday: !blocked, actionable: !blocked && ['immediate','urgent','today'].includes(priority), reason: known.length ? `${empty} empty · ${low} low · ${Math.round(mean!)}% average lane fullness${unknown ? ` · ${unknown} need checking` : ''}` : 'Current lane quantities could not be verified.' };
 }
@@ -65,7 +69,7 @@ export function makeTripPlan(input: { machines: Machine[]; lanes: Lane[]; produc
       const original = lane.productId ? productById.get(lane.productId) : null;
       const plan: LanePlan = { machineId: machine.id, slotId: lane.slotId, code: lane.code, originalProductId: lane.productId, productId: lane.productId, productName: original?.name || 'Unmapped product', current: lane.quantity, capacity: lane.capacity, take: 0, remove: 0, after: lane.quantity, action: 'keep', reason: 'Already stocked.', evidence: 'current_product' };
       plans.push(plan);
-      if (!freshLane(lane,input.now) || !validWhole(lane.quantity) || !validWhole(lane.capacity) || lane.capacity <= 0 || lane.quantity > lane.capacity || !original || !lane.slotId) {
+      if (!freshLane(lane,input.now) || !validWhole(lane.quantity) || !validWhole(lane.capacity) || lane.capacity <= 0 || lane.capacity > 200 || lane.quantity > lane.capacity || !original || !lane.slotId) {
         Object.assign(plan,{ action:'exception', after:null, evidence:'unknown', reason:'Verify the lane/product/quantity before changing it.' });
         continue;
       }
@@ -78,7 +82,7 @@ export function makeTripPlan(input: { machines: Machine[]; lanes: Lane[]; produc
       // Substitutes require an owner's explicit lane approval AND a verified replacement capacity.
       for (const r of slotRules) {
         const p = productById.get(r.productId);
-        if (r.rule !== 'allowed' || !p || p.id === original.id || !allowed(p) || p.available <= 0 || !validWhole(r.capacity) || r.capacity <= 0) continue;
+        if (r.rule !== 'allowed' || !p || p.id === original.id || !allowed(p) || p.available <= 0 || !validWhole(r.capacity) || r.capacity <= 0 || r.capacity > 200) continue;
         candidates.push({product:p,capacity:r.capacity,evidence:'owner_approved',original:false});
       }
       const deficit = lane.capacity-lane.quantity;
@@ -103,10 +107,11 @@ export function makeTripPlan(input: { machines: Machine[]; lanes: Lane[]; produc
       plans.push({machineId:machine.id,slotId:null,code,originalProductId:null,productId:null,productName:'Unknown lane',current:null,capacity:null,take:0,remove:0,after:null,action:'exception',reason:'Expected physical lane missing from latest XY snapshot.',evidence:'unknown'});
     }
   }
-  // Fill empty, least-flexible lanes first. Allocate one unit across lanes before topping any up.
+  // Fill empty, least-flexible lanes first. Allocate one unit across empty lanes before topping up.
   tasks.sort((a,b) => Number((a.plan.current||0)>0)-Number((b.plan.current||0)>0) || a.candidates.length-b.candidates.length || (a.plan.current||0)-(b.plan.current||0) || a.plan.code.localeCompare(b.plan.code,undefined,{numeric:true}));
   const choose = (task:Task) => {
-    const selected = task.candidates.find(c => (remaining.get(c.product.id)||0)>0);
+    // Never clear a stocked lane for an undersupplied replacement.
+    const selected = task.candidates.find(c => (remaining.get(c.product.id)||0) >= (!c.original && task.plan.current!>0 ? c.capacity : 1));
     if (!selected) return;
     const p=task.plan;
     p.productId=selected.product.id; p.productName=selected.product.name;
@@ -121,7 +126,8 @@ export function makeTripPlan(input: { machines: Machine[]; lanes: Lane[]; produc
     const p=task.plan;
     if (!['refill','replace'].includes(p.action) || !p.productId) continue;
     const available=remaining.get(p.productId)||0;
-    const minimum=Math.min(available,p.capacity!-p.after!,1);
+    const initialAllocation=p.action==='replace' && p.current!>0 ? p.capacity! : 1;
+    const minimum=Math.min(available,p.capacity!-p.after!,initialAllocation);
     if (minimum>0) { p.take+=minimum; p.after!+=minimum; remaining.set(p.productId,available-minimum); }
   }
   // Round-robin top-ups prevent the first machine consuming everything.
