@@ -4,13 +4,13 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
+import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XySalesDiscoveryEndpoint, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
 import { classifyXyLane, xyProductIdentity } from "@/lib/xy-vms-data";
 import { assessXyLaneSnapshot } from "@/lib/xy-vms-safety";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
-type SyncType = "machines" | "products" | "machine_goods" | "machine_status" | "test_official" | "test_unsigned" | "all";
+type SyncType = "machines" | "products" | "machine_goods" | "machine_status" | "test_official" | "test_unsigned" | "sales_discovery" | "all";
 type JsonRecord = Record<string, unknown>;
 
 type SyncOptions = {
@@ -1300,6 +1300,158 @@ async function testOfficialApiWork(context: SyncContext) {
   return stats;
 }
 
+const XY_SALES_DISCOVERY_ENDPOINTS: XySalesDiscoveryEndpoint[] = [
+  "queryOrder",
+  "queryOrderDetail",
+  "queryOrderDetails",
+  "queryMachineOrder",
+  "queryMachineOrderDetail",
+  "querySale",
+  "querySaleDetail",
+  "querySaleDetails",
+  "queryMachineSale",
+  "queryTrade",
+  "queryTradeDetail",
+  "queryTradeDetails",
+  "queryTransaction",
+  "queryTransactionDetail",
+  "queryTransactionDetails",
+];
+
+function tripoliDateTime(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Tripoli",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const map = new Map(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${map.get("year")}-${map.get("month")}-${map.get("day")} ${map.get("hour")}:${map.get("minute")}:${map.get("second")}`;
+}
+
+function salesDiscoveryVariants(context: SyncContext, machineId: string | null) {
+  const end = new Date();
+  const start = new Date(end.getTime() - 48 * 60 * 60 * 1000);
+  const merchant = { shbh: context.config.merchantId };
+  const variants: Array<{ name: string; params: XyVmsParams }> = [
+    { name: "merchant_only", params: merchant },
+    { name: "page_num", params: { ...merchant, pageNum: 1, pageSize: 1 } },
+    { name: "page_no", params: { ...merchant, pageNo: 1, pageSize: 1 } },
+    {
+      name: "recent_start_end_time",
+      params: {
+        ...merchant,
+        pageNum: 1,
+        pageSize: 1,
+        startTime: tripoliDateTime(start),
+        endTime: tripoliDateTime(end),
+      },
+    },
+    {
+      name: "recent_kssj_jssj",
+      params: {
+        ...merchant,
+        pageNum: 1,
+        pageSize: 1,
+        kssj: tripoliDateTime(start),
+        jssj: tripoliDateTime(end),
+      },
+    },
+  ];
+  if (machineId) {
+    variants.splice(3, 0, {
+      name: "machine_page",
+      params: { ...merchant, jqbh: machineId, pageNum: 1, pageSize: 1 },
+    });
+  }
+  return variants;
+}
+
+function salesDiscoveryInteresting(summary: JsonRecord) {
+  const httpStatus = Number(summary.httpStatus ?? 0);
+  const code = String(summary.xyCode ?? "").trim();
+  const message = String(summary.message ?? "").trim().toLowerCase();
+  const rowCount = Number(summary.dataRowCount ?? 0);
+  if (rowCount > 0 || code === "1") return true;
+  if (httpStatus >= 200 && httpStatus < 300) {
+    return /param|parameter|required|missing|不能为空|必填|参数|字段|时间|日期|页|merchant|machine|order|trade|sale|transaction/.test(message);
+  }
+  return false;
+}
+
+async function discoverXySalesApiWork(context: SyncContext) {
+  const stats = emptyStats();
+  const machineTest = await testOfficialEndpoint(context, "queryMachine", { shbh: context.config.merchantId });
+  const machineRows = machineTest.result ? arrayify(machineTest.result.response.data) : [];
+  const firstMachineId = machineRows.map((row) => text(row, "jqbh")).find(Boolean) ?? null;
+
+  stats.responseSummary.discovery_meta = {
+    merchant_id: context.config.maskedMerchantId,
+    first_machine_id: firstMachineId,
+    endpoint_count: XY_SALES_DISCOVERY_ENDPOINTS.length,
+    mode: "read_only_signed_probe",
+  };
+
+  for (const endpoint of XY_SALES_DISCOVERY_ENDPOINTS) {
+    const endpointAttempts: JsonRecord[] = [];
+    let succeeded = false;
+
+    for (const variant of salesDiscoveryVariants(context, firstMachineId)) {
+      const probe = await testOfficialEndpoint(context, endpoint, variant.params);
+      const summary = {
+        variant: variant.name,
+        ...probe.summary,
+      } as JsonRecord;
+      endpointAttempts.push(summary);
+      stats.rowCount += summaryRowCount(probe.summary);
+
+      if (summaryCode(probe.summary) === "1") {
+        succeeded = true;
+        break;
+      }
+
+      // If the endpoint clearly exists but wants a parameter we did not try,
+      // preserve the vendor message and stop hammering it with unrelated shapes.
+      if (salesDiscoveryInteresting(probe.summary) && variant.name !== "merchant_only") break;
+    }
+
+    stats.responseSummary[endpoint] = {
+      promising: endpointAttempts.some((attempt) => salesDiscoveryInteresting(attempt)),
+      succeeded,
+      attempts: endpointAttempts,
+    };
+
+    if (succeeded) {
+      stats.responseSummary.discovery_result = {
+        endpoint,
+        status: "success",
+        note: "Stopped after first successful read-only sales endpoint.",
+      };
+      break;
+    }
+  }
+
+  const successfulEndpoint = Object.entries(stats.responseSummary)
+    .find(([key, value]) => key !== "discovery_meta" && key !== "discovery_result"
+      && value && typeof value === "object" && !Array.isArray(value)
+      && (value as JsonRecord).succeeded === true)?.[0] ?? null;
+
+  if (!successfulEndpoint) {
+    stats.errors.push("No candidate XY official sales endpoint returned code 1. Review saved vendor messages for the next probe.");
+    stats.responseSummary.discovery_result = {
+      endpoint: null,
+      status: "no_success_yet",
+      note: "Candidate response messages were saved for follow-up discovery.",
+    };
+  }
+
+  return stats;
+}
+
 async function testUnsignedEndpoint(context: SyncContext, endpoint: XyVmsEndpoint, params: XyVmsParams) {
   try {
     const result = await callXyApiRaw(endpoint, params, { signingMode: "unsigned" });
@@ -1392,6 +1544,10 @@ export async function testXyOfficialApi(options: SyncOptions = {}) {
 
 export async function testXyUnsignedMerchant(options: SyncOptions = {}) {
   return runXySync("test_unsigned", options, testUnsignedMerchantWork);
+}
+
+export async function discoverXySalesApi(options: SyncOptions = {}) {
+  return runXySync("sales_discovery", options, discoverXySalesApiWork);
 }
 
 export async function syncXyAll(options: SyncOptions = {}) {
