@@ -18,6 +18,8 @@ const plannerSource = fs.readFileSync(path.join(repoRoot, "src/lib/smart-route-p
 const cronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales/route.ts"), "utf8");
 const discoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-sales-discovery.ts"), "utf8");
 const discoveryCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-sales-discovery/route.ts"), "utf8");
+const authBridgeSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-auth-bridge.ts"), "utf8");
+const authBridgeCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-auth-bridge/route.ts"), "utf8");
 const dashboardDiscoverySource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-dashboard-discovery.ts"), "utf8");
 const dashboardDiscoveryCronSource = fs.readFileSync(path.join(repoRoot, "src/app/api/cron/xy-dashboard-discovery/route.ts"), "utf8");
 
@@ -280,4 +282,34 @@ test("XY dashboard discovery endpoint is cron-authenticated", () => {
   assert.match(dashboardDiscoveryCronSource, /process\.env\.CRON_SECRET/);
   assert.match(dashboardDiscoveryCronSource, /discoverXyDashboardSalesApi/);
   assert.match(dashboardDiscoveryCronSource, /status: 401/);
+});
+
+
+test("XY auth bridge uses existing official credentials without exposing them", () => {
+  assert.match(authBridgeSource, /getXyVmsConfig/);
+  assert.match(authBridgeSource, /buildXySign/);
+  assert.match(authBridgeSource, /service-order\/jqjymx\/queryJqjymx/);
+  assert.match(authBridgeSource, /secret_as_inner_hash/);
+  assert.match(authBridgeSource, /secret_as_plaintext/);
+  assert.match(authBridgeSource, /attempt_count: attempts\.length/);
+  assert.match(authBridgeSource, /No raw key, secret, password hash, check code, Authorization token, or transaction values are persisted/);
+  assert.doesNotMatch(authBridgeSource, /request_summary:[\s\S]{0,500}config\.secret/);
+  assert.doesNotMatch(authBridgeSource, /response_summary:[\s\S]{0,500}sessionKey/);
+});
+
+test("XY auth bridge makes only narrow read-only sales and login probes", () => {
+  assert.match(authBridgeSource, /pageSize: 1/);
+  assert.match(authBridgeSource, /getCheckCode/);
+  assert.match(authBridgeSource, /onLoginSSO/);
+  assert.doesNotMatch(authBridgeSource, /\/refund|\/update|\/delete|insertFace|\/rgcl/);
+  assert.doesNotMatch(authBridgeSource, /from\("routes"\)/);
+  assert.doesNotMatch(authBridgeSource, /from\("inventory_movements"\)/);
+  assert.doesNotMatch(authBridgeSource, /from\("vms_transactions_raw"\)/);
+});
+
+test("XY auth bridge endpoint requires the protected scheduler credential", () => {
+  assert.match(authBridgeCronSource, /timingSafeEqual/);
+  assert.match(authBridgeCronSource, /process\.env\.CRON_SECRET/);
+  assert.match(authBridgeCronSource, /probeXySalesAuthBridge/);
+  assert.match(authBridgeCronSource, /status: 401/);
 });
