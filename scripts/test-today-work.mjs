@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {stripTypeScriptTypes} from 'node:module';
 import * as planner from '../src/lib/self-dispatch.ts';
 import * as workflow from '../src/lib/self-dispatch-workflow.ts';
+import * as duties from '../src/lib/self-dispatch-duties.ts';
 
 const M='11111111-1111-4111-8111-111111111111';
 const P='22222222-2222-4222-8222-222222222222';
@@ -58,6 +59,7 @@ async function harness(rows=fixture(),profile=actor,failTable=null) {
     '@/lib/route-workflow':{ROUTE_RESERVATION_STATUSES:['draft','assigned','in_progress','pickup_confirmed'],isRouteStopDoneStatus:s=>['completed','skipped'].includes(s)},
     '@/lib/self-dispatch':planner,
     '@/lib/self-dispatch-workflow':workflow,
+    '@/lib/self-dispatch-duties':duties,
     'next/server':{NextResponse:{json:(body,options={})=>new Response(JSON.stringify(body),{status:options.status||200,headers:options.headers})}},
   };
   async function load(path) {
@@ -82,6 +84,8 @@ test('board GET is authenticated and explicitly not a dispatch authorization',as
   const {api}=await harness();const response=await api.GET();const body=await response.json();
   assert.equal(response.status,200);assert.equal(body.dispatchEnabled,false);assert.equal(body.mode,'read_only_preview');
   assert.equal(body.board[0].empty,1);assert.ok(response.headers.get('Cache-Control').includes('no-store'));
+  assert.equal(body.dailyCoverage.mode,'daily_coverage_preview');
+  assert.equal(body.dailyCoverage.coordinatorEnabled,false);
   assert.equal('products' in body,false);assert.equal('routes' in body,false);
 });
 test('anonymous, disabled, viewer and password-reset accounts cannot preview',async()=>{
@@ -134,4 +138,17 @@ test('cross-origin preview requests are rejected',async()=>{
   const {api}=await harness();
   const response=await api.POST(new Request('https://snacky.test/api/operator/today-work',{method:'POST',headers:{Origin:'https://other.test'},body:JSON.stringify({machineIds:[M]})}));
   assert.equal(response.status,403);
+});
+
+test('GET exposes all required machines and does not treat a preview as a day assignment',async()=>{
+  const M2='66666666-6666-4666-8666-666666666666';
+  const base=fixture();
+  base.machines.push({...base.machines[0],id:M2,name:'HT Mall'});
+  base.machine_slots.push({id:'slot2',machine_id:M2,slot_code:'001',active:true});
+  base.latest_vms_stock_by_slot.push({...base.latest_vms_stock_by_slot[0],machine_id:M2});
+  const {api}=await harness(base);
+  await api.POST(request({machineIds:[M]}));
+  const response=await (await api.GET()).json();
+  assert.equal(response.dailyCoverage.total,2);assert.equal(response.dailyCoverage.uncovered,2);
+  assert.ok(response.dailyCoverage.rows.every(r=>r.deadline===null));
 });
