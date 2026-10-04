@@ -1,0 +1,32 @@
+name: Smart Work Part 1 - read-only board
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-part1.yml'
+      - 'src/lib/smart-work-board*'
+      - 'src/app/operator/today-work/**'
+      - 'src/app/operator/layout.tsx'
+      - 'scripts/test-smart-work-board.mjs'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-board-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Read-only board and authorization tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-board.mjs
+      - name: Type check
+        run: npx tsc --noEmit
