@@ -210,6 +210,9 @@ test("XY dashboard discovery scans only public xynetweb assets and records candi
   assert.match(dashboardDiscoverySource, /xynetweb\\\.com/);
   assert.match(dashboardDiscoverySource, /public_read_only_asset_scan/);
   assert.match(dashboardDiscoverySource, /candidateMap/);
+  assert.match(dashboardDiscoverySource, /discoverBootstrapUrls/);
+  assert.match(dashboardDiscoverySource, /root_bootstrap_urls/);
+  assert.match(dashboardDiscoverySource, /root_preview/);
   assert.match(dashboardDiscoverySource, /from\("vms_sync_runs"\)/);
   assert.doesNotMatch(dashboardDiscoverySource, /XY_WEB_API_AUTHORIZATION/);
   assert.doesNotMatch(dashboardDiscoverySource, /vms_transactions_raw/);

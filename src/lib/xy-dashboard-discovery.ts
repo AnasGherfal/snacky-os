@@ -25,6 +25,27 @@ function safeUrl(value: string, base: string) {
   }
 }
 
+function discoverBootstrapUrls(source: string, base: string) {
+  const urls = new Set<string>();
+  const patterns = [
+    /<(?:script|link|iframe)[^>]+(?:src|href)=["']([^"']+)["']/gi,
+    /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>;]+)[^"']*["']/gi,
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/gi,
+    /(https?:\/\/[A-Za-z0-9._:-]*xynetweb\.com[^"'\s<]*)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const resolved = safeUrl(String(match[1] || "").trim(), base);
+      if (!resolved) continue;
+      const path = new URL(resolved).pathname.toLowerCase();
+      if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|css)(?:$|\?)/i.test(path)) continue;
+      urls.add(resolved);
+    }
+  }
+  return Array.from(urls);
+}
+
 function discoverJsUrls(source: string, base: string) {
   const urls = new Set<string>();
   const patterns = [
@@ -160,6 +181,8 @@ export async function discoverXyDashboardSalesApi() {
   const files: Array<{ url: string; status: number; bytes: number; content_type: string }> = [];
   const errors: string[] = [];
   let totalBytes = 0;
+  let rootPreview = "";
+  let rootBootstrapUrls: string[] = [];
 
   try {
     while (queue.length && visited.size < MAX_FILES && totalBytes < MAX_TOTAL_BYTES) {
@@ -178,6 +201,11 @@ export async function discoverXyDashboardSalesApi() {
           content_type: response.contentType,
         });
 
+        if (requested === ROOT_URL) {
+          rootPreview = response.text.slice(0, 5000);
+          rootBootstrapUrls = discoverBootstrapUrls(response.text, response.finalUrl).slice(0, 50);
+        }
+
         if (!response.ok) continue;
 
         for (const candidate of extractCandidates(response.text, response.finalUrl)) {
@@ -191,7 +219,13 @@ export async function discoverXyDashboardSalesApi() {
           }
         }
 
-        for (const url of discoverJsUrls(response.text, response.finalUrl)) {
+        const discoveredUrls = [
+          ...discoverJsUrls(response.text, response.finalUrl),
+          ...(requested === ROOT_URL || /text\/html/i.test(response.contentType)
+            ? discoverBootstrapUrls(response.text, response.finalUrl)
+            : []),
+        ];
+        for (const url of discoveredUrls) {
           if (!visited.has(url) && queue.length < MAX_FILES * 2) queue.push(url);
         }
       } catch (error) {
@@ -219,6 +253,8 @@ export async function discoverXyDashboardSalesApi() {
         message,
         response_summary: {
           root_url: ROOT_URL,
+          root_preview: rootPreview,
+          root_bootstrap_urls: rootBootstrapUrls,
           files_scanned: files.length,
           total_bytes: totalBytes,
           candidates,
