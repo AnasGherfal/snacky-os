@@ -60,6 +60,7 @@ export class XyWebApiError extends Error {
 }
 
 const defaultBaseUrl = "https://xcx.xynetweb.com/sram";
+const xyApiOrigin = "https://xcx.xynetweb.com";
 const dashboardOrigin = "https://www.xynetweb.com";
 
 function envFlag(value: string | undefined, defaultValue: boolean) {
@@ -80,6 +81,14 @@ function cleanPath(path: string) {
   return path.replace(/^\/+/, "");
 }
 
+function requestUrl(path: string, baseUrl: string) {
+  const raw = String(path ?? "").trim();
+  if (/^https:\/\//i.test(raw)) return raw;
+  const normalizedPath = `/${cleanPath(raw)}`;
+  if (normalizedPath.startsWith("/service-")) return `${xyApiOrigin}${normalizedPath}`;
+  return `${baseUrl}${normalizedPath}`;
+}
+
 function responseMessage(response: XyWebApiResponse) {
   const raw = response.message ?? response.msg ?? response.error ?? response.errMsg ?? null;
   return raw === null || raw === undefined ? null : String(raw);
@@ -92,7 +101,7 @@ function responseCode(response: XyWebApiResponse) {
 
 function isFailureCode(code: string | null) {
   if (!code) return false;
-  return !["0", "1", "200", "ok", "success"].includes(code.toLowerCase());
+  return !["0", "1", "200", "h0000", "ok", "success"].includes(code.toLowerCase());
 }
 
 function looksLikeSessionFailure(code: string | null, message: string | null) {
@@ -167,13 +176,14 @@ export function assertXyWebApiReady(config = getXyWebApiConfig()) {
 export async function callXyWebApi<T = unknown>(path: string, body: XyWebApiBody): Promise<XyWebApiResult<T>> {
   const config = getXyWebApiConfig();
   const normalizedPath = `/${cleanPath(path)}`;
+  const url = requestUrl(path, config.baseUrl);
   assertXyWebApiReady(config);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
   let response: Response;
   try {
-    response = await fetch(`${config.baseUrl}${normalizedPath}`, {
+    response = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: config.authorization,
