@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {makeTripPlan,summarizeMachine} from '../src/lib/self-dispatch.ts';
+const now=new Date('2026-10-04T10:00:00Z');
+const machine={id:'m',name:'Machine',openDays:[1,2,3,4,5,6,7]};
+const lane=(code,quantity=0,capacity=8)=>({machineId:'m',slotId:code,code,productId:'p',quantity,capacity,capturedAt:now.toISOString()});
+const product=(id,available)=>({id,name:id,category:'chocolate',available});
+const input=(lanes,products,fits=[])=>({machines:[machine],lanes,products,fits,rules:[],now});
+test('missing physical lanes count as unknown on the board',()=>{const result=summarizeMachine({...machine,expectedLaneCodes:['001','002','VMS-99']},[lane('001',8)],now);assert.equal(result.lanes,2);assert.equal(result.unknown,1);assert.equal(result.empty,0);assert.equal(result.priority,'verify');});
+test('a single fresh full lane does not hide an older unknown lane',()=>{const result=summarizeMachine(machine,[lane('001',8),{...lane('002'),capturedAt:'2026-10-03T00:00:00Z'}],now);assert.equal(result.priority,'verify');assert.equal(result.unknown,1);});
+test('remaining old stock is not removed for an insufficient substitute',()=>{const result=makeTripPlan(input([lane('001',3)],[product('p',0),product('q',1)],[{slotId:'001',productId:'q',rule:'allowed',capacity:6}]));assert.equal(result.lanes[0].remove,0);assert.equal(result.lanes[0].after,3);assert.equal(result.totalUnits,0);});
+test('multiple nonempty replacements cannot consume one another’s planned goods',()=>{const result=makeTripPlan(input([lane('001',3),lane('002',3)],[product('p',0),product('q',8)],['001','002'].map(slotId=>({slotId,productId:'q',rule:'allowed',capacity:6}))));assert.equal(result.replacements,1);assert.equal(result.totalUnits,6);assert.ok(result.lanes.every(l=>l.after>=3));});
+test('empty lanes are covered before a full replacement uses the remaining goods',()=>{const result=makeTripPlan(input([lane('001',0),lane('002',3)],[product('p',0),product('q',7)],['001','002'].map(slotId=>({slotId,productId:'q',rule:'allowed',capacity:6}))));assert.equal(result.emptyAfter,0);assert.equal(result.lanes[1].take,6);assert.equal(result.totalUnits,7);});
+test('implausible lane capacity fails closed instead of looping over it',()=>{const result=makeTripPlan(input([lane('001',0,1e9)],[product('p',1e9)]));assert.equal(result.totalUnits,0);assert.equal(result.unknownAfter,1);});

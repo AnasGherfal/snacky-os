@@ -1,0 +1,45 @@
+name: Operator self-dispatch
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/operator-self-dispatch.yml'
+      - 'src/**/self-dispatch*'
+      - 'src/lib/today-work-server.ts'
+      - 'src/**/today-work/**'
+      - 'src/**/work-board/**'
+      - 'scripts/test-self-dispatch*'
+      - 'scripts/test-today-work*'
+      - 'scripts/self-dispatch-e2e/**'
+      - 'supabase/migrations/*self_dispatch*'
+permissions:
+  contents: read
+concurrency:
+  group: self-dispatch-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package credential-free verification sources
+        run: |
+          mkdir -p diagnostics
+          tar --exclude='.env*' --exclude='node_modules' --exclude='.temp' --exclude='.branches' -czf diagnostics/verification-source.tar.gz src scripts supabase package.json package-lock.json tsconfig.json next.config.* next-env.d.ts postcss.config.*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: self-dispatch-verification-source
+          path: diagnostics/verification-source.tar.gz
+          retention-days: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Planning and API behavioural tests
+        run: node --experimental-strip-types --experimental-vm-modules --loader ./scripts/ts-alias-loader.mjs --test scripts/test-self-dispatch*.mjs scripts/test-today-work.mjs
+      - name: Type check
+        run: npx tsc --noEmit
