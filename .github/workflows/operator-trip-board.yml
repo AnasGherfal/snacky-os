@@ -19,17 +19,36 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Private source snapshot for local validation
-        run: git archive --format=tar HEAD | gzip > operator-trip-source.tar.gz
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration name with Supabase CLI when needed
+        run: |
+          if ! find supabase/migrations -name '*_operator_dispatch.sql' | grep -q .; then
+            supabase migration new operator_dispatch
+          fi
+          find supabase/migrations -name '*_operator_dispatch.sql'
       - uses: actions/upload-artifact@v4
         with:
-          name: operator-trip-source
-          path: operator-trip-source.tar.gz
+          name: operator-dispatch-migration
+          path: supabase/migrations/*_operator_dispatch.sql
           retention-days: 1
       - uses: actions/setup-node@v4
         if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
@@ -42,3 +61,16 @@ jobs:
         if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
       - run: npx tsc --noEmit
         if: ${{ hashFiles('scripts/test-operator-dispatch.mjs') != '' }}
+      - name: Atomic claims and expiry against disposable PostgreSQL
+        if: ${{ hashFiles('scripts/test-operator-dispatch-db.sql') != '' }}
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGDATABASE: postgres
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-operator-dispatch-fixture.sql
+          psql -X -v ON_ERROR_STOP=1 -f $(find supabase/migrations -name '*_operator_dispatch.sql')
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-operator-dispatch-db.sql
+          bash scripts/test-operator-dispatch-concurrency.sh
