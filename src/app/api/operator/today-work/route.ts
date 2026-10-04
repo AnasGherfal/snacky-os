@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { canManageOperations } from '@/lib/authz';
+import { projectMandatoryWork } from '@/lib/self-dispatch-duties';
 import { loadTodayWork, previewTodayTrip, requireTodayWorkActor, TodayWorkError } from '@/lib/today-work-server';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,7 @@ export async function GET() {
     const work=await loadTodayWork(profile,db);
     return NextResponse.json({board:work.board,myTrips:work.mine,generatedAt:work.generatedAt,
       recommendedMachineIds:work.recommendedMachineIds,canManage:canManageOperations(profile),
+      dailyCoverage:projectMandatoryWork(work.board,new Date()),
       dispatchEnabled:false,mode:'read_only_preview'},{headers});
   } catch(error) { return failure(error); }
 }
