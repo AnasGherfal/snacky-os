@@ -105,6 +105,13 @@ type SalesSignalRow = {
   latest_sale_at: string | null;
 };
 
+type RouteFillHistoryRow = {
+  machine_id?: string | null;
+  product_id?: string | null;
+  actual_qty?: unknown;
+  created_at?: string | null;
+};
+
 type FitHistoryRow = {
   machine_id: string;
   slot_code: string;
@@ -146,6 +153,12 @@ type PlanTask = {
   capacity: number;
   neededQty: number;
   allowSubstitution: boolean;
+  transitionMode: "none" | "empty_lane" | "replace_now";
+  returnCurrentQty: number;
+  dailyVelocity: number;
+  serviceIntervalDays: number;
+  projectedQtyAtNextService: number;
+  transitionFloorQty: number;
   candidates: Candidate[];
 };
 
@@ -166,6 +179,10 @@ type ValidatedDecision = AiDecision & {
   selectedProductName: string;
   neededQty: number;
   substituted: boolean;
+  transitionMode: "none" | "empty_lane" | "replace_now";
+  returnCurrentQty: number;
+  projectedQtyAtNextService: number;
+  transitionFloorQty: number;
 };
 
 export type SmartRoutePlanItem = {
@@ -194,6 +211,10 @@ export type SmartRoutePlanResult = {
     quantity: number;
     reason: string;
     confidence: "high" | "medium" | "low";
+    transitionMode: "empty_lane" | "replace_now";
+    returnCurrentQty: number;
+    projectedQtyAtNextService: number;
+    transitionFloorQty: number;
   }>;
   warnings: string[];
   freshness: {
@@ -308,6 +329,57 @@ function routeFillMap(rows: Array<{ machine_id?: string | null; product_id?: str
   return result;
 }
 
+function tripoliServiceDate(value: string | null | undefined) {
+  const timestamp = Date.parse(String(value ?? ""));
+  if (!Number.isFinite(timestamp)) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Tripoli",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const map = new Map(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  const year = map.get("year");
+  const month = map.get("month");
+  const day = map.get("day");
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function median(values: number[]) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function serviceIntervalDaysMap(rows: RouteFillHistoryRow[]) {
+  const datesByMachine = new Map<string, Set<string>>();
+  rows.forEach((row) => {
+    const machineId = String(row.machine_id ?? "");
+    const date = tripoliServiceDate(row.created_at);
+    if (!machineId || !date) return;
+    const dates = datesByMachine.get(machineId) ?? new Set<string>();
+    dates.add(date);
+    datesByMachine.set(machineId, dates);
+  });
+
+  const result = new Map<string, number>();
+  datesByMachine.forEach((dateSet, machineId) => {
+    const dates = Array.from(dateSet).sort();
+    const gaps: number[] = [];
+    for (let index = 1; index < dates.length; index += 1) {
+      const previous = Date.parse(`${dates[index - 1]}T00:00:00Z`);
+      const current = Date.parse(`${dates[index]}T00:00:00Z`);
+      const gap = (current - previous) / (24 * 60 * 60 * 1000);
+      if (Number.isFinite(gap) && gap > 0 && gap <= 21) gaps.push(gap);
+    }
+    const typical = median(gaps);
+    if (typical !== null) result.set(machineId, Math.max(1, Math.min(14, Math.round(typical))));
+  });
+
+  return result;
+}
+
 function demandMaps(rows: DemandRow[]) {
   const machine = new Map<string, number>();
   const locationType = new Map<string, number>();
@@ -413,6 +485,12 @@ async function callPlannerAI(tasks: PlanTask[]) {
     capacity: task.capacity,
     neededQty: task.neededQty,
     allowSubstitution: task.allowSubstitution,
+    transitionMode: task.transitionMode,
+    returnCurrentQty: task.returnCurrentQty,
+    dailyVelocity: Math.round(task.dailyVelocity * 100) / 100,
+    serviceIntervalDays: task.serviceIntervalDays,
+    projectedQtyAtNextService: task.projectedQtyAtNextService,
+    transitionFloorQty: task.transitionFloorQty,
     candidates: task.candidates.map((candidate) => ({
       id: candidate.productId,
       name: candidate.productName,
@@ -438,7 +516,8 @@ async function callPlannerAI(tasks: PlanTask[]) {
     "Never invent a product ID and never exceed neededQty or candidate availableUnits.",
     "The candidate list is already filtered by storage, physical fit, and location hard rules.",
     "Prefer keeping the original product when it is sufficiently available and has reasonable local demand.",
-    "If the original is unavailable and the lane is empty, choose the strongest compatible substitute. Prefer verified transaction sales: exact-machine sales first, then same venue-type sales, then network sales. Use stock-depletion demand and route history as secondary evidence.",
+    "When transitionMode is replace_now, the original product has no warehouse stock and the planner has determined the lane should be changed before it empties. Choose the strongest compatible substitute; the operator will remove the remaining old units and return them to storage before changing the XY slot. Never mix old and new products in one lane.",
+    "When transitionMode is empty_lane, choose a compatible substitute only when it is stronger than keeping the original. Prefer verified transaction sales: exact-machine sales first, then same venue-type sales, then network sales. Use stock-depletion demand and route history as secondary evidence.",
     "Respect preferred/avoid location signals. Avoid low-confidence novelty when a proven-fit seller exists.",
     "Give short operational reasons. Do not create routes or reserve stock; this is only a review draft.",
     JSON.stringify({ tasks: compactTasks }),
@@ -503,7 +582,9 @@ function fallbackDecision(task: PlanTask): AiDecision | null {
     quantity: Math.min(task.neededQty, selected.availableUnits),
     reason: selected.original
       ? "Kept the current product and limited the quantity to verified unreserved storage."
-      : "Used the highest-ranked compatible in-stock substitute for the empty lane.",
+      : task.transitionMode === "replace_now"
+        ? "The original product has no warehouse stock and this lane is in the transition zone, so use the highest-ranked compatible substitute before the lane runs empty."
+        : "Used the highest-ranked compatible in-stock substitute for the empty lane.",
     confidence: selected.fitEvidence === "explicit_slot_rule" || selected.fitEvidence === "historically_seen_exact_slot" ? "high" : "medium",
   };
 }
@@ -568,6 +649,10 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
         currentProductName: task.currentProductName,
         neededQty: task.neededQty,
         substituted: false,
+        transitionMode: task.transitionMode,
+        returnCurrentQty: task.returnCurrentQty,
+        projectedQtyAtNextService: task.projectedQtyAtNextService,
+        transitionFloorQty: task.transitionFloorQty,
         reason: "Substitution blocked because the lane still contains the current product.",
       });
       continue;
@@ -586,6 +671,10 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
       currentProductName: task.currentProductName,
       neededQty: task.neededQty,
       substituted,
+      transitionMode: task.transitionMode,
+      returnCurrentQty: task.returnCurrentQty,
+      projectedQtyAtNextService: task.projectedQtyAtNextService,
+      transitionFloorQty: task.transitionFloorQty,
     });
   }
 
@@ -615,7 +704,11 @@ function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanIte
     current.quantity += decision.quantity;
     if (decision.machineSlotId) current.machineSlotIds.add(decision.machineSlotId);
     if (decision.slotCode) current.slotCodes.add(decision.slotCode);
-    if (decision.substituted) {
+    if (decision.substituted && decision.transitionMode === "replace_now") {
+      current.notes.push(
+        `PLANNED PRODUCT CHANGE — Slot ${decision.slotCode}: remove the remaining ${decision.returnCurrentQty} × ${decision.currentProductName} from the machine and record “Returned from machine → Product replaced”. Then change and verify the XY slot as ${decision.selectedProductName}, and fill ${decision.quantity} units. Do not mix the two products in one lane. ${decision.reason}`,
+      );
+    } else if (decision.substituted) {
       current.notes.push(`Slot ${decision.slotCode}: replace ${decision.currentProductName} with ${decision.selectedProductName}. ${decision.reason}`);
     } else {
       current.notes.push(`Slot ${decision.slotCode}: ${decision.reason}`);
@@ -738,7 +831,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const demandSource: SmartRoutePlanResult["demandSource"] = useTransactionSales
     ? "xy_live_sales_plus_stock_depletion"
     : "xy_stock_depletion";
-  const recentFill = routeFillMap((refillHistoryResult.data ?? []) as Array<{ machine_id?: string | null; product_id?: string | null; actual_qty?: unknown }>);
+  const routeFillHistoryRows = (refillHistoryResult.data ?? []) as RouteFillHistoryRow[];
+  const recentFill = routeFillMap(routeFillHistoryRows);
+  const serviceIntervals = serviceIntervalDaysMap(routeFillHistoryRows);
 
   const storageByProduct = new Map<string, number>();
   (storageResult.data ?? []).forEach((row: any) => {
@@ -787,8 +882,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
     const currentQty = units(stock.current_qty);
     const capacity = units(stock.capacity) || units(slotByKey.get(`${stock.machine_id}:${stock.slot_code}`)?.capacity);
-    const neededQty = Math.max(0, capacity - currentQty);
-    if (neededQty <= 0 || capacity <= 0) continue;
+    const refillNeededQty = Math.max(0, capacity - currentQty);
+    if (refillNeededQty <= 0 || capacity <= 0) continue;
     if (stock.captured_at && (!latestStockAt || Date.parse(stock.captured_at) > Date.parse(latestStockAt))) latestStockAt = stock.captured_at;
 
     const slot = slotByKey.get(`${stock.machine_id}:${stock.slot_code}`) ?? null;
@@ -800,7 +895,32 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     const currentProfile = profileByProduct.get(product.id);
     const currentFit = fitProfileFromName(product, currentProfile?.fit_profile);
     const currentGroup = String(currentProfile?.substitution_group ?? "").trim();
-    const allowSubstitution = currentQty === 0;
+    const originalAvailableUnits = availableByProduct.get(product.id) ?? 0;
+    const serviceIntervalDays = serviceIntervals.get(machine.id) ?? 3;
+    const exactMachineSales = sales.machine.get(`${machine.id}:${product.id}`) ?? 0;
+    const exactMachineDemand = demand.machine.get(`${machine.id}:${product.id}`) ?? 0;
+    const velocityUnits21d = useTransactionSales && exactMachineSales > 0 ? exactMachineSales : exactMachineDemand;
+    const dailyVelocity = velocityUnits21d / 21;
+    const expectedDepletionBeforeNextService = Math.max(0, Math.ceil(dailyVelocity * serviceIntervalDays));
+    const transitionFloorQty = Math.max(2, Math.ceil(capacity * 0.5));
+    const projectedQtyAtNextService = Math.max(0, currentQty - expectedDepletionBeforeNextService);
+    const replaceNow = originalAvailableUnits <= 0
+      && currentQty > 0
+      && (currentQty <= transitionFloorQty || projectedQtyAtNextService <= transitionFloorQty);
+    const transitionMode: PlanTask["transitionMode"] = currentQty === 0
+      ? "empty_lane"
+      : replaceNow
+        ? "replace_now"
+        : "none";
+    const allowSubstitution = transitionMode !== "none";
+    const neededQty = replaceNow ? capacity : refillNeededQty;
+
+    if (originalAvailableUnits <= 0 && currentQty > 0 && !replaceNow) {
+      warnings.push(
+        `${product.name} has no verified warehouse stock for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code}, but the lane is still ${currentQty}/${capacity}. Smart Route will switch it before empty once it reaches the ${transitionFloorQty}-unit transition zone or is forecast to cross that zone before the next typical service.`,
+      );
+      continue;
+    }
 
     const explicitRulesForSlot = slot
       ? slotRules.filter((row) => row.machine_slot_id === slot.id)
@@ -907,6 +1027,12 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       capacity,
       neededQty,
       allowSubstitution,
+      transitionMode,
+      returnCurrentQty: replaceNow ? currentQty : 0,
+      dailyVelocity,
+      serviceIntervalDays,
+      projectedQtyAtNextService,
+      transitionFloorQty,
       candidates,
     });
   }
@@ -961,6 +1087,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       quantity: decision.quantity,
       reason: decision.reason,
       confidence: decision.confidence,
+      transitionMode: decision.transitionMode === "replace_now" ? "replace_now" as const : "empty_lane" as const,
+      returnCurrentQty: decision.returnCurrentQty,
+      projectedQtyAtNextService: decision.projectedQtyAtNextService,
+      transitionFloorQty: decision.transitionFloorQty,
     }));
 
   const successfulAiResults = aiResults.filter((result) => result.ok);
