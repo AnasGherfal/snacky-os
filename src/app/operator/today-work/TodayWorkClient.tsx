@@ -3,14 +3,17 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Priority, TripPlan } from '@/lib/self-dispatch';
+import type { projectMandatoryWork } from '@/lib/self-dispatch-duties';
+import DailyCoveragePanel from './DailyCoveragePanel';
 
 type MachineCard = {
   machineId:string; name:string; priority:Priority; empty:number; low:number; unknown:number;
   lanes:number; meanFullness:number|null; stockPercent:number|null; openToday:boolean; actionable:boolean;
-  assignments:{operatorName:string;mine:boolean;routeId:string|null;routeDate:string}[];
+  assignments:{operatorName:string;operatorAssigned:boolean;mine:boolean;routeId:string|null;routeDate:string}[];
 };
 type Board = {
   board:MachineCard[];
+  dailyCoverage:ReturnType<typeof projectMandatoryWork>;
   myTrips:{id:string;date:string;status:string;remaining:number;machineNames:string[]}[];
   generatedAt:string; recommendedMachineIds:string[]; canManage:boolean; dispatchEnabled:false;
 };
@@ -126,6 +129,8 @@ export default function TodayWorkClient({locale}:{locale:'en'|'ar'}) {
         <p className="mt-3 text-sm font-semibold text-emerald-800">{t('Continue assigned trip →','متابعة الجولة المسندة ←')}</p>
       </Link>)}</div>
     </section>:null}
+
+    {board?.dailyCoverage?<DailyCoveragePanel coverage={board.dailyCoverage} selected={selected} locale={locale}/>:null}
 
     <section className="space-y-3" aria-label={t('Machines needing service','الماكينات المحتاجة تعبئة')}>
       <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold">{t('Choose this trip','اختار ماكينات هذه الجولة')}</h2><p className="mt-1 text-sm text-slate-500">{t('Start with one stop. Other machines stay on the board.','ابدأ بماكينة واحدة. باقي الماكينات تبقى في القائمة.')}</p></div>
