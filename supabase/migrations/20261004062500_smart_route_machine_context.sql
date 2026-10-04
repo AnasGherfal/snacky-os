@@ -14,15 +14,19 @@ revoke all on table public.smart_route_machine_context from public, anon, authen
 grant select, insert, update, delete on table public.smart_route_machine_context to service_role;
 
 insert into public.smart_route_machine_context (machine_id, location_type, location_label, notes)
-values
-  ('e750a3b2-3602-48d9-a2e0-0f2fe2a571bd', 'university', 'Attahadi University', 'Seeded from the existing machine identity for smart planning only.'),
-  ('b1239bf8-59f0-41f2-9d99-b448340cad0b', 'university', 'Khalij University', 'Seeded from the existing machine identity for smart planning only.'),
-  ('448a321b-efb9-4463-9364-c211a5c3e9ad', 'school', 'Elite Future School', 'Seeded from the existing machine identity for smart planning only.'),
-  ('615785e2-6f64-4f50-a46e-6fdfb78ec364', 'mall', 'Diplomacy Mall', 'Seeded from the existing machine identity for smart planning only.'),
-  ('f7be8b3a-81e2-4691-abbb-2f5e0ce6dcd4', 'mall', 'HT Land', 'Seeded from the existing machine identity for smart planning only.'),
-  ('91ddbc7e-8ea1-44c0-b0dc-82e4883a1836', 'mall', 'HT Mall', 'Seeded from the existing machine identity for smart planning only.'),
-  ('57b9bef8-7fe4-4620-bf48-0b08f694a998', 'hospital', 'Almouasafat Hospital', 'Seeded from the existing machine identity for smart planning only.'),
-  ('436f0318-a742-4e1e-b196-ef950efaf09f', 'hospital', 'Istiklal', 'Seeded from the existing machine identity for smart planning only.')
+select seed.machine_id, seed.location_type, seed.location_label, seed.notes
+from (
+  values
+    ('e750a3b2-3602-48d9-a2e0-0f2fe2a571bd'::uuid, 'university', 'Attahadi University', 'Seeded from the existing machine identity for smart planning only.'),
+    ('b1239bf8-59f0-41f2-9d99-b448340cad0b'::uuid, 'university', 'Khalij University', 'Seeded from the existing machine identity for smart planning only.'),
+    ('448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid, 'school', 'Elite Future School', 'Seeded from the existing machine identity for smart planning only.'),
+    ('615785e2-6f64-4f50-a46e-6fdfb78ec364'::uuid, 'mall', 'Diplomacy Mall', 'Seeded from the existing machine identity for smart planning only.'),
+    ('f7be8b3a-81e2-4691-abbb-2f5e0ce6dcd4'::uuid, 'mall', 'HT Land', 'Seeded from the existing machine identity for smart planning only.'),
+    ('91ddbc7e-8ea1-44c0-b0dc-82e4883a1836'::uuid, 'mall', 'HT Mall', 'Seeded from the existing machine identity for smart planning only.'),
+    ('57b9bef8-7fe4-4620-bf48-0b08f694a998'::uuid, 'hospital', 'Almouasafat Hospital', 'Seeded from the existing machine identity for smart planning only.'),
+    ('436f0318-a742-4e1e-b196-ef950efaf09f'::uuid, 'hospital', 'Istiklal', 'Seeded from the existing machine identity for smart planning only.')
+) as seed(machine_id, location_type, location_label, notes)
+join public.machines m on m.id = seed.machine_id
 on conflict (machine_id) do update
 set
   location_type = excluded.location_type,
