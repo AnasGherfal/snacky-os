@@ -113,7 +113,8 @@ function looksLikeSessionFailure(code: string | null, message: string | null) {
     value.includes("forbidden") ||
     value.includes("session expired") ||
     value.includes("token expired") ||
-    value.includes("login expired")
+    value.includes("login expired") ||
+    value.includes("s9999")
   );
 }
 
