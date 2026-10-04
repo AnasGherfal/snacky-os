@@ -19,10 +19,10 @@ export async function loadCoverageSettings() {
   const [m,p,s] = await Promise.all([
     db.from('machines').select('id,name,machine_code,status').order('name').limit(501),
     db.from('team_members').select('id,full_name,role,roles,active,active_status').order('full_name').limit(501),
-    db.from('smart_work_coverage_settings').select('id,kind,machine_id,operator_id,value,version,updated_at').order('id').limit(1001),
+    db.from('smart_work_coverage_settings').select('id,kind,machine_id,operator_id,value,version,updated_at').order('id').limit(501),
   ]);
   if (m.error || p.error || s.error || !m.data || !p.data || !s.data) throw new CoverageAccessError('Could not load saved coverage settings. Nothing was changed.',503);
-  if (m.data.length>500 || p.data.length>500 || s.data.length>1000) throw new CoverageAccessError('Coverage setup exceeded its supported size. No partial list is shown.',503);
+  if (m.data.length>500 || p.data.length>500 || s.data.length>500) throw new CoverageAccessError('Coverage setup exceeded its supported size. No partial list is shown.',503);
   return {machines:m.data.map(x=>({id:String(x.id),name:String(x.name||x.machine_code),active:x.status==='active'})),
     operators:p.data.filter(x=>canExecuteRoutes(x)).map(x=>({id:String(x.id),name:String(x.full_name),active:x.active===true&&x.active_status==='active'})),
     settings:s.data as CoverageRow[],coordinationEnabled:false as const,dispatchEnabled:false as const};

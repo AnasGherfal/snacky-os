@@ -62,6 +62,7 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f scripts/smart-work-coverage-fixture.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
           psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
       - uses: actions/setup-node@v4
         with:
