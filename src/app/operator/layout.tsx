@@ -24,6 +24,7 @@ export default async function OperatorLayout({ children }: { children: ReactNode
     </div>
     <nav aria-label={ar ? "عمل اليوم" : "Today’s Work"} dir={ar ? "rtl" : "ltr"} className="mb-4 flex flex-wrap gap-2">
       <Link className="btn-secondary min-h-11" prefetch={false} href="/operator/today-work">{ar ? "أولويات التعبئة — عرض فقط" : "Refill priorities — view only"}</Link>
+      <Link className="btn-secondary min-h-11" prefetch={false} href="/operator/daily-duties">{ar ? 'واجبات التعبئة' : 'Required refills'}</Link>
       {isOwnerAdminRole(profile) ? <Link className="btn-secondary min-h-11" prefetch={false} href="/settings/smart-work-coverage">{ar ? 'إعداد التغطية وساعات العمل' : 'Coverage & work hours setup'}</Link> : null}
     </nav>
     {children}
