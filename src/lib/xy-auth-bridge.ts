@@ -344,7 +344,8 @@ export async function probeXySalesAuthBridge() {
     winningMethod = vdmAttempts.find((row) => row.success && row.rowCount > 0)?.method ?? null;
   }
 
-  if (!winningMethod) {
+  const allowLegacySsoRetry = String(process.env.XY_AUTH_BRIDGE_SSO_RETRY ?? "").trim().toLowerCase() === "true";
+  if (!winningMethod && allowLegacySsoRetry) {
     for (const strategy of ["secret_as_inner_hash", "secret_as_plaintext"] as const) {
       const login = await ssoAttempt(strategy);
       attempts.push(login.summary);
