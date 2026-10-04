@@ -127,19 +127,25 @@ type SmartPlanSubstitution = {
   quantity: number;
   reason: string;
   confidence: "high" | "medium" | "low";
+  transitionMode?: "empty_lane" | "replace_now";
+  returnCurrentQty?: number;
+  projectedQtyAtNextService?: number;
+  transitionFloorQty?: number;
 };
 
 type SmartPlanResponse = {
   plannerMode: "ai" | "deterministic_fallback";
   model: string | null;
   summary: string;
-  demandSource: "xy_stock_depletion";
+  demandSource: "xy_live_sales" | "xy_live_sales_plus_stock_depletion" | "xy_stock_depletion";
   manualStopItems: ManualStopItem[];
   substitutions: SmartPlanSubstitution[];
   warnings: string[];
   freshness: {
     xyOutcome: string;
     latestStockAt: string | null;
+    latestSalesAt?: string | null;
+    salesSyncOutcome?: string;
     generatedAt: string;
   };
 };
@@ -1516,16 +1522,40 @@ export function RouteCreateForm({
             </div>
             <p className="mt-1 leading-6">{smartPlan.summary}</p>
             <p className="mt-1 text-xs text-violet-800">
-              {tr(locale, "Uses verified unreserved storage, current XY lanes, fit rules, location rules, stock-depletion demand and past route fills. Nothing is reserved until you create the route.", "تستخدم المخزون المؤكد غير المحجوز، وفتحات XY الحالية، وقواعد الملاءمة والموقع، وحركة المخزون، وتاريخ التعبئة. لا يتم حجز أي مخزون حتى تنشئ الجولة.")}
+              {tr(
+                locale,
+                smartPlan.demandSource === "xy_live_sales_plus_stock_depletion"
+                  ? "Uses verified unreserved storage, current XY lanes, real recent sales, stock-depletion demand, fit rules, location rules and past route fills. Nothing is reserved until you create the route."
+                  : "Uses verified unreserved storage, current XY lanes, stock-depletion demand, fit rules, location rules and past route fills. Nothing is reserved until you create the route.",
+                smartPlan.demandSource === "xy_live_sales_plus_stock_depletion"
+                  ? "تستخدم المخزون المؤكد غير المحجوز، وفتحات XY الحالية، والمبيعات الحديثة الفعلية، وحركة المخزون، وقواعد الملاءمة والموقع، وتاريخ التعبئة. لا يتم حجز أي مخزون حتى تنشئ الجولة."
+                  : "تستخدم المخزون المؤكد غير المحجوز، وفتحات XY الحالية، وحركة المخزون، وقواعد الملاءمة والموقع، وتاريخ التعبئة. لا يتم حجز أي مخزون حتى تنشئ الجولة.",
+              )}
             </p>
             {smartPlan.substitutions.length ? (
               <div className="mt-3 space-y-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-violet-700">{tr(locale, "Suggested substitutions", "البدائل المقترحة")}</div>
                 {smartPlan.substitutions.map((item) => (
                   <div key={`${item.machineId}:${item.slotCode}:${item.toProductId}`} className="rounded-lg border border-violet-100 bg-white px-3 py-2">
-                    <div className="font-medium text-slate-950">
-                      {tr(locale, `Slot ${item.slotCode}: ${item.fromProductName} → ${item.toProductName} × ${item.quantity}`, `الفتحة ${item.slotCode}: ${item.fromProductName} ← ${item.toProductName} × ${item.quantity}`)}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-medium text-slate-950">
+                        {tr(locale, `Slot ${item.slotCode}: ${item.fromProductName} → ${item.toProductName} × ${item.quantity}`, `الفتحة ${item.slotCode}: ${item.fromProductName} ← ${item.toProductName} × ${item.quantity}`)}
+                      </div>
+                      {item.transitionMode === "replace_now" ? (
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900">
+                          {tr(locale, "Change before empty", "تغيير قبل النفاد")}
+                        </span>
+                      ) : null}
                     </div>
+                    {item.transitionMode === "replace_now" ? (
+                      <div className="mt-1 rounded-md bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+                        {tr(
+                          locale,
+                          `Remove and return ${item.returnCurrentQty ?? 0} old units first · transition floor ${item.transitionFloorQty ?? 0} · projected next-service stock ${item.projectedQtyAtNextService ?? 0}`,
+                          `أزل وأعد ${item.returnCurrentQty ?? 0} وحدات قديمة أولاً · حد التغيير ${item.transitionFloorQty ?? 0} · المخزون المتوقع عند الزيارة القادمة ${item.projectedQtyAtNextService ?? 0}`,
+                        )}
+                      </div>
+                    ) : null}
                     <div className="mt-0.5 text-xs text-slate-600">{item.reason}</div>
                   </div>
                 ))}
