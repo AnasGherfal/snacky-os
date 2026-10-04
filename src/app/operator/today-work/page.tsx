@@ -10,7 +10,7 @@ export default async function TodayWorkPage() {
   const profile=await getCurrentProfile();
   if(!profile) redirect('/login');
   if(profile.active_status!=='active' || !canExecuteRoutes(profile)) redirect('/unauthorized');
-  if(profile.must_change_password) redirect('/change-password');
+  if(profile.must_change_password) redirect('/account');
   const locale=await getRequestLocale();
   return <TodayWorkClient locale={locale} />;
 }
