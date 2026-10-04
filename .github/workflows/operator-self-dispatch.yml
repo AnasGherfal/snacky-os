@@ -8,6 +8,7 @@ on:
       - 'src/**/today-work/**'
       - 'src/**/work-board/**'
       - 'scripts/test-self-dispatch*'
+      - 'scripts/self-dispatch-e2e/**'
       - 'supabase/migrations/*self_dispatch*'
 permissions:
   contents: read
@@ -17,20 +18,25 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Source snapshot for isolated verification
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration filename using CLI
         run: |
           mkdir -p diagnostics
-          git archive --format=zip HEAD > diagnostics/source.zip
-          git rev-parse HEAD > diagnostics/source-commit.txt
+          if ! ls supabase/migrations/*operator_self_dispatch.sql >/dev/null 2>&1; then
+            supabase migration new operator_self_dispatch
+          fi
+          ls supabase/migrations/*operator_self_dispatch.sql > diagnostics/migration-name.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: self-dispatch-source
-          path: diagnostics/source*
+          name: self-dispatch-migration-name
+          path: diagnostics/migration-name.txt
           retention-days: 1
       - uses: actions/setup-node@v4
         with:
@@ -42,7 +48,7 @@ jobs:
           if test -f scripts/test-self-dispatch.mjs; then
             node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-self-dispatch*.mjs
           else
-            echo 'Source inspection stage; dispatch implementation follows.'
+            echo 'Migration naming stage; behavioral tests follow.'
           fi
       - name: Type check
         run: npx tsc --noEmit
