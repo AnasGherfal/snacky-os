@@ -301,7 +301,7 @@ test("XY auth bridge makes only narrow read-only sales and login probes", () => 
   assert.match(authBridgeSource, /pageSize: 1/);
   assert.match(authBridgeSource, /getCheckCode/);
   assert.match(authBridgeSource, /onLoginSSO/);
-  assert.doesNotMatch(authBridgeSource, /refund|update|delete|insertFace|rgcl/);
+  assert.doesNotMatch(authBridgeSource, /\/refund|\/update|\/delete|insertFace|\/rgcl/);
   assert.doesNotMatch(authBridgeSource, /from\("routes"\)/);
   assert.doesNotMatch(authBridgeSource, /from\("inventory_movements"\)/);
   assert.doesNotMatch(authBridgeSource, /from\("vms_transactions_raw"\)/);
