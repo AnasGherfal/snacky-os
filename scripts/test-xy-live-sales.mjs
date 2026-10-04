@@ -118,6 +118,7 @@ test("verified XY live-sales defaults use Trade details and no longer require en
 
 test("XY web helper accepts dashboard H0000 success and routes service-order at the XY root", () => {
   assert.match(webApiSource, /"h0000"/);
+  assert.match(webApiSource, /value\.includes\("s9999"\)/);
   assert.match(webApiSource, /normalizedPath\.startsWith\("\/service-"\)/);
   assert.match(webApiSource, /xyApiOrigin/);
   assert.match(webApiSource, /const url = requestUrl\(path, config\.baseUrl\)/);
