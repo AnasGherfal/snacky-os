@@ -33,10 +33,15 @@ jobs:
             supabase migration new operator_self_dispatch
           fi
           ls supabase/migrations/*operator_self_dispatch.sql > diagnostics/migration-name.txt
+      - name: Package credential-free verification sources
+        run: |
+          tar --exclude='.env*' --exclude='node_modules' --exclude='.temp' --exclude='.branches' -czf diagnostics/verification-source.tar.gz src scripts supabase package.json package-lock.json tsconfig.json next.config.* next-env.d.ts postcss.config.* 2>/dev/null || test -f diagnostics/verification-source.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: self-dispatch-migration-name
-          path: diagnostics/migration-name.txt
+          name: self-dispatch-verification-source
+          path: |
+            diagnostics/verification-source.tar.gz
+            diagnostics/migration-name.txt
           retention-days: 1
       - uses: actions/setup-node@v4
         with:
