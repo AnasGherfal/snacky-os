@@ -1,0 +1,56 @@
+'use client';
+import Link from 'next/link';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
+import type { MachineCoverage, WorkWindow } from '@/lib/smart-work-coverage';
+import type { CoverageRow, loadCoverageSettings } from '@/lib/smart-work-coverage-server';
+type Initial=Awaited<ReturnType<typeof loadCoverageSettings>>;
+const weekdays=[['Monday','الاثنين'],['Tuesday','الثلاثاء'],['Wednesday','الأربعاء'],['Thursday','الخميس'],['Friday','الجمعة'],['Saturday','السبت'],['Sunday','الأحد']];
+export default function CoverageSettingsClient({initial,ar}:{initial:Initial;ar:boolean}) {
+  const [rows,setRows]=useState(initial.settings),[tab,setTab]=useState<'machine'|'operator'>('machine');
+  const t=(en:string,a:string)=>ar?a:en;
+  async function save(body:unknown):Promise<CoverageRow>{
+    const response=await fetch('/api/settings/smart-work-coverage',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await response.json();
+    if(!response.ok||!data.saved) throw new Error(data.error||'Save failed. Reload before trying again.');
+    setRows(old=>[...old.filter(r=>r.id!==data.saved.id),data.saved]);return data.saved;
+  }
+  return <main dir={ar?'rtl':'ltr'} className="mx-auto max-w-5xl space-y-5 pb-10">
+    <header className="flex flex-wrap justify-between gap-3"><div><p className="text-sm font-semibold text-emerald-800">SNACKY · {t('Smart Work setup','إعداد العمل الذكي')}</p><h1 className="mt-1 text-3xl font-bold">{t('Coverage & work hours','التغطية وساعات العمل')}</h1><p className="mt-2 text-sm text-slate-600">{t('Approve the rules once. All times are Libya time.','اعتمد قواعد العمل مرة واحدة. جميع الأوقات بتوقيت ليبيا.')}</p></div><Link href="/settings" className="btn-secondary h-fit">{t('Settings','الإعدادات')}</Link></header>
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><strong>{t('Setup only — no assignments are changed.','إعدادات فقط — لا تتغير التكليفات.')}</strong>{' '}{t('Saving primary/backup coverage does not create duties, start trips, reserve goods, or approve pickup. Existing routes remain unchanged.','حفظ المشغّل الأساسي والبديل لا ينشئ واجبات أو جولات، ولا يحجز منتجات أو يسمح باستلامها. الجولات الحالية لا تتغير.')}</div>
+    <div className="grid grid-cols-2 gap-2" aria-label={t('Coverage sections','أقسام التغطية')}>{(['machine','operator'] as const).map(x=><button key={x} type="button" aria-pressed={tab===x} onClick={()=>setTab(x)} className={`min-h-12 rounded-xl border px-3 py-2 font-semibold ${tab===x?'border-emerald-800 bg-emerald-800 text-white':'border-slate-200 bg-white text-slate-700'}`}>{x==='machine'?t('Machine coverage','تغطية الأجهزة'):t('Operator availability','توفّر المشغّلين')}</button>)}</div>
+    <p className="text-sm leading-6 text-slate-600">{tab==='machine'?t('Set a primary, an optional backup and the site access window. A backup is eligibility for future planning, not automatic acceptance of a handover.','حدّد مشغّلاً أساسياً وبديلًا اختياريًا وساعات دخول الموقع. اختيار البديل لا يعني قبوله التلقائي لأي تسليم عمل.'):t('Enter only approved working days and time available for refill work, after breaks and other tasks. Unconfigured days are unavailable, not assumed working days.','أدخل أيام العمل المعتمدة والوقت المتاح للتعبئة بعد الاستراحات والمهام الأخرى. الأيام غير المحددة لا تُعتبر أيام عمل.')}</p>
+    <section className="space-y-3">{tab==='machine'?initial.machines.map(m=>{
+      const row=rows.find(r=>r.machine_id===m.id);return <MachineForm key={m.id} machine={m} row={row} people={initial.operators} save={save} ar={ar}/>;
+    }):initial.operators.map(p=>{const row=rows.find(r=>r.operator_id===p.id);return <OperatorForm key={p.id} person={p} row={row} save={save} ar={ar}/>;})}</section>
+  </main>;
+}
+type Saver=(body:unknown)=>Promise<CoverageRow>;
+function Status({row,ar}:{row?:CoverageRow;ar:boolean}) {return <span className={`rounded-full px-3 py-1 text-xs font-semibold ${!row?'bg-amber-100 text-amber-900':row.value.enabled?'bg-emerald-100 text-emerald-900':'bg-slate-100 text-slate-700'}`}>{!row?(ar?'غير محدد':'Not configured'):row.value.enabled?(ar?'إعداد محفوظ':'Configured'):(ar?'معطّل':'Disabled')}</span>;}
+function MachineForm({machine,row,people,save,ar}:{machine:Initial['machines'][number];row?:CoverageRow;people:Initial['operators'];save:Saver;ar:boolean}) {
+  const t=(en:string,a:string)=>ar?a:en,[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);
+  const v=(row?.value||{}) as Partial<MachineCoverage>;
+  async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();const f=new FormData(event.currentTarget);setBusy(true);setError('');setSaved(false);
+    try{await save({kind:'machine',id:machine.id,version:row?.version||0,value:{primaryId:f.get('primaryId'),backupId:f.get('backupId')||null,days:f.getAll('days').map(Number),accessStart:f.get('accessStart'),accessEnd:f.get('accessEnd'),travelMinutes:Number(f.get('travelMinutes')),serviceMinutes:Number(f.get('serviceMinutes')),enabled:f.get('enabled')==='on'}});setSaved(true);}catch(e){setError(e instanceof Error?e.message:'Save failed.');}finally{setBusy(false);}}
+  return <details className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5"><summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 font-bold"><span>{machine.name}{!machine.active?` · ${t('Inactive','غير نشط')}`:''}</span><Status row={row} ar={ar}/></summary>
+    <form onSubmit={submit} className="mt-5 space-y-4" key={row?.version||0}><div className="grid gap-4 sm:grid-cols-2">{(['primaryId','backupId'] as const).map(field=><label key={field} className="space-y-1 text-sm font-medium"><span>{field==='primaryId'?t('Primary operator','المشغّل الأساسي'):t('Backup operator (optional)','المشغّل البديل (اختياري)')}</span><select className="field-input w-full" name={field} required={field==='primaryId'} defaultValue={v[field]||''}><option value="">{t('Not selected','غير محدد')}</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}{!p.active?` · ${t('Inactive','غير نشط')}`:''}</option>)}</select></label>)}</div>
+      <fieldset><legend className="mb-2 text-sm font-medium">{t('Site access days','أيام دخول الموقع')}</legend><div className="flex flex-wrap gap-2">{weekdays.map((day,i)=><label key={i} className="flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm"><input type="checkbox" name="days" value={i+1} defaultChecked={v.days?.includes(i+1)}/>{day[ar?1:0]}</label>)}</div></fieldset>
+      <div className="grid grid-cols-2 gap-4">{[['accessStart','Access from','الدخول من'],['accessEnd','Access until / latest finish','الدخول حتى / آخر موعد للإنهاء']].map(([name,en,a])=><label key={name} className="space-y-1 text-sm font-medium"><span>{t(en,a)}</span><input className="field-input w-full" type="time" dir="ltr" name={name} required defaultValue={v[name as 'accessStart'|'accessEnd']||''}/></label>)}</div>
+      <div className="grid grid-cols-2 gap-4">{[['travelMinutes','Travel allowance (minutes)','الوقت المخصص للتنقل (دقائق)'],['serviceMinutes','Refill time (minutes)','وقت التعبئة (دقائق)']].map(([name,en,a])=><label key={name} className="space-y-1 text-sm font-medium"><span>{t(en,a)}</span><input className="field-input w-full" type="number" name={name} min={name==='serviceMinutes'?1:0} max={480} required defaultValue={v[name as 'travelMinutes'|'serviceMinutes']??''}/></label>)}</div>
+      <p className="text-xs text-slate-500">{t('Use a conservative travel allowance; this is not a map-optimized route estimate. Same-day access windows only in this release.','استخدم وقت تنقل احتياطيًا مناسبًا؛ هذا ليس تقدير مسار محسوبًا بالخريطة. هذه النسخة تدعم ساعات دخول ضمن اليوم نفسه.')}</p>
+      <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={v.enabled===true}/>{t('Enable these approved settings for future planning','تفعيل الإعدادات المعتمدة للتخطيط القادم')}</label>
+      <Feedback error={error} saved={saved} ar={ar}/><button disabled={busy} className="btn-primary min-h-11" type="submit">{busy?t('Saving…','جارٍ الحفظ…'):t('Save coverage','حفظ التغطية')}</button>
+    </form></details>;
+}
+function OperatorForm({person,row,save,ar}:{person:Initial['operators'][number];row?:CoverageRow;save:Saver;ar:boolean}) {
+  const t=(en:string,a:string)=>ar?a:en,[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);
+  const windows=(row?.value.windows||[]) as WorkWindow[];
+  async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();const f=new FormData(e.currentTarget);setBusy(true);setError('');setSaved(false);
+    const days=f.getAll('days').map(Number);
+    try{await save({kind:'operator',id:person.id,version:row?.version||0,value:{enabled:f.get('enabled')==='on',windows:days.map(day=>({day,start:f.get(`start-${day}`),end:f.get(`end-${day}`),minutes:Number(f.get(`minutes-${day}`))}))}});setSaved(true);}catch(err){setError(err instanceof Error?err.message:'Save failed.');}finally{setBusy(false);}}
+  return <details className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5"><summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 font-bold"><span>{person.name}{!person.active?` · ${t('Inactive','غير نشط')}`:''}</span><Status row={row} ar={ar}/></summary><form onSubmit={submit} key={row?.version||0} className="mt-5 space-y-4">
+    {weekdays.map((day,i)=>{const w=windows.find(x=>x.day===i+1);return <div key={i} className="rounded-xl border border-slate-200 p-3"><label className="mb-3 flex items-center gap-2 font-semibold"><input type="checkbox" name="days" value={i+1} defaultChecked={!!w}/>{day[ar?1:0]}</label><div className="grid grid-cols-3 gap-2">{[['start',t('From','من')],['end',t('Until','حتى')],['minutes',t('Work minutes','دقائق العمل')]].map(([field,label])=><label key={field} className="text-xs"><span>{label}</span><input name={`${field}-${i+1}`} type={field==='minutes'?'number':'time'} dir="ltr" className="field-input mt-1 w-full min-w-0" min={field==='minutes'?1:undefined} max={field==='minutes'?960:undefined} defaultValue={w?.[field as keyof WorkWindow]??''}/></label>)}</div></div>;})}
+    <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={row?.value.enabled===true}/>{t('Enable this approved weekly availability','تفعيل مواعيد التوفّر الأسبوعية المعتمدة')}</label><Feedback error={error} saved={saved} ar={ar}/><button type="submit" disabled={busy} className="btn-primary min-h-11">{busy?t('Saving…','جارٍ الحفظ…'):t('Save availability','حفظ التوفّر')}</button>
+  </form></details>;
+}
+function Feedback({error,saved,ar}:{error:string;saved:boolean;ar:boolean}) {return <>{error?<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-900">{error} {ar?'لم يتم تأكيد الحفظ. أعد تحميل الصفحة للتحقق من النسخة المحفوظة.':'Save was not confirmed. Reload to check the saved version.'}</p>:null}{saved?<p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{ar?'تم حفظ الإعدادات. لم تتغير أي تكليفات أو جولات.':'Settings saved. No duties or routes were changed.'}</p>:null}</>;}

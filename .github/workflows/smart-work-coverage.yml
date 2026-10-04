@@ -1,0 +1,74 @@
+name: Smart Work Part 2A - saved coverage
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-coverage.yml'
+      - 'src/**/smart-work-coverage*'
+      - 'src/**/smart-work-coverage/**'
+      - 'scripts/*smart-work-coverage*'
+      - 'supabase/feature-sql/smart_work_coverage_setup.sql'
+      - 'supabase/migrations/*smart_work_coverage_setup.sql'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-coverage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: local_ci_only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical migration name using Supabase CLI
+        run: |
+          supabase --version
+          supabase migration new --help
+          if ! ls supabase/migrations/*smart_work_coverage_setup.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_coverage_setup
+            cp supabase/feature-sql/smart_work_coverage_setup.sql "$(find supabase/migrations -name '*smart_work_coverage_setup.sql' | head -1)"
+          fi
+          file=$(find supabase/migrations -name '*smart_work_coverage_setup.sql' | head -1)
+          cmp supabase/feature-sql/smart_work_coverage_setup.sql "$file"
+          echo "MIGRATION_FILE=$file"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-coverage-migration
+          path: supabase/migrations/*smart_work_coverage_setup.sql
+          retention-days: 3
+      - name: Verify isolated PostgreSQL schema, persistence and permissions
+        run: |
+          psql -v ON_ERROR_STOP=1 -f scripts/smart-work-coverage-fixture.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Configuration and real API handler tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-coverage.mjs
+      - name: Type check
+        run: npx tsc --noEmit
