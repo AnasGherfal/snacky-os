@@ -58,6 +58,7 @@ jobs:
           psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
           psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
           psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-db.sql
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-hardening.sql
       - name: Separate-session concurrency test
         run: bash scripts/test-smart-work-duties-race.sh
       - uses: actions/setup-node@v4
