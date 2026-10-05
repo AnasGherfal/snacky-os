@@ -1,0 +1,82 @@
+name: Smart Work Part 3E - pilot rollout
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-pilot-rollout.yml'
+      - 'src/lib/smart-work-start-trip-server.ts'
+      - 'scripts/test-smart-work-start-trip-api.mjs'
+      - 'scripts/test-smart-work-pilot-scope.sql'
+      - 'supabase/feature-sql/smart_work_dispatch_pilot_scope.sql'
+      - 'supabase/migrations/*_smart_work_dispatch_pilot_scope.sql'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-pilot-rollout-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: local_ci_only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical migration filename
+        run: |
+          set -euo pipefail
+          if ! ls supabase/migrations/*_smart_work_dispatch_pilot_scope.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_dispatch_pilot_scope
+            file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
+            cp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
+          fi
+          file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
+          cmp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
+          echo "MIGRATION_FILE=$file" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-pilot-rollout-migration
+          path: supabase/migrations/*_smart_work_dispatch_pilot_scope.sql
+          retention-days: 3
+      - name: Database pilot scope and Start Trip regression
+        run: |
+          set -euo pipefail
+          createdb pilot_test
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-fixture.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-source-fixture.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_start_trip.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_dispatch_pilot_scope.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
+          PGDATABASE=pilot_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-pilot-scope.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Pilot API and UI gate tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-start-trip-api.mjs
+      - name: Product planner regressions
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs
+      - name: Full type check
+        run: npx tsc --noEmit
