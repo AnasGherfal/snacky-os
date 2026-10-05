@@ -1,4 +1,4 @@
-name: Smart Work Part 3D - weekday availability
+name: Smart Work Part 3D - variable-hour weekday availability
 on:
   pull_request:
     branches: [master]
