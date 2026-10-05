@@ -53,7 +53,7 @@ async function selection(a:Actor) {
     const m=machines.find(m=>m.id===d.machine_id),claimed=open.some(s=>s.machine_id===d.machine_id);
     return {id:d.id,machineId:d.machine_id,name:m?.name||m?.machine_code||'Machine',priority:d.priority,dueAt:d.due_at,
       mine:!!d.owner_id&&a.ids.includes(d.owner_id),state:d.state,
-      unavailable:claimed?'existing_route':!m||m.status!=='active'?'machine_inactive':d.state!=='required'?'duty_pending':null};
+      unavailable:claimed?'existing_route':!m||m.status!=='active'?'machine_inactive':d.state!=='required'?'duty_pending':d.blocker||null};
   }).sort((x,y)=>(rank[x.priority]??9)-(rank[y.priority]??9)||(x.dueAt??'z').localeCompare(y.dueAt??'z')||x.id.localeCompare(y.id));
   return {duties:scope,machines,routes,stops,choices};
 }

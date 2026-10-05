@@ -8,9 +8,12 @@ export type StandingMachineCoverage = {
   primaryId: string; backupId: string | null; mode: 'standing'; enabled: boolean;
 };
 export type MachineCoverage = ScheduledMachineCoverage | StandingMachineCoverage;
+export type ScheduledOperatorAvailability = { windows: WorkWindow[]; enabled: boolean };
+export type DayOperatorAvailability = { mode: 'days'; days: number[]; enabled: boolean };
+export type OperatorAvailability = ScheduledOperatorAvailability | DayOperatorAvailability;
 export type CoverageSave =
   | { kind: 'machine'; id: string; version: number; value: MachineCoverage }
-  | { kind: 'operator'; id: string; version: number; value: { windows: WorkWindow[]; enabled: boolean } };
+  | { kind: 'operator'; id: string; version: number; value: OperatorAvailability };
 export class CoverageInputError extends Error {}
 const fail = (message: string): never => { throw new CoverageInputError(message); };
 export function coverageUuid(value: unknown): value is string {
@@ -59,9 +62,16 @@ export function parseCoverageSave(input: unknown): CoverageSave {
       serviceMinutes,travelMinutes,enabled:flag(value.enabled)}};
   }
   if (row.kind === 'operator') {
+    const enabled = flag(value.enabled);
+    if (value.mode === 'days') {
+      keys(value,['mode','days','enabled']);
+      if (!Array.isArray(value.days) || value.days.length > 7 || (enabled && value.days.length < 1)) return fail('Select the approved available days.');
+      const days=value.days.map(d=>integer(d,1,7));
+      if(new Set(days).size!==days.length) return fail('Duplicate availability day.');
+      return {kind:'operator',id,version,value:{mode:'days',days:days.sort((a,b)=>a-b),enabled}};
+    }
     keys(value,['windows','enabled']);
     if (!Array.isArray(value.windows) || value.windows.length > 7) return fail('Provide up to seven work days.');
-    const enabled = flag(value.enabled);
     if (enabled && !value.windows.length) return fail('An enabled operator needs a work window.');
     const windows = value.windows.map(item => {
       const w = object(item); keys(w,['day','start','end','minutes']);
