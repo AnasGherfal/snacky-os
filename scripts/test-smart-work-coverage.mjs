@@ -8,10 +8,14 @@ const uid='00000000-0000-0000-0000-000000000001',op='00000000-0000-0000-0000-000
 const value=()=>({primaryId:uid,backupId:op,days:[7,1],accessStart:'08:00',accessEnd:'16:00',travelMinutes:30,serviceMinutes:45,enabled:true});
 const request=()=>({kind:'machine',id:machine,version:0,value:value()});
 const shift=()=>({kind:'operator',id:op,version:0,value:{enabled:true,windows:[{day:1,start:'08:00',end:'16:00',minutes:360}]}});
+const standing=()=>({kind:'machine',id:machine,version:0,value:{primaryId:uid,backupId:op,mode:'standing',enabled:true}});
 test('valid machine settings normalize days but never change input',()=>{const x=request(),before=JSON.stringify(x);assert.deepEqual(validator.parseCoverageSave(x).value.days,[1,7]);assert.equal(JSON.stringify(x),before);});
 test('unselected primary or invalid target is rejected',()=>{for(const id of ['',null,4,'bad']){assert.throws(()=>validator.parseCoverageSave({...request(),id}));assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),primaryId:id}}));}});
 test('primary cannot also be backup',()=>assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),backupId:uid}})));
 test('backup may be explicitly absent',()=>assert.equal(validator.parseCoverageSave({...request(),value:{...value(),backupId:null}}).value.backupId,null));
+test('standing responsibility needs no invented site or operator hours',()=>{const parsed=validator.parseCoverageSave(standing());assert.equal(parsed.kind,'machine');assert.equal(parsed.value.mode,'standing');assert.equal(parsed.value.primaryId,uid);assert.equal(parsed.value.backupId,op);});
+test('standing responsibility backup may be absent and extra timing fields are rejected',()=>{assert.equal(validator.parseCoverageSave({...standing(),value:{...standing().value,backupId:null}}).value.backupId,null);assert.throws(()=>validator.parseCoverageSave({...standing(),value:{...standing().value,accessStart:'00:00'}}));});
+
 test('missing values are not assumed',()=>{for(const key of Object.keys(value())){const v=value();delete v[key];assert.throws(()=>validator.parseCoverageSave({...request(),value:v}));}});
 test('invalid/duplicated site days are rejected',()=>{for(const days of [[],[0],[8],[1,1],['1'],null])assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),days}}));});
 test('cross-midnight windows are rejected instead of guessed',()=>assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),accessStart:'22:00',accessEnd:'06:00'}})));
@@ -38,6 +42,8 @@ async function harness({actor={role:'owner',active_status:'active',must_change_p
 test('non-owner accounts cannot read or write configuration',async()=>{for(const actor of [null,{role:'operator'},{role:'viewer'},{role:'owner',active_status:'inactive'},{role:'owner',active_status:'active',must_change_password:true,team_member_id:uid}]){const h=await harness({actor});assert.equal((await h.get()).status,403);assert.equal((await h.put()).status,403);assert.equal(h.calls.length,0);}});
 test('owner read exposes setup with coordinator and dispatch disabled',async()=>{const h=await harness(),r=await h.get(),b=await r.json();assert.equal(r.status,200);assert.equal(b.coordinationEnabled,false);assert.equal(b.dispatchEnabled,false);assert.ok(h.calls.every(x=>x[0]==='read'));});
 test('save sends only the authenticated actor and approved settings RPC',async()=>{const h=await harness(),r=await h.put();assert.equal(r.status,200);const writes=h.calls.filter(x=>x[0]==='rpc');assert.equal(writes.length,1);assert.equal(writes[0][1],'snacky_save_smart_work_coverage');assert.equal(writes[0][2].p_actor,uid);assert.ok(!h.calls.some(x=>/route|inventory|duty/.test(x[1])));});
+test('standing responsibility saves through the same owner-only API without route writes',async()=>{const h=await harness(),r=await h.put(standing());assert.equal(r.status,200);const write=h.calls.find(x=>x[0]==='rpc');assert.equal(write[2].p_value.mode,'standing');assert.equal(write[2].p_value.primaryId,uid);assert.ok(!h.calls.some(x=>/route|inventory|duty/.test(x[1])));});
+
 test('unexpected payload fields never reach the database',async()=>{const h=await harness();assert.equal((await h.put({...request(),actor:op})).status,400);assert.equal(h.calls.length,0);});
 test('cross-origin and missing-origin writes are blocked',async()=>{for(const origin of ['https://evil.test','']){const h=await harness();assert.equal((await h.put(request(),{origin,'content-type':'application/json'})).status,403);assert.equal(h.calls.length,0);}});
 test('stale settings revision returns conflict rather than success',async()=>{const h=await harness({rpcError:{code:'40001',message:'internal'}});assert.equal((await h.put()).status,409);});
