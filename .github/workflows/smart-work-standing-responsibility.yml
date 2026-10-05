@@ -11,6 +11,7 @@ on:
       - 'scripts/smart-work-duty-fixture.sql'
       - 'scripts/smart-work-coverage-fixture.sql'
       - 'supabase/feature-sql/smart_work_standing_responsibility.sql'
+      - 'supabase/feature-sql/smart_work_standing_coverage_validator.sql'
       - 'supabase/migrations/*smart_work_standing_responsibility.sql'
 permissions:
   contents: read
@@ -64,8 +65,8 @@ jobs:
           createdb coverage_test
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-coverage-fixture.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
-          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
-          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
       - name: Durable responsibility ledger
         run: |
