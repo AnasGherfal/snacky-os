@@ -7,7 +7,7 @@ on:
       - 'src/lib/smart-work-coverage.ts'
       - 'src/app/settings/smart-work-coverage/**'
       - 'scripts/test-smart-work-coverage*'
-      - 'scripts/test-smart-work-duties*'
+      - 'scripts/test-smart-work-standing-*'
       - 'scripts/smart-work-duty-fixture.sql'
       - 'scripts/smart-work-coverage-fixture.sql'
       - 'supabase/feature-sql/smart_work_standing_responsibility.sql'
@@ -68,6 +68,7 @@ jobs:
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-standing-coverage-db.sql
           dropdb coverage_test
           psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
       - name: Durable responsibility ledger
@@ -79,7 +80,7 @@ jobs:
           PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
           PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
           PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
-          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-db.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-standing-duty-db.sql
           PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-hardening.sql
       - uses: actions/setup-node@v4
         with:
