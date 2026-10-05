@@ -1,0 +1,109 @@
+name: Smart Work Part 3D - weekday availability
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-day-availability.yml'
+      - 'src/lib/smart-work-coverage.ts'
+      - 'src/lib/smart-work-products-server.ts'
+      - 'src/app/settings/smart-work-coverage/**'
+      - 'scripts/test-smart-work-day-availability-*'
+      - 'scripts/test-smart-work-coverage.mjs'
+      - 'scripts/test-smart-work-products-api.mjs'
+      - 'supabase/feature-sql/smart_work_day_availability*.sql'
+      - 'supabase/migrations/*_smart_work_day_availability.sql'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-day-availability-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: local_ci_only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical migration filename
+        run: |
+          set -euo pipefail
+          if ! ls supabase/migrations/*_smart_work_day_availability.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_day_availability
+          fi
+          file="$(find supabase/migrations -name '*_smart_work_day_availability.sql' | head -1)"
+          cp supabase/feature-sql/smart_work_day_availability.sql "$file"
+          cmp supabase/feature-sql/smart_work_day_availability.sql "$file"
+          echo "MIGRATION_FILE=$file" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-day-availability-migration
+          path: supabase/migrations/*_smart_work_day_availability.sql
+          retention-days: 3
+      - name: Coverage validation
+        run: |
+          set -euo pipefail
+          createdb coverage_test
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-coverage-fixture.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_validator.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-day-availability-coverage-db.sql
+          dropdb coverage_test
+          psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
+      - name: Duty ownership and weekday blocking
+        run: |
+          set -euo pipefail
+          createdb duties_test
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-duty-fixture.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_validator.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_duties.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-day-availability-duties-db.sql
+          dropdb duties_test
+          psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
+      - name: Start Trip compatibility and weekday rules
+        run: |
+          set -euo pipefail
+          createdb start_trip_test
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-fixture.sql
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-source-fixture.sql
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_start_trip.sql
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
+          PGDATABASE=start_trip_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-day-availability-start-trip.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Coverage parser/API tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-coverage.mjs
+      - name: Product Plan blocker regression
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs
+      - name: Start Trip API regression
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-start-trip-api.mjs
+      - name: Full type check
+        run: npx tsc --noEmit
