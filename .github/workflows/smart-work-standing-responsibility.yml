@@ -68,6 +68,8 @@ jobs:
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
           PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
+          dropdb coverage_test
+          psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
       - name: Durable responsibility ledger
         run: |
           set -euo pipefail
