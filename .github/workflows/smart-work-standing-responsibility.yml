@@ -1,0 +1,97 @@
+name: Smart Work Part 3C - standing responsibility
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-standing-responsibility.yml'
+      - 'src/lib/smart-work-coverage.ts'
+      - 'src/app/settings/smart-work-coverage/**'
+      - 'scripts/test-smart-work-coverage*'
+      - 'scripts/test-smart-work-standing-*'
+      - 'scripts/smart-work-duty-fixture.sql'
+      - 'scripts/smart-work-coverage-fixture.sql'
+      - 'supabase/feature-sql/smart_work_standing_responsibility.sql'
+      - 'supabase/feature-sql/smart_work_standing_coverage_validator.sql'
+      - 'supabase/migrations/*smart_work_standing_responsibility.sql'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-standing-responsibility-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local_ci_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: local_ci_only
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical migration filename
+        run: |
+          set -euo pipefail
+          if ! ls supabase/migrations/*_smart_work_standing_responsibility.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_standing_responsibility
+          fi
+          file="$(find supabase/migrations -name '*_smart_work_standing_responsibility.sql' | head -1)"
+          cp supabase/feature-sql/smart_work_standing_responsibility.sql "$file"
+          cmp supabase/feature-sql/smart_work_standing_responsibility.sql "$file"
+          echo "MIGRATION_FILE=$file" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-standing-responsibility-migration
+          path: supabase/migrations/*_smart_work_standing_responsibility.sql
+          retention-days: 3
+      - name: Coverage validation and persistence
+        run: |
+          set -euo pipefail
+          createdb coverage_test
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-coverage-fixture.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_coverage_validator.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-coverage-db.sql
+          PGDATABASE=coverage_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-standing-coverage-db.sql
+          dropdb coverage_test
+          psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
+      - name: Durable responsibility ledger
+        run: |
+          set -euo pipefail
+          createdb duties_test
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-duty-fixture.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_standing_responsibility.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-standing-duty-db.sql
+          PGDATABASE=duties_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-duties-hardening.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Coverage API and parser tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-coverage.mjs
+      - name: Duty API regression tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-duties-api.mjs
+      - name: Full type check
+        run: npx tsc --noEmit

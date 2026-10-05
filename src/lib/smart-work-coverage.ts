@@ -1,9 +1,13 @@
 /** Approved configuration only. This module never assigns work or reserves stock. */
 export type WorkWindow = { day: number; start: string; end: string; minutes: number };
-export type MachineCoverage = {
+export type ScheduledMachineCoverage = {
   primaryId: string; backupId: string | null; days: number[];
   accessStart: string; accessEnd: string; travelMinutes: number; serviceMinutes: number; enabled: boolean;
 };
+export type StandingMachineCoverage = {
+  primaryId: string; backupId: string | null; mode: 'standing'; enabled: boolean;
+};
+export type MachineCoverage = ScheduledMachineCoverage | StandingMachineCoverage;
 export type CoverageSave =
   | { kind: 'machine'; id: string; version: number; value: MachineCoverage }
   | { kind: 'operator'; id: string; version: number; value: { windows: WorkWindow[]; enabled: boolean } };
@@ -28,14 +32,22 @@ export function clockMinutes(value: unknown): number {
   if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return fail('Use a valid 24-hour time.');
   const [h,m] = value.split(':').map(Number); return h * 60 + m;
 }
+function operators(value: Record<string,unknown>) {
+  if (!coverageUuid(value.primaryId) || (value.backupId !== null && !coverageUuid(value.backupId))) return fail('Choose valid primary and backup operators.');
+  if (value.primaryId === value.backupId) return fail('Primary and backup must be different people.');
+  return {primaryId:value.primaryId,backupId:value.backupId as string|null};
+}
 export function parseCoverageSave(input: unknown): CoverageSave {
   const row = object(input); keys(row,['kind','id','version','value']);
   if (!coverageUuid(row.id)) return fail('Choose a valid machine or operator.');
   const id = row.id, version = integer(row.version,0,2147483646), value = object(row.value);
   if (row.kind === 'machine') {
+    const people=operators(value);
+    if (value.mode === 'standing') {
+      keys(value,['primaryId','backupId','mode','enabled']);
+      return {kind:'machine',id,version,value:{...people,mode:'standing',enabled:flag(value.enabled)}};
+    }
     keys(value,['primaryId','backupId','days','accessStart','accessEnd','travelMinutes','serviceMinutes','enabled']);
-    if (!coverageUuid(value.primaryId) || (value.backupId !== null && !coverageUuid(value.backupId))) return fail('Choose valid primary and backup operators.');
-    if (value.primaryId === value.backupId) return fail('Primary and backup must be different people.');
     if (!Array.isArray(value.days) || value.days.length < 1 || value.days.length > 7) return fail('Select site access days.');
     const days = value.days.map(d => integer(d,1,7));
     if (new Set(days).size !== days.length) return fail('Duplicate access day.');
@@ -43,8 +55,7 @@ export function parseCoverageSave(input: unknown): CoverageSave {
     if (end <= start) return fail('Access end must follow start on the same day.');
     const serviceMinutes = integer(value.serviceMinutes,1,480), travelMinutes = integer(value.travelMinutes,0,480);
     if (serviceMinutes > end-start) return fail('The site access window is shorter than the visit.');
-    return {kind:'machine',id,version,value:{primaryId:value.primaryId,backupId:value.backupId as string|null,
-      days:days.sort((a,b)=>a-b),accessStart:value.accessStart as string,accessEnd:value.accessEnd as string,
+    return {kind:'machine',id,version,value:{...people,days:days.sort((a,b)=>a-b),accessStart:value.accessStart as string,accessEnd:value.accessEnd as string,
       serviceMinutes,travelMinutes,enabled:flag(value.enabled)}};
   }
   if (row.kind === 'operator') {
