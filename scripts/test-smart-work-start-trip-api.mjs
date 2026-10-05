@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import * as authz from '../src/lib/authz.ts';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const productClient=fs.readFileSync('src/app/operator/product-plan/ProductPlanClient.tsx','utf8');
 const actor={id:id(101),team_member_id:id(201),role:'operator',active_status:'active',must_change_password:false};
 const person={id:id(201),auth_user_id:id(101),role:'operator',roles:['operator'],active:true,active_status:'active',must_change_password:false};
 const fingerprint='a'.repeat(64);
@@ -45,3 +46,31 @@ test('unconfirmed receipt directs retry instead of announcing success',async()=>
 test('cross-origin missing-origin and non-JSON requests cannot reach storage',async()=>{const h=await harness();assert.equal((await h.post(undefined,{Origin:'https://evil.test'})).status,403);assert.equal((await h.post(undefined,{Origin:''})).status,403);assert.equal((await h.post(undefined,{'Content-Type':'text/plain'})).status,415);assert.equal(h.calls.length,0);});
 test('oversized streamed body and invalid JSON are rejected without reads',async()=>{const h=await harness();assert.equal((await h.post(' '.repeat(5000))).status,413);assert.equal((await h.post('{invalid')).status,400);assert.equal(h.calls.length,0);});
 test('responses are private and never cached',async()=>{const h=await harness();for(const r of [await h.post(),await h.api.GET()])assert.match(r.headers.get('Cache-Control'),/no-store/);});
+
+
+test('product plan UI exposes Start Trip only through the gated API contract',()=>{
+  assert.match(productClient,/fetch\('\/api\/operator\/start-trip',\{cache:'no-store'\}\)/);
+  assert.match(productClient,/Start Trip & reserve products/);
+  assert.match(productClient,/dispatch\.enabled/);
+  assert.match(productClient,/status==='complete'/);
+  assert.match(productClient,/!expired/);
+  assert.match(productClient,/!result\.higherPriorityRemaining/);
+  assert.match(productClient,/allSelectedMine/);
+  assert.match(productClient,/result\.plan\.totalUnits>0/);
+});
+
+test('product plan UI reuses one request ID across uncertain retries and never accepts browser quantities',()=>{
+  assert.match(productClient,/startRequest=useRef/);
+  assert.match(productClient,/crypto\.randomUUID\(\)/);
+  assert.match(productClient,/requestId:request\.requestId/);
+  assert.match(productClient,/inputFingerprint:request\.fingerprint/);
+  assert.match(productClient,/dutyIds:request\.dutyIds/);
+  assert.match(productClient,/if\(!data\.retryable\)startRequest\.current=null/);
+  assert.doesNotMatch(productClient,/quantity:\s*result\.plan/);
+});
+
+test('successful UI start opens only the server-confirmed operator route',()=>{
+  assert.match(productClient,/window\.location\.assign\(data\.href\)/);
+  assert.match(productClient,/if\(!data\.href\|\|!data\.routeId\)/);
+  assert.match(productClient,/href: `\/operator\/routes\/\$\{r\.routeId\}`/);
+});
