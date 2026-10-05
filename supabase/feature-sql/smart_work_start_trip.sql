@@ -17,21 +17,20 @@ revoke all on public.smart_work_dispatch_control,public.smart_work_trip_requests
 grant select on public.smart_work_dispatch_control to service_role;
 grant select,insert on public.smart_work_trip_requests to service_role;
 
--- Trigger guards must see all reservations, including rows hidden by operator RLS.
--- Private trigger functions grant no new ability to change operational data.
+-- Private trigger guards see reservations hidden by operator RLS but grant no write capability.
 create or replace function smart_work_dispatch_private.lock_operations()
 returns trigger language plpgsql security definer set search_path='' as $$
 begin
+  if tg_table_name<>'smart_work_dispatch_control'
+    and not exists(select 1 from public.smart_work_dispatch_control where enabled)
+    and not exists(select 1 from public.smart_work_trip_requests q join public.routes r on r.id=q.route_id
+      where public.snacky_route_is_reservation_status(r.status::text)) then return null; end if;
   if auth.uid() is null and current_setting('role',true) is distinct from 'service_role' and session_user<>'postgres' then
     raise exception 'Authenticated operation required' using errcode='42501';
   end if;
-  if exists(select 1 from public.smart_work_dispatch_control where enabled)
-    or exists(select 1 from public.smart_work_trip_requests q join public.routes r on r.id=q.route_id
-      where public.snacky_route_is_reservation_status(r.status::text)) then
-    -- Never wait while a legacy pickup holds its own locks: fail and roll back instead.
-    if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended('snacky:smart-trip-operations:v1',0)) then
-      raise exception 'Another pickup or trip is being saved. Retry.' using errcode='40001';
-    end if;
+  -- Fail rather than wait while a legacy pickup might hold its own locks.
+  if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended('snacky:smart-trip-operations:v1',0)) then
+    raise exception 'Another pickup or trip is being saved. Retry.' using errcode='40001';
   end if;
   return null;
 end $$;
@@ -39,6 +38,8 @@ end $$;
 create or replace function smart_work_dispatch_private.check_reservations()
 returns trigger language plpgsql security definer set search_path='' as $$
 begin
+  if not exists(select 1 from public.smart_work_trip_requests q join public.routes r on r.id=q.route_id
+    where public.snacky_route_is_reservation_status(r.status::text)) then return null; end if;
   if auth.uid() is null and current_setting('role',true) is distinct from 'service_role' and session_user<>'postgres' then
     raise exception 'Authenticated operation required' using errcode='42501';
   end if;
@@ -67,8 +68,12 @@ begin
 end $$;
 revoke all on function smart_work_dispatch_private.lock_operations(),smart_work_dispatch_private.check_reservations() from public,anon,authenticated,service_role;
 
--- Shared locks include legacy/manual writes, not just new Start Trip callers.
--- Deferred checks allow the existing atomic pickup to deduct stock AND mark it picked.
+-- Release toggles share the commit mutex. Application keeps SELECT-only permission on the gate.
+drop trigger if exists smart_work_dispatch_toggle_lock on public.smart_work_dispatch_control;
+create trigger smart_work_dispatch_toggle_lock before insert or update or delete or truncate
+  on public.smart_work_dispatch_control for each statement execute function smart_work_dispatch_private.lock_operations();
+
+-- Deferred checks allow existing atomic pickup to deduct stock AND mark it picked.
 do $$ declare t text; begin
   foreach t in array array['routes','route_stops','route_stock_lines','inventory_movements'] loop
     execute format('drop trigger if exists smart_work_trip_write_lock on public.%I',t);
@@ -83,23 +88,23 @@ create or replace function public.snacky_start_smart_work_trip_v1(
 ) returns jsonb language plpgsql security invoker set search_path=pg_catalog,public as $$
 declare
   person public.team_members%rowtype; saved public.smart_work_trip_requests%rowtype;
-  d public.smart_work_duties%rowtype; cfg jsonb; shift jsonb; w jsonb; lane jsonb; actual record;
+  d public.smart_work_duties%rowtype; cfg jsonb; shift jsonb; lane jsonb; actual record;
   req_ids uuid[]; machine_ids uuid[]; route_id_new uuid; stop_id_new uuid;
   ts timestamptz:=clock_timestamp(); local_day date; weekday integer;
   cursor_at timestamptz; finish_at timestamptz; shift_end timestamptz; shift_start timestamptz;
   available_minutes integer; consumed_minutes integer; trip_minutes integer:=0; cost integer;
   picked_product uuid; target integer; take_qty integer; remove_qty integer; expected_count integer;
-  result jsonb; before_d jsonb;
+  result jsonb;
 begin
   if p_auth_user is null or p_actor is null or p_request is null then raise exception 'Invalid identity' using errcode='42501'; end if;
   select * into person from public.team_members where id=p_actor and auth_user_id=p_auth_user;
-  if not found or person.active is distinct from true or person.active_status::text<>'active'
+  if not found or person.active is distinct from true or person.active_status::text is distinct from 'active'
     or coalesce(person.must_change_password,false)
     or not (array[person.role::text]||coalesce(person.roles::text[],'{}')) && array['operator','owner','admin','supervisor'] then
     raise exception 'Active operator identity required' using errcode='42501';
   end if;
-  if cardinality(p_duty_ids) not between 1 and 6 or array_position(p_duty_ids,null) is not null
-    or p_fingerprint is null or p_fingerprint !~ '^[0-9a-f]{64}$' then
+  if p_duty_ids is null or cardinality(p_duty_ids) not between 1 and 6 or array_ndims(p_duty_ids)<>1
+    or array_position(p_duty_ids,null) is not null or p_fingerprint is null or p_fingerprint !~ '^[0-9a-f]{64}$' then
     raise exception 'Invalid trip request' using errcode='22023';
   end if;
   select array_agg(x order by x) into req_ids from (select distinct unnest(p_duty_ids) x) a;
@@ -120,18 +125,30 @@ begin
   end if;
   if jsonb_typeof(p_plan) is distinct from 'object' or p_plan->>'status' is distinct from 'complete'
     or jsonb_typeof(p_plan->'lanes') is distinct from 'array'
-    or jsonb_array_length(p_plan->'lanes') not between 1 and 600
-    or (p_plan->>'expiresAt')::timestamptz<=ts
-    or (p_plan->>'generatedAt')::timestamptz not between ts-interval '5 minutes' and ts+interval '1 minute'
-    or coalesce((p_plan->>'totalUnits')::integer,0)<=0 then
+    or jsonb_typeof(p_plan->'generatedAt') is distinct from 'string'
+    or jsonb_typeof(p_plan->'expiresAt') is distinct from 'string'
+    or jsonb_typeof(p_plan->'totalUnits') is distinct from 'number' then
     raise exception 'A current complete product plan is required' using errcode='22023';
   end if;
-  -- Read locks prevent permissions, coverage, rules and catalog changing mid-commit.
-  -- NOWAIT avoids hanging an operator behind a maintenance or sync transaction.
-  lock table public.team_members,public.smart_work_dispatch_control,public.smart_work_coverage_settings,
-    public.machines,public.machine_slots,public.products,public.smart_route_slot_product_rules,
-    public.smart_route_location_product_rules,public.smart_route_machine_context,public.locations
+  if jsonb_array_length(p_plan->'lanes') not between 1 and 600
+    or not isfinite((p_plan->>'expiresAt')::timestamptz) or not isfinite((p_plan->>'generatedAt')::timestamptz)
+    or (p_plan->>'expiresAt')::timestamptz<=ts or (p_plan->>'expiresAt')::timestamptz>ts+interval '5 minutes'
+    or (p_plan->>'generatedAt')::timestamptz not between ts-interval '5 minutes' and ts+interval '1 minute'
+    or (p_plan->>'totalUnits')::integer not between 1 and 600000 then
+    raise exception 'A current complete product plan is required' using errcode='22023';
+  end if;
+  -- Do not lock the read-only gate using a mode requiring UPDATE. Its trigger uses our mutex.
+  -- Read locks stabilize role/rule/slot changes and both sources of the latest-stock view.
+  lock table public.team_members,public.smart_work_coverage_settings,public.machines,public.machine_slots,
+    public.products,public.smart_route_slot_product_rules,public.smart_route_location_product_rules,
+    public.smart_route_machine_context,public.locations,public.vms_stock_snapshots,public.vms_import_batches
     in share mode nowait;
+  select * into person from public.team_members where id=p_actor and auth_user_id=p_auth_user;
+  if not found or person.active is distinct from true or person.active_status::text is distinct from 'active'
+    or coalesce(person.must_change_password,false)
+    or not (array[person.role::text]||coalesce(person.roles::text[],'{}')) && array['operator','owner','admin','supervisor'] then
+    raise exception 'Operator identity changed' using errcode='42501';
+  end if;
   perform 1 from public.smart_work_duties where id=any(req_ids) order by id for update;
   if (select count(*) from public.smart_work_duties where id=any(req_ids) and owner_id=p_actor
        and state='required' and blocker is null and route_stop_id is null and due_at is not null)<>cardinality(req_ids) then
@@ -156,7 +173,7 @@ begin
   local_day:=(ts at time zone 'Africa/Tripoli')::date;
   weekday:=extract(isodow from local_day);
   select value into cfg from public.smart_work_coverage_settings where kind='operator' and operator_id=p_actor;
-  if cfg is null or cfg->>'enabled'<>'true' then raise exception 'Approved operator work hours required' using errcode='22023'; end if;
+  if cfg is null or cfg->>'enabled' is distinct from 'true' then raise exception 'Approved operator work hours required' using errcode='22023'; end if;
   select x into shift from jsonb_array_elements(cfg->'windows') x where (x->>'day')::integer=weekday;
   if shift is null then raise exception 'Operator has no work window today' using errcode='22023'; end if;
   shift_start:=(local_day::text||' '||(shift->>'start'))::timestamp at time zone 'Africa/Tripoli';
@@ -164,10 +181,13 @@ begin
   available_minutes:=(shift->>'minutes')::integer;
   if ts<shift_start or ts>=shift_end then raise exception 'Outside approved work hours' using errcode='22023'; end if;
   cursor_at:=ts;
+  if exists(select 1 from public.smart_work_duties where owner_id=p_actor and not(id=any(req_ids)) and expected_minutes is null
+    and ((completed_at at time zone 'Africa/Tripoli')::date=local_day or (completed_at is null and route_stop_id is not null))) then
+    raise exception 'Existing work duration is not configured' using errcode='22023';
+  end if;
   select coalesce(sum(expected_minutes),0) into consumed_minutes from public.smart_work_duties
     where owner_id=p_actor and not(id=any(req_ids)) and
       ((completed_at at time zone 'Africa/Tripoli')::date=local_day or (completed_at is null and route_stop_id is not null));
-  -- Untracked manual trips cannot be silently excluded from the operator's workload.
   if exists(select 1 from public.routes r join public.route_stops s on s.route_id=r.id
     where r.operator_id=p_actor and public.snacky_route_is_reservation_status(r.status::text)
       and s.status::text not in ('completed','skipped','canceled','cancelled')
@@ -177,7 +197,7 @@ begin
   for d in select * from public.smart_work_duties where id=any(req_ids)
     order by case priority when 'immediate' then 0 when 'urgent' then 1 else 2 end,due_at,required_at,id loop
     select value into cfg from public.smart_work_coverage_settings where kind='machine' and machine_id=d.machine_id;
-    if cfg is null or cfg->>'enabled'<>'true' or not((cfg->'days') @> to_jsonb(array[weekday]))
+    if cfg is null or cfg->>'enabled' is distinct from 'true' or not((cfg->'days') @> to_jsonb(array[weekday]))
       or p_actor::text not in (cfg->>'primaryId',coalesce(cfg->>'backupId','')) then
       raise exception 'Approved machine coverage is missing or changed' using errcode='22023';
     end if;
@@ -192,7 +212,6 @@ begin
     end if;
     cursor_at:=finish_at;
   end loop;
-  -- Every live physical lane appears exactly once, even when it needs no pickup.
   select count(*) into expected_count from public.machine_slots where machine_id=any(machine_ids)
     and active and trim(slot_code)~'^[0-9]{1,4}$';
   if expected_count<>jsonb_array_length(p_plan->'lanes') or expected_count=0
@@ -200,18 +219,25 @@ begin
     raise exception 'Every usable lane must be included exactly once' using errcode='22023';
   end if;
   for lane in select x from jsonb_array_elements(p_plan->'lanes') x loop
-    if (lane->>'machineId')::uuid<>all(machine_ids) then raise exception 'Unexpected machine' using errcode='22023'; end if;
+    if jsonb_typeof(lane) is distinct from 'object' or not(lane ?& array['machineId','slotId','code','originalProductId','productId','current','originalCapacity','target','take','removeExpected','after','action'])
+      or exists(select 1 from unnest(array['current','originalCapacity','target','take','removeExpected','after']) k where jsonb_typeof(lane->k) is distinct from 'number') then
+      raise exception 'Missing lane fields' using errcode='22023';
+    end if;
+    if (lane->>'machineId')::uuid is null or (lane->>'machineId')::uuid<>all(machine_ids) then
+      raise exception 'Unexpected machine' using errcode='22023';
+    end if;
     select s.id,s.machine_id,s.slot_code,r.product_id,r.current_qty,r.capacity,r.captured_at,m.location_id,
       coalesce(c.location_type,l.location_type) as location_type into actual
     from public.machine_slots s join public.machines m on m.id=s.machine_id and m.status::text='active'
-    join public.latest_vms_stock_by_slot r on r.machine_id=s.machine_id and trim(r.slot_code)~'^[0-9]{1,4}$'
-      and trim(r.slot_code)::integer=trim(s.slot_code)::integer and r.source_provider='xy'
+    join public.latest_vms_stock_by_slot r on r.machine_id=s.machine_id
+      and (case when trim(r.slot_code)~'^[0-9]{1,4}$' then trim(r.slot_code)::integer end)
+        = (case when trim(s.slot_code)~'^[0-9]{1,4}$' then trim(s.slot_code)::integer end)
+      and r.source_provider='xy'
     left join public.smart_route_machine_context c on c.machine_id=m.id
     left join public.locations l on l.id=m.location_id
-    where s.id=(lane->>'slotId')::uuid and s.active and s.machine_id=(lane->>'machineId')::uuid
-      and trim(s.slot_code)~'^[0-9]{1,4}$';
-    if not found or actual.product_id is null or actual.current_qty is null or actual.capacity not between 1 and 1000
-      or actual.current_qty not between 0 and actual.capacity
+    where s.id=(lane->>'slotId')::uuid and s.active and s.machine_id=(lane->>'machineId')::uuid;
+    if not found or actual.product_id is null or actual.current_qty is null or actual.capacity is null or actual.captured_at is null
+      or actual.capacity not between 1 and 1000 or actual.current_qty not between 0 and actual.capacity
       or actual.captured_at not between ts-interval '30 minutes' and ts+interval '1 minute'
       or actual.product_id is distinct from (lane->>'originalProductId')::uuid
       or actual.current_qty is distinct from (lane->>'current')::integer
@@ -220,15 +246,14 @@ begin
       raise exception 'Lane reading changed or cannot be verified' using errcode='40001';
     end if;
     if (select count(*) from public.latest_vms_stock_by_slot r where r.machine_id=actual.machine_id and r.source_provider='xy'
-      and trim(r.slot_code)~'^[0-9]{1,4}$' and trim(r.slot_code)::integer=trim(actual.slot_code)::integer)<>1
-      or (select count(*) from public.machine_slots s where s.machine_id=actual.machine_id and trim(s.slot_code)~'^[0-9]{1,4}$'
-        and trim(s.slot_code)::integer=trim(actual.slot_code)::integer)<>1 then
+      and (case when trim(r.slot_code)~'^[0-9]{1,4}$' then trim(r.slot_code)::integer end)=trim(actual.slot_code)::integer)<>1
+      or (select count(*) from public.machine_slots s where s.machine_id=actual.machine_id
+        and (case when trim(s.slot_code)~'^[0-9]{1,4}$' then trim(s.slot_code)::integer end)=trim(actual.slot_code)::integer)<>1 then
       raise exception 'Duplicate lane definitions need review' using errcode='22023';
     end if;
     picked_product:=(lane->>'productId')::uuid;target:=(lane->>'target')::integer;
     take_qty:=(lane->>'take')::integer;remove_qty:=(lane->>'removeExpected')::integer;
-    if picked_product is null or target is null or take_qty is null or remove_qty is null
-      or target not between 1 and 1000 or take_qty not between 0 and 1000
+    if picked_product is null or target not between 1 and 1000 or take_qty not between 0 and 1000
       or not exists(select 1 from public.products where id=picked_product and active)
       or (lane->>'after')::integer is distinct from target then
       raise exception 'Invalid complete lane plan' using errcode='22023';
@@ -239,11 +264,13 @@ begin
       raise exception 'Product is prohibited at this machine or lane' using errcode='22023';
     end if;
     if picked_product=actual.product_id then
-      if target<>actual.capacity or take_qty<>target-actual.current_qty or remove_qty<>0 then
+      if target<>actual.capacity or take_qty<>target-actual.current_qty or remove_qty<>0
+        or (lane->>'action') is distinct from (case when take_qty=0 then 'keep' else 'refill' end) then
         raise exception 'Current product refill quantities changed' using errcode='40001';
       end if;
     else
       if take_qty<>target or remove_qty<>actual.current_qty or target<actual.current_qty
+        or lane->>'action' is distinct from 'replace'
         or not exists(select 1 from public.smart_route_slot_product_rules where machine_slot_id=actual.id
           and product_id=picked_product and rule='allowed' and verified_capacity=target) then
         raise exception 'Replacement needs verified fit, capacity and full stock' using errcode='22023';
@@ -252,7 +279,8 @@ begin
   end loop;
   if exists(select 1 from public.latest_vms_stock_by_slot r where r.machine_id=any(machine_ids) and r.source_provider='xy'
     and trim(r.slot_code)~'^[0-9]{1,4}$' and not exists(select 1 from public.machine_slots s where s.machine_id=r.machine_id
-      and trim(s.slot_code)~'^[0-9]{1,4}$' and trim(s.slot_code)::integer=trim(r.slot_code)::integer)) then
+      and (case when trim(s.slot_code)~'^[0-9]{1,4}$' then trim(s.slot_code)::integer end)
+        =(case when trim(r.slot_code)~'^[0-9]{1,4}$' then trim(r.slot_code)::integer end))) then
     raise exception 'XY has an unconfigured lane' using errcode='22023';
   end if;
   if exists(with needed as (
