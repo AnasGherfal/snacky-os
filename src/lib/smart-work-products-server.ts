@@ -1,7 +1,7 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
 import { getCurrentProfile } from '@/lib/auth';
-import { canExecuteRoutes, isOwnerAdminRole } from '@/lib/authz';
+import { canExecuteRoutes, isOwnerAdminRole, normalizeRoles } from '@/lib/authz';
 import { getSupabaseAdminClient } from '@/lib/supabase-server';
 import { ROUTE_RESERVATION_STATUSES, isRouteStopDoneStatus } from '@/lib/route-workflow';
 import { buildProductPlan, planWhole, type PlanInput, type PlanProduct } from '@/lib/smart-work-product-plan';
@@ -29,9 +29,9 @@ async function actor() {
   const db=getSupabaseAdminClient(); if(!db)throw new ProductPlanError('Planning connection unavailable.');
   const people=await all<{id:string;role:string;roles:string[]|null;active:boolean;active_status:string}>(
     (a,b)=>db.from('team_members').select('id,role,roles,active,active_status').eq('auth_user_id',profile.id).order('id').range(a,b));
-  const current=people.find(p=>p.id===profile.team_member_id && p.active && p.active_status==='active' && canExecuteRoutes(p));
+  const current=people.find(p=>p.id===profile.team_member_id && p.active && p.active_status==='active' && canExecuteRoutes(normalizeRoles(p.roles,p.role)));
   if(!current)throw new ProductPlanError('Operator access changed. Sign in again.',403);
-  return {db,profile,manager:isOwnerAdminRole(current),ids:people.filter(p=>p.active && p.active_status==='active' && canExecuteRoutes(p)).map(p=>p.id)};
+  return {db,profile,manager:isOwnerAdminRole(normalizeRoles(current.roles,current.role)),ids:people.filter(p=>p.active && p.active_status==='active' && canExecuteRoutes(normalizeRoles(p.roles,p.role))).map(p=>p.id)};
 }
 type Actor=Awaited<ReturnType<typeof actor>>;
 type Duty={id:string;machine_id:string;state:string;priority:string;owner_id:string|null;due_at:string|null;revision:number;blocker:string|null};
