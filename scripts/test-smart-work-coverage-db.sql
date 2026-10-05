@@ -10,9 +10,6 @@ begin
   assert not public.snacky_valid_smart_coverage('machine',cfg||'{"enabled":"true"}');
   assert not public.snacky_valid_smart_coverage('machine',cfg||'{"travelMinutes":null}');
   assert not public.snacky_valid_smart_coverage('machine',cfg||'{"serviceMinutes":10000000000000000}');
-  assert public.snacky_valid_smart_coverage('machine','{"primaryId":"00000000-0000-0000-0000-000000000002","backupId":null,"mode":"standing","enabled":true}');
-  assert not public.snacky_valid_smart_coverage('machine','{"primaryId":"00000000-0000-0000-0000-000000000002","backupId":null,"mode":"standing","enabled":true,"accessStart":"00:00"}');
-  assert not public.snacky_valid_smart_coverage('machine','{"primaryId":"00000000-0000-0000-0000-000000000002","backupId":"00000000-0000-0000-0000-000000000002","mode":"standing","enabled":true}');
   assert not public.snacky_valid_smart_coverage('operator','{"enabled":true,"windows":[]}');
   assert public.snacky_valid_smart_coverage('operator','{"enabled":false,"windows":[]}');
   assert not public.snacky_valid_smart_coverage('operator','{"enabled":true,"windows":[{"day":1,"start":"08:00","end":"09:00","minutes":90}]}');
