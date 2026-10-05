@@ -19,7 +19,8 @@ export function parseStartTripInput(raw: unknown): StartTripInput {
     || !Array.isArray(r.dutyIds) || r.dutyIds.length < 1 || r.dutyIds.length > 6 || !r.dutyIds.every(uuid)) {
     throw new StartTripError('Use the current product preview and select one to six required stops.', 400);
   }
-  const dutyIds = r.dutyIds.map(id => (id as string).toLowerCase()).sort();
+  // Preserve the preview's order: its fingerprint includes the ordered machine inputs.
+  const dutyIds = r.dutyIds.map(id => (id as string).toLowerCase());
   if (new Set(dutyIds).size !== dutyIds.length) throw new StartTripError('Select each required stop only once.', 400);
   return { dutyIds, inputFingerprint: r.inputFingerprint, requestId: r.requestId.toLowerCase() };
 }
@@ -45,7 +46,8 @@ export async function startTripAvailability() {
   const a = await currentActor();
   if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') return { enabled: false, reason: 'release_not_enabled' };
   const control = await a.db.from('smart_work_dispatch_control').select('enabled').eq('id', 1).maybeSingle();
-  return { enabled: !control.error && control.data?.enabled === true, reason: control.error ? 'schema_unavailable' : 'standing_rules_required' };
+  const enabled = !control.error && control.data?.enabled === true;
+  return { enabled, reason: enabled ? 'standing_rules_apply' : control.error ? 'schema_unavailable' : 'release_not_enabled' };
 }
 
 function receipt(raw: unknown): StartedTrip {
@@ -60,18 +62,22 @@ function receipt(raw: unknown): StartedTrip {
 export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
   const input = parseStartTripInput(raw);
   const a = await currentActor();
-  if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') throw new StartTripError('Start Trip is not enabled yet. Continue using existing assigned routes.', 503);
-  // Resolve a lost response before rebuilding: the successful trip itself changes planning inputs.
+  // Receipt resolution is permitted while the release is paused, but cannot create a new trip.
   const old = await a.db.from('smart_work_trip_requests').select('actor_id,duty_ids,input_fingerprint,result')
     .eq('auth_user_id', a.userId).eq('request_id', input.requestId).maybeSingle();
-  if (old.error) throw new StartTripError('Could not verify whether this request already started. Keep the same request ID.', 503, true);
+  if (old.error) {
+    if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') throw new StartTripError('Start Trip is not enabled yet. Continue using existing assigned routes.', 503);
+    throw new StartTripError('Could not verify whether this request already started. Keep the same request ID.', 503, true);
+  }
   if (old.data) {
     if (old.data.actor_id !== a.actorId || old.data.input_fingerprint !== input.inputFingerprint
-      || JSON.stringify([...old.data.duty_ids].sort()) !== JSON.stringify(input.dutyIds)) {
+      || !Array.isArray(old.data.duty_ids)
+      || JSON.stringify([...old.data.duty_ids].sort()) !== JSON.stringify([...input.dutyIds].sort())) {
       throw new StartTripError('That request ID belongs to a different trip. Generate a fresh preview.', 409);
     }
     return receipt({ ...old.data.result, replayed: true });
   }
+  if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') throw new StartTripError('Start Trip is not enabled yet. Continue using existing assigned routes.', 503);
   let preview: Awaited<ReturnType<typeof previewRequiredProducts>>;
   try { preview = await previewRequiredProducts({ dutyIds: input.dutyIds }); }
   catch (error) {
@@ -80,10 +86,10 @@ export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
   }
   if (preview.inputFingerprint !== input.inputFingerprint) throw new StartTripError('Stock, rules or duties changed. Regenerate the product preview before starting.', 409);
   if (preview.plan.status !== 'complete' || preview.plan.emptyAfter || preview.plan.unknownAfter || preview.plan.underfilled
-    || preview.plan.errors.length || preview.plan.totalUnits < 1 || Date.parse(preview.plan.expiresAt) <= Date.now()) {
+    || preview.plan.errors.length || preview.plan.totalUnits < 1 || !Number.isFinite(Date.parse(preview.plan.expiresAt))
+    || Date.parse(preview.plan.expiresAt) <= Date.now()) {
     throw new StartTripError('The product plan is incomplete or expired. Resolve the shown lanes before starting.', 409);
   }
-  // All quantities come from a fresh server plan, never the browser request.
   const saved = await a.db.rpc('snacky_start_smart_work_trip_v1', {
     p_auth_user: a.userId, p_actor: a.actorId, p_request: input.requestId,
     p_duty_ids: input.dutyIds, p_fingerprint: input.inputFingerprint, p_plan: preview.plan,
@@ -92,7 +98,7 @@ export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
     const code = String(saved.error.code ?? '');
     if (code === '42501') throw new StartTripError('Your current account cannot start these duties.', 403);
     if (['40001', '40P01', '55P03'].includes(code)) throw new StartTripError('Work or stock is changing. Retry this request; regenerate the preview if its quantities changed.', 409, true);
-    if (['22023', '23514', '23505'].includes(code)) throw new StartTripError('Stock, lane coverage, priority or working hours no longer permit this trip. Refresh the preview.', 409);
+    if (['22023', '23514', '23505', '22P02', '22007'].includes(code)) throw new StartTripError('Stock, lane coverage, priority or working hours no longer permit this trip. Refresh the preview.', 409);
     if (code === '55000') throw new StartTripError('Start Trip has not been enabled for production.', 503);
     throw new StartTripError('Trip save could not be confirmed. Retry with the same request ID.', 503, true);
   }

@@ -7,6 +7,7 @@ on:
       - 'supabase/feature-sql/smart_work_start_trip.sql'
       - 'src/lib/smart-work-start-trip*'
       - 'src/app/api/operator/start-trip/**'
+      - 'src/app/operator/product-plan/**'
       - 'scripts/*smart-work-start-trip*'
       - 'docs/smart-work-part3b-start-trip.md'
 permissions:
@@ -41,25 +42,19 @@ jobs:
         run: |
           set -euo pipefail
           psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-fixture.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-source-fixture.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
           psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
       - name: Concurrent requests and mixed legacy writes
-        run: |
-          if test -f scripts/test-smart-work-start-trip-race.sh; then
-            bash scripts/test-smart-work-start-trip-race.sh
-          fi
+        run: bash scripts/test-smart-work-start-trip-race.sh
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
       - name: Start Trip and product API regression tests
-        run: |
-          node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs
-          if test -f scripts/test-smart-work-start-trip-api.mjs; then
-            node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-start-trip-api.mjs
-          fi
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs scripts/test-smart-work-start-trip-api.mjs
       - name: Full application type check
         run: npx tsc --noEmit
       - name: Collect source for independent local verification
