@@ -1,0 +1,68 @@
+name: Smart Work Part 3B - atomic Start Trip
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-start-trip.yml'
+      - 'supabase/feature-sql/smart_work_start_trip.sql'
+      - 'src/lib/smart-work-start-trip*'
+      - 'src/app/api/operator/start-trip/**'
+      - 'src/app/operator/product-plan/**'
+      - 'scripts/*smart-work-start-trip*'
+      - 'docs/smart-work-part3b-start-trip.md'
+permissions:
+  contents: read
+concurrency:
+  group: smart-work-start-trip-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: smart_trip_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: smart_trip_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Isolated schema and transaction tests
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-fixture.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-source-fixture.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
+      - name: Concurrent requests and mixed legacy writes
+        run: bash scripts/test-smart-work-start-trip-race.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Start Trip and product API regression tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs scripts/test-smart-work-start-trip-api.mjs
+      - name: Full application type check
+        run: npx tsc --noEmit
+      - name: Collect source for independent local verification
+        if: always() && hashFiles('package.json') != ''
+        run: tar -czf /tmp/start-trip-verification-source.tar.gz src scripts supabase package.json package-lock.json tsconfig.json next-env.d.ts next.config.ts postcss.config.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('package.json') != ''
+        with:
+          name: start-trip-verification-source
+          path: /tmp/start-trip-verification-source.tar.gz
+          retention-days: 2
