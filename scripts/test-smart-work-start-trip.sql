@@ -81,7 +81,7 @@ select test_error('select test_start(404)','22023','machine restriction enforced
 rollback;
 
 begin;
-update smart_work_duties set priority='immediate' where id=test_uuid(302);
+update smart_work_duties set priority='immediate',revision=revision+1,updated_by=test_uuid(201),updated_at=now() where id=test_uuid(302);
 select test_error('select test_start(405)','40001','lower-priority trip cannot drop urgent obligation');
 rollback;
 begin;
@@ -97,7 +97,7 @@ update smart_work_coverage_settings set value=jsonb_set(value,'{windows,0,minute
 select test_error('select test_start(405,array[test_uuid(301),test_uuid(302)])','22023','trip exceeds approved usable minutes');
 rollback;
 begin;
-update smart_work_duties set due_at=now()-interval '1 day' where id=test_uuid(301);
+update smart_work_duties set due_at=now()-interval '1 day',revision=revision+1,updated_by=test_uuid(201),updated_at=now() where id=test_uuid(301);
 select test_start(405);
 select test_assert((select due_at<now()-interval '23 hours' from smart_work_duties where id=test_uuid(301)),'overdue recovery preserves original deadline');
 set constraints all immediate;
