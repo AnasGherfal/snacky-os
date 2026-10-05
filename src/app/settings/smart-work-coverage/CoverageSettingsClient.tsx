@@ -30,7 +30,7 @@ function Status({row,ar}:{row?:CoverageRow;ar:boolean}) {return <span className=
 function MachineForm({machine,row,people,save,ar}:{machine:Initial['machines'][number];row?:CoverageRow;people:Initial['operators'];save:Saver;ar:boolean}) {
   const t=(en:string,a:string)=>ar?a:en,[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);
   const v=(row?.value||{}) as Partial<MachineCoverage>;
-  const [mode,setMode]=useState<'standing'|'scheduled'>(row?(v.mode==='standing'?'standing':'scheduled'):'standing');
+  const [mode,setMode]=useState<'standing'|'scheduled'>(row&&'mode' in v&&v.mode==='standing'?'standing':row?'scheduled':'standing');
   async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();const f=new FormData(event.currentTarget);setBusy(true);setError('');setSaved(false);
     const base={primaryId:f.get('primaryId'),backupId:f.get('backupId')||null,enabled:f.get('enabled')==='on'};
     const value=mode==='standing'?{...base,mode:'standing'}:{...base,days:f.getAll('days').map(Number),accessStart:f.get('accessStart'),accessEnd:f.get('accessEnd'),travelMinutes:Number(f.get('travelMinutes')),serviceMinutes:Number(f.get('serviceMinutes'))};
