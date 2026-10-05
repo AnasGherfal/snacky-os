@@ -1,0 +1,65 @@
+name: Smart Work Part 3A - product plans
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/smart-work-products.yml'
+      - 'src/lib/smart-work-product*'
+      - 'src/app/api/operator/product-plan/**'
+      - 'src/app/operator/product-plan/**'
+      - 'src/app/settings/smart-routes/**'
+      - 'scripts/test-smart-work-product*'
+      - 'supabase/feature-sql/smart_work_product_capacity.sql'
+      - 'supabase/migrations/*smart_work_product_capacity.sql'
+permissions:
+  contents: read
+concurrency:
+  group: smart-products-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: product_plan_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Generate canonical migration filename
+        run: |
+          mkdir -p /tmp/capacity-migration/supabase/migrations
+          cd /tmp/capacity-migration
+          supabase migration new smart_work_product_capacity
+          cp "$GITHUB_WORKSPACE/supabase/feature-sql/smart_work_product_capacity.sql" supabase/migrations/*smart_work_product_capacity.sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-product-capacity-migration
+          path: /tmp/capacity-migration/supabase/migrations/*smart_work_product_capacity.sql
+          retention-days: 3
+      - name: Isolated capacity constraint and replay tests
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d product_plan_test -f scripts/test-smart-work-product-capacity.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Product allocation and real API tests
+        run: node --experimental-strip-types --experimental-vm-modules --test scripts/test-smart-work-product-plan.mjs scripts/test-smart-work-products-api.mjs
+      - name: Type check
+        run: npx tsc --noEmit

@@ -31,7 +31,7 @@ const LOCATION_TYPES = ["school", "university", "hospital", "mall", "office", "o
 
 async function smartRuleAdmin() {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || profile.active_status !== "active" || profile.must_change_password || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const supabase = getSupabaseAdminClient();
   if (!supabase) throw new Error("Supabase admin client is not configured.");
   return { profile, supabase };
@@ -138,11 +138,17 @@ async function saveSlotRule(formData: FormData) {
   const rule = String(formData.get("rule") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   if (!machineSlotId || !productId || !["allowed", "prohibited"].includes(rule)) return;
+  const capacityText = String(formData.get("verified_capacity") ?? "").trim();
+  const verifiedCapacity = capacityText ? Number(capacityText) : null;
+  if (rule === "allowed" && (verifiedCapacity === null || !Number.isInteger(verifiedCapacity) || verifiedCapacity < 1 || verifiedCapacity > 1000)) {
+    throw new Error("Enter the physically verified capacity for this product in this lane (1–1000 units).");
+  }
 
   const { error } = await supabase.from("smart_route_slot_product_rules").upsert({
     machine_slot_id: machineSlotId,
     product_id: productId,
     rule,
+    verified_capacity: rule === "allowed" ? verifiedCapacity : null,
     notes: notes || null,
     updated_at: new Date().toISOString(),
   }, { onConflict: "machine_slot_id,product_id" });
@@ -179,6 +185,7 @@ type SlotRule = {
   machine_slot_id: string;
   product_id: string;
   rule: string;
+  verified_capacity: number | null;
   notes: string | null;
 };
 
@@ -200,7 +207,7 @@ export default async function SmartRouteRulesPage() {
     supabase.from("smart_route_product_profiles").select("product_id, fit_profile, substitution_group, notes").order("updated_at", { ascending: false }),
     supabase.from("smart_route_machine_context").select("machine_id, location_type, location_label, notes").order("location_type"),
     supabase.from("smart_route_location_product_rules").select("id, machine_id, location_type, product_id, rule, score_adjustment, notes").order("created_at", { ascending: false }),
-    supabase.from("smart_route_slot_product_rules").select("id, machine_slot_id, product_id, rule, notes").order("created_at", { ascending: false }),
+    supabase.from("smart_route_slot_product_rules").select("id, machine_slot_id, product_id, rule, verified_capacity, notes").order("created_at", { ascending: false }),
   ]);
 
   const firstError = [
@@ -239,7 +246,7 @@ export default async function SmartRouteRulesPage() {
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
         <div className="font-semibold">AI never overrides these rules</div>
         <p className="mt-1 leading-6">
-          Prohibited products are removed before the AI sees candidates. Products with no unreserved storage are also removed. Lane substitutions are only considered when the lane is empty.
+          Prohibited products are removed before the AI sees candidates. Products with no unreserved storage are also removed. Nonempty lane replacements must explicitly remove and track the old stock first; never mix products.
         </p>
       </div>
 
@@ -407,7 +414,7 @@ export default async function SmartRouteRulesPage() {
 
       <FormSection
         title="Exact lane compatibility"
-        description="Use this for packaging exceptions in a particular lane. Allowed can permit a product even when its broad fit profile differs; Prohibited always blocks it."
+        description="Approve only physically tested product/lane combinations and enter the verified capacity. Product plans do not infer packaging fit from a category or product name. Prohibited always blocks it."
       >
         <form action={saveSlotRule} className="grid gap-4 md:grid-cols-2">
           <FormField label="Machine lane" required>
@@ -435,6 +442,9 @@ export default async function SmartRouteRulesPage() {
               <option value="prohibited">Prohibited in this lane</option>
             </select>
           </FormField>
+          <FormField label="Verified capacity for this product" hint="Required for Allowed. Count the units that physically fit after a safe vend test; do not copy another product’s capacity.">
+            <input name="verified_capacity" type="number" min={1} max={1000} step={1} className="field-input" placeholder="e.g. 12" />
+          </FormField>
           <FormField label="Notes">
             <input name="notes" className="field-input" placeholder="e.g. package too wide" />
           </FormField>
@@ -445,7 +455,7 @@ export default async function SmartRouteRulesPage() {
 
         {slotRules.length ? (
           <div className="table-wrap">
-            <DataTable headers={["Lane", "Product", "Rule", "Notes", ""]}>
+            <DataTable headers={["Lane", "Product", "Rule", "Verified capacity", "Notes", ""]}>
               {slotRules.map((rule) => {
                 const slot = slotById.get(rule.machine_slot_id);
                 const machine = slot ? machineById.get(slot.machine_id) : null;
@@ -454,6 +464,7 @@ export default async function SmartRouteRulesPage() {
                     <td>{machine?.name ?? "Unknown machine"} · {slot?.slot_code ?? "?"}</td>
                     <td>{productById.get(rule.product_id)?.name ?? rule.product_id}</td>
                     <td><StatusBadge status={rule.rule} /></td>
+                    <td>{rule.verified_capacity ?? "Not verified"}</td>
                     <td>{rule.notes || "—"}</td>
                     <td>
                       <form action={deleteSlotRule}>
