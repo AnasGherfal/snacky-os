@@ -29,29 +29,18 @@ create temporary table originals as select id,required_at,service_date from publ
 select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000002');
 select pg_temp.check_it((select count(*)=3 from public.smart_work_duties),'refresh does not duplicate work');
 select pg_temp.check_it((select bool_and(d.required_at=o.required_at and d.service_date=o.service_date) from public.smart_work_duties d join originals o using(id)),'refresh preserves required date');
--- Standing responsibility is explicit and independent of variable work hours.
--- Machine 1/2 mirror Noury primary + Basheer backup. Machine 3 mirrors Basheer-only responsibility.
+-- Setup is always explicit; use broad fixture hours to avoid test-host timezone assumptions.
 insert into public.smart_work_coverage_settings(kind,machine_id,value,version,updated_by)
-select 'machine',id,
-  case when id='10000000-0000-0000-0000-000000000003'::uuid
-    then jsonb_build_object('primaryId','00000000-0000-0000-0000-000000000003','backupId',null,'mode','standing','enabled',true)
-    else jsonb_build_object('primaryId','00000000-0000-0000-0000-000000000002','backupId','00000000-0000-0000-0000-000000000003','mode','standing','enabled',true)
-  end,1,'00000000-0000-0000-0000-000000000001'
-from public.machines;
+select 'machine',id,jsonb_build_object('primaryId','00000000-0000-0000-0000-000000000002','backupId','00000000-0000-0000-0000-000000000003',
+'days',jsonb_build_array(1,2,3,4,5,6,7),'accessStart','00:00','accessEnd','23:59','travelMinutes',0,'serviceMinutes',1,'enabled',true),1,'00000000-0000-0000-0000-000000000001' from public.machines;
+insert into public.smart_work_coverage_settings(kind,operator_id,value,version,updated_by)
+values('operator','00000000-0000-0000-0000-000000000002',jsonb_build_object('windows',jsonb_build_array(jsonb_build_object('day',extract(isodow from now() at time zone 'Africa/Tripoli')::int,'start','00:00','end','23:59','minutes',1)),'enabled',true),1,'00000000-0000-0000-0000-000000000001'),
+('operator','00000000-0000-0000-0000-000000000003',jsonb_build_object('windows',jsonb_build_array(jsonb_build_object('day',extract(isodow from now() at time zone 'Africa/Tripoli')::int,'start','00:00','end','23:59','minutes',1)),'enabled',true),1,'00000000-0000-0000-0000-000000000001');
 select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000002');
-select pg_temp.check_it((select count(*)=2 from public.smart_work_duties where owner_id='00000000-0000-0000-0000-000000000002' and assigned_via='primary'),'standing primary owns its machines without a shift');
-select pg_temp.check_it((select count(*)=1 from public.smart_work_duties where owner_id='00000000-0000-0000-0000-000000000003' and assigned_via='primary'),'separate primary machine stays with its configured operator');
-select pg_temp.check_it((select count(*)=0 from public.smart_work_duties where assigned_via='backup'),'backup is never assigned automatically');
-select pg_temp.check_it((select bool_and(due_at is null and expected_minutes is null) from public.smart_work_duties),'standing responsibility invents no deadline or work duration');
--- A real approved site schedule may add deadline/time information later without changing standing owners.
-update public.smart_work_coverage_settings
-set value=jsonb_build_object('primaryId',value->>'primaryId','backupId',value->'backupId',
-  'days',jsonb_build_array(1,2,3,4,5,6,7),'accessStart','00:00','accessEnd','23:59',
-  'travelMinutes',0,'serviceMinutes',1,'enabled',true),version=version+1
-where kind='machine';
-select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000002');
-select pg_temp.check_it((select bool_and(due_at is not null and expected_minutes=1) from public.smart_work_duties),'approved site schedule adds timing without reallocating responsibility');
-select pg_temp.check_it((select count(*)=0 from public.smart_work_duties where assigned_via='backup'),'scheduled timing still does not auto-handoff to backup');
+select pg_temp.check_it((select count(*)=1 from public.smart_work_duties where assigned_via='primary'),'primary capacity limits promises');
+select pg_temp.check_it((select count(*)=1 from public.smart_work_duties where assigned_via='backup'),'approved backup handles overflow');
+select pg_temp.check_it((select count(*)=1 from public.smart_work_duties where owner_id is null and blocker='no_capacity'),'insufficient team capacity stays uncovered');
+select pg_temp.check_it((select bool_and(due_at is not null) from public.smart_work_duties),'deadlines come from approved access');
 create temporary table unchanged as select id,owner_id,due_at,revision from public.smart_work_duties;
 select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000003');
 select pg_temp.check_it((select bool_and(d.owner_id is not distinct from u.owner_id and d.due_at=u.due_at and d.revision=u.revision) from public.smart_work_duties d join unchanged u using(id)),'repeat evaluation preserves owners, deadlines and revision');
@@ -61,7 +50,7 @@ create temporary table carry as select id,required_at,due_at,owner_id from publi
 update public.latest_vms_stock_by_slot set captured_at=now()-interval '1 day';
 select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000002');
 select pg_temp.check_it((select count(*)=3 from public.smart_work_duties where completed_at is null),'missing readings do not erase duties');
-select pg_temp.check_it((select bool_and(d.required_at=c.required_at and d.due_at is not distinct from c.due_at and d.owner_id is not distinct from c.owner_id) from public.smart_work_duties d join carry c using(id)),'original deadlines and owners survive midnight and stale stock');
+select pg_temp.check_it((select bool_and(d.required_at=c.required_at and d.due_at=c.due_at and d.owner_id is not distinct from c.owner_id) from public.smart_work_duties d join carry c using(id)),'original deadlines and owners survive midnight and stale stock');
 -- Full stock without an audited service record is NOT completion.
 update public.latest_vms_stock_by_slot set captured_at=now(),current_qty=8;
 select public.snacky_refresh_smart_work_duties('00000000-0000-0000-0000-000000000002');
