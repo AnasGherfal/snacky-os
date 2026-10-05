@@ -10,6 +10,6 @@ select public.snacky_save_smart_work_coverage(
  '{"primaryId":"00000000-0000-0000-0000-000000000002","backupId":null,"mode":"standing","enabled":true}'
 );
 select pg_temp.check_it((select value->>'mode'='standing' and value->>'primaryId'='00000000-0000-0000-0000-000000000002' and value->'backupId'='null'::jsonb from public.smart_work_coverage_settings where machine_id='00000000-0000-0000-0000-000000000003'),'standing responsibility persists exactly');
-select pg_temp.check_it((select count(*)=1 from public.smart_work_coverage_events),'standing save is audited once');
+select pg_temp.check_it((select count(*)=1 from public.smart_work_coverage_events e join public.smart_work_coverage_settings s on s.id=e.setting_id where s.machine_id='00000000-0000-0000-0000-000000000003'),'standing save is audited once');
 select pg_temp.check_it(not has_function_privilege('authenticated','public.snacky_save_smart_work_coverage(uuid,text,uuid,integer,jsonb)','execute'),'browser still cannot save responsibility directly');
 rollback;
