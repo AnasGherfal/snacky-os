@@ -49,7 +49,9 @@ jobs:
       - name: Generate canonical migration filename
         run: |
           set -euo pipefail
-          supabase migration new smart_work_standing_responsibility
+          if ! ls supabase/migrations/*_smart_work_standing_responsibility.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_standing_responsibility
+          fi
           file="$(find supabase/migrations -name '*_smart_work_standing_responsibility.sql' | head -1)"
           cp supabase/feature-sql/smart_work_standing_responsibility.sql "$file"
           cmp supabase/feature-sql/smart_work_standing_responsibility.sql "$file"
