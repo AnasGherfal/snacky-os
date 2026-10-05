@@ -6,6 +6,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import * as authz from '../src/lib/authz.ts';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const productClient=fs.readFileSync('src/app/operator/product-plan/ProductPlanClient.tsx','utf8');
+const startServerSource=fs.readFileSync('src/lib/smart-work-start-trip-server.ts','utf8');
 const actor={id:id(101),team_member_id:id(201),role:'operator',active_status:'active',must_change_password:false};
 const person={id:id(201),auth_user_id:id(101),role:'operator',roles:['operator'],active:true,active_status:'active',must_change_password:false};
 const fingerprint='a'.repeat(64);
@@ -72,5 +73,5 @@ test('product plan UI reuses one request ID across uncertain retries and never a
 test('successful UI start opens only the server-confirmed operator route',()=>{
   assert.match(productClient,/window\.location\.assign\(data\.href\)/);
   assert.match(productClient,/if\(!data\.href\|\|!data\.routeId\)/);
-  assert.match(productClient,/href: `\/operator\/routes\/\$\{r\.routeId\}`/);
+  assert.match(startServerSource,/href: `\/operator\/routes\/\$\{r\.routeId\}`/);
 });
