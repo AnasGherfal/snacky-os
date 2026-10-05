@@ -9,6 +9,7 @@ const value=()=>({primaryId:uid,backupId:op,days:[7,1],accessStart:'08:00',acces
 const request=()=>({kind:'machine',id:machine,version:0,value:value()});
 const shift=()=>({kind:'operator',id:op,version:0,value:{enabled:true,windows:[{day:1,start:'08:00',end:'16:00',minutes:360}]}});
 const standing=()=>({kind:'machine',id:machine,version:0,value:{primaryId:uid,backupId:op,mode:'standing',enabled:true}});
+const dayAvailability=()=>({kind:'operator',id:op,version:0,value:{mode:'days',days:[1,2,3,4,6,7],enabled:true}});
 test('valid machine settings normalize days but never change input',()=>{const x=request(),before=JSON.stringify(x);assert.deepEqual(validator.parseCoverageSave(x).value.days,[1,7]);assert.equal(JSON.stringify(x),before);});
 test('unselected primary or invalid target is rejected',()=>{for(const id of ['',null,4,'bad']){assert.throws(()=>validator.parseCoverageSave({...request(),id}));assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),primaryId:id}}));}});
 test('primary cannot also be backup',()=>assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),backupId:uid}})));
@@ -24,6 +25,10 @@ test('service cannot exceed access window',()=>assert.throws(()=>validator.parse
 test('work budget cannot exceed actual shift',()=>assert.throws(()=>validator.parseCoverageSave({...shift(),value:{enabled:true,windows:[{day:1,start:'08:00',end:'09:00',minutes:61}]}})));
 test('duplicate operator weekdays cannot inflate capacity',()=>{const x=shift();x.value.windows.push({...x.value.windows[0]});assert.throws(()=>validator.parseCoverageSave(x));});
 test('empty operator availability only allowed when disabled',()=>{assert.throws(()=>validator.parseCoverageSave({...shift(),value:{enabled:true,windows:[]}}));assert.equal(validator.parseCoverageSave({...shift(),value:{enabled:false,windows:[]}}).value.enabled,false);});
+test('day-level availability supports variable hours without inventing times',()=>{const parsed=validator.parseCoverageSave(dayAvailability());assert.equal(parsed.kind,'operator');assert.deepEqual(parsed.value.days,[1,2,3,4,6,7]);assert.equal(parsed.value.mode,'days');});
+test('enabled day availability requires valid unique weekdays',()=>{for(const days of [[],[0],[8],[1,1],['1']])assert.throws(()=>validator.parseCoverageSave({...dayAvailability(),value:{...dayAvailability().value,days}}));});
+test('disabled day availability may have no days',()=>assert.deepEqual(validator.parseCoverageSave({...dayAvailability(),value:{mode:'days',days:[],enabled:false}}).value.days,[]));
+
 test('client cannot inject assignments or an actor',()=>{for(const extra of [{actor:op},{routeId:'r'},{quantity:100},{operatorOverride:uid}])assert.throws(()=>validator.parseCoverageSave({...request(),...extra}));});
 test('numeric and boolean coercion is forbidden',()=>{for(const minutes of ['10',null,-1,NaN,Infinity,0.5])assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),travelMinutes:minutes}}));assert.throws(()=>validator.parseCoverageSave({...request(),value:{...value(),enabled:'true'}}));});
 test('save requires a nonnegative whole revision',()=>{for(const version of [-1,1.5,'1',null,NaN])assert.throws(()=>validator.parseCoverageSave({...request(),version}));});
@@ -43,6 +48,8 @@ test('non-owner accounts cannot read or write configuration',async()=>{for(const
 test('owner read exposes setup with coordinator and dispatch disabled',async()=>{const h=await harness(),r=await h.get(),b=await r.json();assert.equal(r.status,200);assert.equal(b.coordinationEnabled,false);assert.equal(b.dispatchEnabled,false);assert.ok(h.calls.every(x=>x[0]==='read'));});
 test('save sends only the authenticated actor and approved settings RPC',async()=>{const h=await harness(),r=await h.put();assert.equal(r.status,200);const writes=h.calls.filter(x=>x[0]==='rpc');assert.equal(writes.length,1);assert.equal(writes[0][1],'snacky_save_smart_work_coverage');assert.equal(writes[0][2].p_actor,uid);assert.ok(!h.calls.some(x=>/route|inventory|duty/.test(x[1])));});
 test('standing responsibility saves through the same owner-only API without route writes',async()=>{const h=await harness(),r=await h.put(standing());assert.equal(r.status,200);const write=h.calls.find(x=>x[0]==='rpc');assert.equal(write[2].p_value.mode,'standing');assert.equal(write[2].p_value.primaryId,uid);assert.ok(!h.calls.some(x=>/route|inventory|duty/.test(x[1])));});
+test('day availability saves without browser-supplied hours or route writes',async()=>{const h=await harness(),r=await h.put(dayAvailability());assert.equal(r.status,200);const write=h.calls.find(x=>x[0]==='rpc');assert.deepEqual(write[2].p_value.days,[1,2,3,4,6,7]);assert.ok(!('windows' in write[2].p_value));assert.ok(!h.calls.some(x=>/route|inventory|duty/.test(x[1])));});
+
 
 test('unexpected payload fields never reach the database',async()=>{const h=await harness();assert.equal((await h.put({...request(),actor:op})).status,400);assert.equal(h.calls.length,0);});
 test('cross-origin and missing-origin writes are blocked',async()=>{for(const origin of ['https://evil.test','']){const h=await harness();assert.equal((await h.put(request(),{origin,'content-type':'application/json'})).status,403);assert.equal(h.calls.length,0);}});
