@@ -42,12 +42,23 @@ async function currentActor() {
   return { db, userId: profile.id, actorId: String(row.data.id) };
 }
 
+async function dispatchGate(a: Awaited<ReturnType<typeof currentActor>>) {
+  if (process.env.SMART_WORK_START_TRIP_ENABLED === 'false') return { enabled:false,reason:'emergency_disabled',mode:'off' as const };
+  const control=await a.db.from('smart_work_dispatch_control').select('enabled,mode').eq('id',1).maybeSingle();
+  if(control.error) return {enabled:false,reason:'schema_unavailable',mode:'off' as const};
+  if(!control.data?.enabled) return {enabled:false,reason:'release_not_enabled',mode:'off' as const};
+  const mode=String(control.data.mode||'all');
+  if(mode==='all') return {enabled:true,reason:'standing_rules_apply',mode:'all' as const};
+  if(mode!=='pilot') return {enabled:false,reason:'release_not_enabled',mode:'off' as const};
+  const scoped=await a.db.from('smart_work_dispatch_scope').select('machine_id').eq('operator_id',a.actorId).limit(1);
+  if(scoped.error) return {enabled:false,reason:'schema_unavailable',mode:'pilot' as const};
+  const enabled=Array.isArray(scoped.data)&&scoped.data.length>0;
+  return {enabled,reason:enabled?'pilot_scope':'not_in_pilot',mode:'pilot' as const};
+}
 export async function startTripAvailability() {
-  const a = await currentActor();
-  if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') return { enabled: false, reason: 'release_not_enabled' };
-  const control = await a.db.from('smart_work_dispatch_control').select('enabled').eq('id', 1).maybeSingle();
-  const enabled = !control.error && control.data?.enabled === true;
-  return { enabled, reason: enabled ? 'standing_rules_apply' : control.error ? 'schema_unavailable' : 'release_not_enabled' };
+  const a=await currentActor();
+  const gate=await dispatchGate(a);
+  return {enabled:gate.enabled,reason:gate.reason,mode:gate.mode};
 }
 
 function receipt(raw: unknown): StartedTrip {
@@ -65,10 +76,7 @@ export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
   // Receipt resolution is permitted while the release is paused, but cannot create a new trip.
   const old = await a.db.from('smart_work_trip_requests').select('actor_id,duty_ids,input_fingerprint,result')
     .eq('auth_user_id', a.userId).eq('request_id', input.requestId).maybeSingle();
-  if (old.error) {
-    if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') throw new StartTripError('Start Trip is not enabled yet. Continue using existing assigned routes.', 503);
-    throw new StartTripError('Could not verify whether this request already started. Keep the same request ID.', 503, true);
-  }
+  if (old.error) throw new StartTripError('Could not verify whether this request already started. Keep the same request ID.', 503, true);
   if (old.data) {
     if (old.data.actor_id !== a.actorId || old.data.input_fingerprint !== input.inputFingerprint
       || !Array.isArray(old.data.duty_ids)
@@ -77,7 +85,8 @@ export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
     }
     return receipt({ ...old.data.result, replayed: true });
   }
-  if (process.env.SMART_WORK_START_TRIP_ENABLED !== 'true') throw new StartTripError('Start Trip is not enabled yet. Continue using existing assigned routes.', 503);
+  const gate=await dispatchGate(a);
+  if(!gate.enabled) throw new StartTripError(gate.reason==='not_in_pilot'?'Start Trip is currently limited to the controlled pilot.':'Start Trip is not enabled yet. Continue using existing assigned routes.',gate.reason==='not_in_pilot'?403:503);
   let preview: Awaited<ReturnType<typeof previewRequiredProducts>>;
   try { preview = await previewRequiredProducts({ dutyIds: input.dutyIds }); }
   catch (error) {
