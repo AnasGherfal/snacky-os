@@ -357,31 +357,24 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   const objectName = `${safeFileSegment(stopId, "stop")}-${photoDigest}.${extension}`;
   const objectPath = `${routeId}/${objectName}`;
 
-  try {
-    const storageClient = await ensureRefillPhotoBucket();
-    if (!storageClient) {
-      return {
-        photoUrl: null,
-        photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
-        originalName,
-        uploadUnavailable: true,
-      };
-    }
+  const storageClient = await ensureRefillPhotoBucket();
+  if (!storageClient) {
+    return {
+      photoUrl: null,
+      photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
+      originalName,
+      uploadUnavailable: true,
+      persisted: false,
+    };
+  }
 
+  try {
     const { error } = await storageClient.storage.from(REFILL_PHOTO_BUCKET).upload(objectPath, file, {
       cacheControl: "31536000",
       contentType: file.type,
       upsert: true,
     });
-
     if (error) throw error;
-
-    return {
-      photoUrl: `/api/storage/${REFILL_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/${encodeURIComponent(objectName)}`,
-      photoPath: objectPath,
-      originalName,
-      uploadUnavailable: false,
-    };
   } catch (error) {
     console.warn("[operator] Refill photo upload unavailable", error);
     return {
@@ -389,8 +382,57 @@ export async function uploadRefillProofPhoto(formData: FormData) {
       photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
       originalName,
       uploadUnavailable: true,
+      persisted: false,
     };
   }
+
+  const photoUrl = `/api/storage/${REFILL_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/${encodeURIComponent(objectName)}`;
+  const now = new Date().toISOString();
+  try {
+    const { data: machine, error: machineError } = await storageClient
+      .from("machines")
+      .select("id, name, machine_code")
+      .eq("id", machineId)
+      .maybeSingle();
+    if (machineError) throwActionError(machineError, "Photo uploaded, but the machine record could not be loaded.");
+    if (!machine) throw new Error("Photo uploaded, but the machine record was not found.");
+
+    const { error: proofError } = await storageClient
+      .from("machine_refill_history")
+      .upsert({
+        legacy_refill_id: `route_stop:${stopId}`,
+        refill_at: now,
+        machine_id: machineId,
+        machine_name: machine.name || machine.machine_code || "Machine",
+        operator_id: route.operator_id ?? null,
+        machine_photo_url: photoUrl,
+        machine_photo_path: objectPath,
+        source_file: "Snacky OS route stop",
+        import_status: "imported",
+        route_id: routeId,
+        route_stop_id: stopId,
+        raw_record: { precompletion_photo_saved: true },
+        updated_at: now,
+      }, { onConflict: "legacy_refill_id" });
+    if (proofError) throwActionError(proofError, "Photo uploaded, but Snacky OS could not attach it to this stop.");
+  } catch (error) {
+    console.warn("[operator] Refill photo uploaded but proof persistence failed", {
+      route_id: routeId,
+      stop_id: stopId,
+      machine_id: machineId,
+      object_path: objectPath,
+      error: serializeActionError(error),
+    });
+    throw new Error("Photo uploaded, but Snacky OS could not attach it to this stop. Retry the same photo; it will not create a duplicate file.");
+  }
+
+  return {
+    photoUrl,
+    photoPath: objectPath,
+    originalName,
+    uploadUnavailable: false,
+    persisted: true,
+  };
 }
 
 export async function uploadInventoryAdjustmentPhoto(formData: FormData) {
