@@ -5,6 +5,9 @@ on:
     paths:
       - '.github/workflows/smart-work-start-trip.yml'
       - 'supabase/feature-sql/smart_work_start_trip.sql'
+      - 'supabase/feature-sql/smart_work_dispatch_pilot_scope.sql'
+      - 'supabase/migrations/*_smart_work_dispatch_pilot_scope.sql'
+      - 'scripts/test-smart-work-pilot-scope.sql'
       - 'src/lib/smart-work-start-trip*'
       - 'src/app/api/operator/start-trip/**'
       - 'src/app/operator/product-plan/**'
@@ -38,6 +41,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate canonical pilot migration
+        run: |
+          set -euo pipefail
+          if ! ls supabase/migrations/*_smart_work_dispatch_pilot_scope.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_dispatch_pilot_scope
+            file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
+            cp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
+          fi
+          file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
+          cmp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
+          echo "MIGRATION_FILE=$file" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-work-pilot-migration
+          path: supabase/migrations/*_smart_work_dispatch_pilot_scope.sql
+          retention-days: 3
       - name: Isolated schema and transaction tests
         run: |
           set -euo pipefail
@@ -46,6 +68,13 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
           psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
+      - name: Controlled pilot and shortage-safe partial tests
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_day_availability_start_trip.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_dispatch_pilot_scope.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_dispatch_pilot_scope.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-pilot-scope.sql
       - name: Concurrent requests and mixed legacy writes
         run: bash scripts/test-smart-work-start-trip-race.sh
       - uses: actions/setup-node@v4
