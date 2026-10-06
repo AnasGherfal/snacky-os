@@ -1,0 +1,34 @@
+name: Operator completion photo persistence
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/operator-completion-photo.yml'
+      - 'src/lib/operator-actions.ts'
+      - 'src/app/operator/routes/[id]/stops/[stopId]/page.tsx'
+      - 'src/app/api/operator/routes/[id]/stops/[stopId]/completion-photo/route.ts'
+      - 'scripts/test-route-stop-persistence-fix.mjs'
+      - 'scripts/test-stop-runtime-polish.mjs'
+      - 'scripts/test-stop-completion-recovery.mjs'
+permissions:
+  contents: read
+concurrency:
+  group: operator-completion-photo-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Photo persistence and stop completion regressions
+        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs
+      - name: Type check
+        run: npx tsc --noEmit
