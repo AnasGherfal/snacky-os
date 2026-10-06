@@ -1,4 +1,4 @@
-name: Smart Work Part 3E - controlled pilot rollout
+name: Smart Work Part 3E - controlled pilot rollout checks
 on:
   pull_request:
     branches: [master]
