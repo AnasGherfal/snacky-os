@@ -41,7 +41,19 @@ test('current database identity revocation overrides cached profile',async()=>{f
 test('client-supplied quantity actor deadline and plan overrides are rejected',async()=>{for(const extra of [{actorId:id(202)},{quantity:99},{plan:plan()},{dueAt:'tomorrow'},{admin:true}]){const h=await harness();assert.equal((await h.post({...input(),...extra})).status,400);assert.equal(h.calls.length,0);}});
 test('invalid duplicate and excessive selected duties are rejected before reads',async()=>{for(const dutyIds of [null,[],[id(301),id(301)],['invalid'],Array.from({length:7},(_,i)=>id(301+i))]){const h=await harness();assert.equal((await h.post({...input(),dutyIds})).status,400);assert.equal(h.calls.length,0);}});
 test('fingerprint change prevents any commit',async()=>{const h=await harness({fingerprint:'b'.repeat(64)});assert.equal((await h.post()).status,409);assert.equal(h.rpcCalls().length,0);});
-test('partial blocked expired unknown and underfilled plans never commit',async()=>{for(const p of [{status:'partial'},{status:'blocked'},{emptyAfter:1},{unknownAfter:1},{underfilled:1},{errors:['missing slot']},{expiresAt:'invalid'},{expiresAt:new Date(0).toISOString()},{totalUnits:0}]){const h=await harness({plan:p});assert.equal((await h.post()).status,409);assert.equal(h.rpcCalls().length,0);}});
+test('known shortage partial plans may commit while unsafe partials remain blocked',async()=>{
+  for(const p of [
+    {status:'partial',emptyAfter:1,underfilled:1,lanes:[{take:5,after:1,action:'refill',reason:'insufficient_stock'}]},
+    {status:'partial',emptyAfter:1,underfilled:0,lanes:[{take:5,after:0,action:'keep',reason:'no_compatible_stock'}]},
+  ]){const h=await harness({plan:p});assert.equal((await h.post()).status,201);assert.equal(h.rpcCalls().length,1);}
+  for(const p of [
+    {status:'blocked'},{unknownAfter:1},{errors:['missing slot']},{expiresAt:'invalid'},
+    {expiresAt:new Date(0).toISOString()},{totalUnits:0},
+    {status:'partial',lanes:[{take:5,after:null,action:'exception',reason:'verify_lane'}]},
+    {status:'partial',lanes:[{take:5,after:1,action:'keep',reason:'stock_unknown'}]},
+    {status:'partial',lanes:[{take:5,after:1,action:'exception',reason:'restricted'}]},
+  ]){const h=await harness({plan:p});assert.equal((await h.post()).status,409);assert.equal(h.rpcCalls().length,0);}
+});
 test('changed plan authorization is preserved',async()=>{const h=await harness({planError:403});assert.equal((await h.post()).status,403);assert.equal(h.rpcCalls().length,0);});
 test('uncertain prior save never tries to start again blindly',async()=>{const h=await harness({readFailure:'smart_work_trip_requests'});const r=await h.post();assert.equal(r.status,503);assert.equal((await r.json()).retryable,true);assert.equal(h.rpcCalls().length,0);});
 for(const [code,status,retryable] of [['42501',403,false],['40001',409,true],['55P03',409,true],['40P01',409,true],['23514',409,false],['23505',409,false],['22023',409,false],['55000',503,false],['network',503,true]])test(`SQL ${code} is returned safely`,async()=>{const h=await harness({sqlError:code});const r=await h.post(),d=await r.json();assert.equal(r.status,status);assert.equal(d.retryable,retryable);assert.doesNotMatch(d.error,/SECRET/);});
@@ -55,11 +67,13 @@ test('product plan UI exposes Start Trip only through the gated API contract',()
   assert.match(productClient,/fetch\('\/api\/operator\/start-trip',\{cache:'no-store'\}\)/);
   assert.match(productClient,/Start Trip & reserve products/);
   assert.match(productClient,/dispatch\.enabled/);
-  assert.match(productClient,/status==='complete'/);
+  assert.match(productClient,/shortageSafe/);
+  assert.match(productClient,/\['complete','partial'\]\.includes/);
   assert.match(productClient,/!expired/);
   assert.match(productClient,/!result\.higherPriorityRemaining/);
   assert.match(productClient,/allSelectedMine/);
   assert.match(productClient,/result\.plan\.totalUnits>0/);
+  assert.match(productClient,/Safe partial trip/);
 });
 
 test('product plan UI reuses one request ID across uncertain retries and never accepts browser quantities',()=>{
