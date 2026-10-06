@@ -227,7 +227,7 @@ begin
       raise exception 'Unexpected machine' using errcode='22023';
     end if;
     select s.id,s.machine_id,s.slot_code,r.product_id,r.current_qty,r.capacity,r.captured_at,m.location_id,
-      coalesce(c.location_type,l.location_type) as location_type into actual
+      coalesce(c.location_type,l.location_type::text) as location_type into actual
     from public.machine_slots s join public.machines m on m.id=s.machine_id and m.status::text='active'
     join public.latest_vms_stock_by_slot r on r.machine_id=s.machine_id
       and (case when trim(r.slot_code)~'^[0-9]{1,4}$' then trim(r.slot_code)::integer end)
