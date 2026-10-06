@@ -47,10 +47,12 @@ create function public.test_assert(ok boolean,label text) returns void language 
 if ok is distinct from true then raise exception 'ASSERTION FAILED: %',label;end if;raise notice 'PASS: %',label;end $$;
 create function public.test_trip_plan(ids uuid[]) returns jsonb language sql volatile as $$
 select jsonb_build_object('status','complete','generatedAt',clock_timestamp(),'expiresAt',clock_timestamp()+interval '4 minutes',
- 'totalUnits',sum(r.capacity-r.current_qty),'lanes',jsonb_agg(jsonb_build_object(
+ 'totalUnits',sum(r.capacity-r.current_qty),'emptyAfter',0,'unknownAfter',0,'underfilled',0,'errors','[]'::jsonb,
+ 'lanes',jsonb_agg(jsonb_build_object(
  'machineId',d.machine_id,'slotId',s.id,'code',lpad(s.slot_code,3,'0'),'originalProductId',r.product_id,'originalName','Original',
  'productId',r.product_id,'productName','Original','current',r.current_qty,'originalCapacity',r.capacity,'target',r.capacity,
- 'take',r.capacity-r.current_qty,'removeExpected',0,'after',r.capacity,'action',case when r.capacity=r.current_qty then 'keep' else 'refill' end)))
+ 'take',r.capacity-r.current_qty,'removeExpected',0,'after',r.capacity,'action',case when r.capacity=r.current_qty then 'keep' else 'refill' end,
+ 'reason',case when r.capacity=r.current_qty then 'stocked' else 'top_up' end)))
 from public.smart_work_duties d join public.machine_slots s on s.machine_id=d.machine_id and s.active
 join public.latest_vms_stock_by_slot r on r.machine_id=s.machine_id and r.slot_code=s.slot_code where d.id=any(ids) $$;
 -- Fixture values only, unrelated to Snacky's real IDs, schedules or quantities.
