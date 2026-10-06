@@ -135,3 +135,34 @@ test("legacy active route statuses remain reserved while terminal routes do not"
 
   assert.equal(items.find((item) => item.productId === "water").activeRouteNeedQty, 10);
 });
+
+
+test("aggregated refill summaries preserve the exact restock result", () => {
+  const shared = {
+    products,
+    storageRows: [
+      { product_id: "water", quantity_on_hand: 20 },
+      { product_id: "doritos", quantity_on_hand: 8 },
+    ],
+  };
+
+  const raw = computeRestockPriority({
+    ...shared,
+    recommendations: [
+      { product_id: "water", machine_name: "Benghazi Mall", suggested_qty: 12, final_qty_to_take: 8 },
+      { product_id: "water", machine_name: "Tripoli Office", suggested_qty: 7, final_qty_to_take: 7 },
+      { product_id: "water", machine_name: "Benghazi Mall", suggested_qty: 3, final_qty_to_take: 3 },
+      { product_id: "doritos", machine_name: "Tripoli Office", suggested_qty: 5, final_qty_to_take: 5 },
+    ],
+  });
+
+  const summarized = computeRestockPriority({
+    ...shared,
+    recommendationSummaries: [
+      { product_id: "water", recommended_refill_qty: 22, machine_names: ["Benghazi Mall", "Tripoli Office"] },
+      { product_id: "doritos", recommended_refill_qty: 5, machine_names: ["Tripoli Office"] },
+    ],
+  });
+
+  assert.deepEqual(summarized, raw);
+});

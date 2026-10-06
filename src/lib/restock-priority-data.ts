@@ -7,6 +7,7 @@ import {
   type RestockPriorityItem,
   type RestockProductInput,
   type RestockRecommendationRow,
+  type RestockRecommendationSummaryRow,
   type RestockRouteNeedRow,
   type RestockSalesRow,
   type RestockStorageRow,
@@ -15,6 +16,7 @@ import {
 
 type SupabaseLike = {
   from: (table: string) => any;
+  rpc: (fn: string, args?: Record<string, unknown>) => any;
 };
 
 export type RestockPriorityLoadResult = {
@@ -166,24 +168,27 @@ export async function loadRestockPriorityData(
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
   const { products, usedFallback } = await loadProducts(inventoryReadClient, errors);
   const recommendationsPromise = options.recommendationsPromise
-    ? Promise.resolve(options.recommendationsPromise).then((data) => ({
-        data,
-        count: data.length,
+    ? Promise.resolve(options.recommendationsPromise).then((rows) => ({
+        data: rows,
+        count: rows.length,
         error: null as string | null,
       }))
-    : safeSupabaseQuery<RestockRecommendationRow>({
-        label: "restock-priority.refill_recommendations",
-        promise: inventoryReadClient.from("refill_recommendations")
-          .select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority")
-          .limit(10000),
+    : Promise.resolve({ data: [] as RestockRecommendationRow[], count: 0, error: null as string | null });
+
+  const recommendationSummariesPromise = options.recommendationsPromise
+    ? Promise.resolve({ data: undefined as RestockRecommendationSummaryRow[] | undefined, count: 0, error: null as string | null })
+    : safeSupabaseQuery<RestockRecommendationSummaryRow>({
+        label: "restock-priority.snacky_restock_refill_summary_v1",
+        promise: inventoryReadClient.rpc("snacky_restock_refill_summary_v1"),
       });
 
-  const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
+  const [storage, recommendations, recommendationSummaries, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
       label: "restock-priority.route_storage_stock_by_product",
       promise: inventoryReadClient.from("route_storage_stock_by_product").select("product_id, quantity_on_hand").limit(5000),
     }),
     recommendationsPromise,
+    recommendationSummariesPromise,
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stock_lines.active",
       promise: inventoryReadClient.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)").limit(10000),
@@ -215,7 +220,7 @@ export async function loadRestockPriorityData(
     }),
   ]);
 
-  Object.entries({ storage: storage.error, recommendations: recommendations.error, routeNeeds: routeNeeds.error, routeStopNeeds: routeStopNeeds.error, machineSlots: machineSlots.error, vmsStock: vmsStock.error, salesVelocity: sales.error })
+  Object.entries({ storage: storage.error, recommendations: recommendations.error ?? recommendationSummaries.error, routeNeeds: routeNeeds.error, routeStopNeeds: routeStopNeeds.error, machineSlots: machineSlots.error, vmsStock: vmsStock.error, salesVelocity: sales.error })
     .forEach(([key, error]) => { if (error) errors[key] = error; });
 
   if (options.repairMissingRouteStockLines !== false && !routeNeeds.error && !routeStopNeeds.error) {
@@ -244,6 +249,15 @@ export async function loadRestockPriorityData(
     final_qty_to_take: row.final_qty_to_take,
     priority: row.priority,
   }));
+
+  const normalizedRecommendationSummaries: RestockRecommendationSummaryRow[] | undefined =
+    recommendationSummaries.data === undefined
+      ? undefined
+      : recommendationSummaries.data.map((row: any) => ({
+          product_id: row.product_id,
+          recommended_refill_qty: row.recommended_refill_qty,
+          machine_names: Array.isArray(row.machine_names) ? row.machine_names : [],
+        }));
 
   const routeStockKeys = new Set<string>();
   const normalizedRouteNeeds: RestockRouteNeedRow[] = (routeNeeds.data ?? []).map((row: any) => {
@@ -288,6 +302,7 @@ export async function loadRestockPriorityData(
       products,
       storageRows: storage.data,
       recommendations: normalizedRecommendations,
+      recommendationSummaries: normalizedRecommendationSummaries,
       routeNeeds: normalizedRouteNeeds,
       machineSlots: normalizedMachineSlots,
       vmsStockRows: normalizedVmsStock,
