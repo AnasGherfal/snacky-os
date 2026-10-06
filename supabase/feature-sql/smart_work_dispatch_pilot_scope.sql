@@ -90,19 +90,23 @@ begin
   ) then
     raise exception 'Operator is outside the Smart Work pilot' using errcode='42501';
   end if;
-  if jsonb_typeof(p_plan) is distinct from 'object' or p_plan->>'status' is distinct from 'complete'
+  if jsonb_typeof(p_plan) is distinct from 'object' or p_plan->>'status' not in ('complete','partial')
     or jsonb_typeof(p_plan->'lanes') is distinct from 'array'
     or jsonb_typeof(p_plan->'generatedAt') is distinct from 'string'
     or jsonb_typeof(p_plan->'expiresAt') is distinct from 'string'
-    or jsonb_typeof(p_plan->'totalUnits') is distinct from 'number' then
-    raise exception 'A current complete product plan is required' using errcode='22023';
+    or jsonb_typeof(p_plan->'totalUnits') is distinct from 'number'
+    or jsonb_typeof(p_plan->'unknownAfter') is distinct from 'number'
+    or jsonb_typeof(p_plan->'errors') is distinct from 'array' then
+    raise exception 'A current safe product plan is required' using errcode='22023';
   end if;
   if jsonb_array_length(p_plan->'lanes') not between 1 and 600
     or not isfinite((p_plan->>'expiresAt')::timestamptz) or not isfinite((p_plan->>'generatedAt')::timestamptz)
     or (p_plan->>'expiresAt')::timestamptz<=ts or (p_plan->>'expiresAt')::timestamptz>ts+interval '5 minutes'
     or (p_plan->>'generatedAt')::timestamptz not between ts-interval '5 minutes' and ts+interval '1 minute'
-    or (p_plan->>'totalUnits')::integer not between 1 and 600000 then
-    raise exception 'A current complete product plan is required' using errcode='22023';
+    or (p_plan->>'totalUnits')::integer not between 1 and 600000
+    or (p_plan->>'unknownAfter')::integer<>0
+    or jsonb_array_length(p_plan->'errors')<>0 then
+    raise exception 'A current safe product plan is required' using errcode='22023';
   end if;
   -- Do not lock the read-only gate using a mode requiring UPDATE. Its trigger uses our mutex.
   -- Read locks stabilize role/rule/slot changes and both sources of the latest-stock view.
@@ -211,15 +215,18 @@ begin
     raise exception 'Every usable lane must be included exactly once' using errcode='22023';
   end if;
   for lane in select x from jsonb_array_elements(p_plan->'lanes') x loop
-    if jsonb_typeof(lane) is distinct from 'object' or not(lane ?& array['machineId','slotId','code','originalProductId','productId','current','originalCapacity','target','take','removeExpected','after','action'])
+    if jsonb_typeof(lane) is distinct from 'object' or not(lane ?& array['machineId','slotId','code','originalProductId','productId','current','originalCapacity','target','take','removeExpected','after','action','reason'])
       or exists(select 1 from unnest(array['current','originalCapacity','target','take','removeExpected','after']) k where jsonb_typeof(lane->k) is distinct from 'number') then
       raise exception 'Missing lane fields' using errcode='22023';
+    end if;
+    if lane->>'action'='exception' or lane->>'reason' in ('verify_lane','missing_mapping','restricted','stock_unknown') then
+      raise exception 'Unsafe lane requires verification before dispatch' using errcode='22023';
     end if;
     if (lane->>'machineId')::uuid is null or (lane->>'machineId')::uuid<>all(machine_ids) then
       raise exception 'Unexpected machine' using errcode='22023';
     end if;
     select s.id,s.machine_id,s.slot_code,r.product_id,r.current_qty,r.capacity,r.captured_at,m.location_id,
-      coalesce(c.location_type,l.location_type) as location_type into actual
+      coalesce(c.location_type,l.location_type::text) as location_type into actual
     from public.machine_slots s join public.machines m on m.id=s.machine_id and m.status::text='active'
     join public.latest_vms_stock_by_slot r on r.machine_id=s.machine_id
       and (case when trim(r.slot_code)~'^[0-9]{1,4}$' then trim(r.slot_code)::integer end)
@@ -246,9 +253,10 @@ begin
     picked_product:=(lane->>'productId')::uuid;target:=(lane->>'target')::integer;
     take_qty:=(lane->>'take')::integer;remove_qty:=(lane->>'removeExpected')::integer;
     if picked_product is null or target not between 1 and 1000 or take_qty not between 0 and 1000
-      or not exists(select 1 from public.products where id=picked_product and active)
-      or (lane->>'after')::integer is distinct from target then
-      raise exception 'Invalid complete lane plan' using errcode='22023';
+      or remove_qty not between 0 and 1000
+      or (lane->>'after')::integer not between 0 and target
+      or not exists(select 1 from public.products where id=picked_product and active) then
+      raise exception 'Invalid lane plan' using errcode='22023';
     end if;
     if exists(select 1 from public.smart_route_slot_product_rules where machine_slot_id=actual.id and product_id=picked_product and rule='prohibited')
       or exists(select 1 from public.smart_route_location_product_rules where product_id=picked_product and rule='prohibited'
@@ -256,16 +264,22 @@ begin
       raise exception 'Product is prohibited at this machine or lane' using errcode='22023';
     end if;
     if picked_product=actual.product_id then
-      if target<>actual.capacity or take_qty<>target-actual.current_qty or remove_qty<>0
-        or (lane->>'action') is distinct from (case when take_qty=0 then 'keep' else 'refill' end) then
+      if target<>actual.capacity or remove_qty<>0
+        or take_qty>target-actual.current_qty
+        or (lane->>'after')::integer<>actual.current_qty+take_qty
+        or (lane->>'action') is distinct from (case when take_qty=0 then 'keep' else 'refill' end)
+        or (take_qty=0 and (lane->>'after')::integer<target and lane->>'reason' not in ('no_compatible_stock','keep_remaining'))
+        or (take_qty>0 and (lane->>'after')::integer<target and lane->>'reason'<>'insufficient_stock') then
         raise exception 'Current product refill quantities changed' using errcode='40001';
       end if;
     else
-      if take_qty<>target or remove_qty<>actual.current_qty or target<actual.current_qty
-        or lane->>'action' is distinct from 'replace'
+      if lane->>'action' is distinct from 'replace'
+        or target<actual.current_qty
         or not exists(select 1 from public.smart_route_slot_product_rules where machine_slot_id=actual.id
-          and product_id=picked_product and rule='allowed' and verified_capacity=target) then
-        raise exception 'Replacement needs verified fit, capacity and full stock' using errcode='22023';
+          and product_id=picked_product and rule='allowed' and verified_capacity=target)
+        or (actual.current_qty>0 and (take_qty<>target or remove_qty<>actual.current_qty or (lane->>'after')::integer<>target))
+        or (actual.current_qty=0 and (remove_qty<>0 or take_qty not between 1 and target or (lane->>'after')::integer<>take_qty)) then
+        raise exception 'Replacement needs verified fit and safe quantities' using errcode='22023';
       end if;
     end if;
   end loop;
@@ -289,24 +303,39 @@ begin
   end if;
   route_id_new:=gen_random_uuid();
   result:=jsonb_build_object('routeId',route_id_new,'href','/operator/routes/'||route_id_new::text,
-    'stopCount',cardinality(req_ids),'reservedUnits',(p_plan->>'totalUnits')::integer,'replayed',false);
+    'stopCount',cardinality(req_ids),'reservedUnits',(p_plan->>'totalUnits')::integer,
+    'shortageLanes',(select count(*) from jsonb_array_elements(p_plan->'lanes') x where (x->>'after')::integer<(x->>'target')::integer),
+    'replayed',false);
   insert into public.smart_work_trip_requests(auth_user_id,request_id,actor_id,duty_ids,input_fingerprint,route_id,plan,result)
     values(p_auth_user,p_request,p_actor,req_ids,p_fingerprint,route_id_new,p_plan,result);
   insert into public.routes(id,route_date,operator_id,status,created_by,notes)
-    values(route_id_new,local_day,p_actor,'assigned',p_actor,'Smart Work: selected required stops. Stock reserved; pickup not yet confirmed.');
+    values(route_id_new,local_day,p_actor,'assigned',p_actor,
+      format('Smart Work: selected required stops. Stock reserved; pickup not yet confirmed. Known shortage lanes: %s.',
+        (select count(*) from jsonb_array_elements(p_plan->'lanes') x where (x->>'after')::integer<(x->>'target')::integer)));
   expected_count:=0;
   for d in select * from public.smart_work_duties where id=any(req_ids)
     order by case priority when 'immediate' then 0 when 'urgent' then 1 else 2 end,due_at,required_at,id loop
     expected_count:=expected_count+1;stop_id_new:=gen_random_uuid();
     insert into public.route_stops(id,route_id,machine_id,stop_order,status)
       values(stop_id_new,route_id_new,d.machine_id,expected_count,'pending');
-    for lane in select x from jsonb_array_elements(p_plan->'lanes') x where (x->>'machineId')::uuid=d.machine_id and (x->>'take')::integer>0 loop
+    for lane in
+      select x from jsonb_array_elements(p_plan->'lanes') x
+      where (x->>'machineId')::uuid=d.machine_id
+        and ((x->>'take')::integer>0 or (x->>'after')::integer<(x->>'target')::integer)
+    loop
       insert into public.route_stop_items(route_id,route_stop_id,machine_id,product_id,machine_slot_id,slot_code,
         planned_quantity,recommended_take_qty,final_take_qty,source,notes,slot_allocations)
       values(route_id_new,stop_id_new,d.machine_id,(lane->>'productId')::uuid,(lane->>'slotId')::uuid,lane->>'code',
         (lane->>'take')::integer,(lane->>'take')::integer,(lane->>'take')::integer,'refill_recommendation',
-        case when lane->>'action'='replace' then format('PRODUCT CHANGE — lane %s: count and remove remaining %s first (expected %s). Record actual removal, change and verify XY product to %s, then fill %s. Never mix products; removed units are not yet returned warehouse stock.',lane->>'code',lane->>'originalName',lane->>'removeExpected',lane->>'productName',lane->>'take')
-          else 'Smart Work verified product plan.' end,
+        case
+          when (lane->>'take')::integer=0 and (lane->>'after')::integer<(lane->>'target')::integer then
+            format('KNOWN STOCK SHORTAGE — lane %s: leave %s unchanged at %s/%s. Do not substitute unless separately approved. Duty stays unresolved until current evidence shows the machine healthy.',lane->>'code',lane->>'productName',lane->>'after',lane->>'target')
+          when lane->>'action'='replace' then
+            format('PRODUCT CHANGE — lane %s: count and remove remaining %s first (expected %s). Record actual removal, change and verify XY product to %s, then fill %s/%s. Never mix products; removed units are not yet returned warehouse stock.%s',lane->>'code',lane->>'originalName',lane->>'removeExpected',lane->>'productName',lane->>'after',lane->>'target',case when (lane->>'after')::integer<(lane->>'target')::integer then ' Known stock shortage remains.' else '' end)
+          when (lane->>'after')::integer<(lane->>'target')::integer then
+            format('PARTIAL STOCK — lane %s: take %s of %s; planned result %s/%s. Known shortage remains visible and the duty is not completed by this plan.',lane->>'code',lane->>'take',lane->>'productName',lane->>'after',lane->>'target')
+          else 'Smart Work verified product plan.'
+        end,
         jsonb_build_array(jsonb_build_object('machine_slot_id',lane->>'slotId','slot_code',lane->>'code',
           'current_qty',case when lane->>'action'='replace' then 0 else (lane->>'current')::integer end,
           'target_qty',(lane->>'target')::integer,'recommended_take_qty',(lane->>'take')::integer,'final_take_qty',(lane->>'take')::integer,'allocation_kind','slot')));
