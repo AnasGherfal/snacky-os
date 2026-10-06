@@ -7,6 +7,7 @@ on:
       - '.github/workflows/smart-work-start-trip.yml'
       - 'supabase/feature-sql/smart_work_start_trip.sql'
       - 'supabase/feature-sql/smart_work_dispatch_pilot_scope.sql'
+      - 'supabase/feature-sql/smart_work_dispatch_pilot_scope.sql'
       - 'supabase/feature-sql/smart_work_partial_refill_lifecycle.sql'
       - 'supabase/migrations/*_smart_work_dispatch_pilot_scope.sql'
       - 'supabase/migrations/*_smart_work_partial_refill_lifecycle.sql'
@@ -16,6 +17,7 @@ on:
       - 'src/app/api/operator/start-trip/**'
       - 'src/app/operator/product-plan/**'
       - 'scripts/*smart-work-start-trip*'
+      - 'scripts/test-smart-work-pilot-scope.sql'
       - 'docs/smart-work-part3b-start-trip.md'
 permissions:
   contents: read
@@ -81,7 +83,10 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f scripts/smart-work-start-trip-source-fixture.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
           psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_start_trip.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_dispatch_pilot_scope.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_dispatch_pilot_scope.sql
           psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-start-trip.sql
+          psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-pilot-scope.sql
       - name: Controlled pilot and shortage-safe partial tests
         run: |
           set -euo pipefail
