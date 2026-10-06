@@ -94,10 +94,12 @@ export async function startRequiredTrip(raw: unknown): Promise<StartedTrip> {
     throw error;
   }
   if (preview.inputFingerprint !== input.inputFingerprint) throw new StartTripError('Stock, rules or duties changed. Regenerate the product preview before starting.', 409);
-  if (preview.plan.status !== 'complete' || preview.plan.emptyAfter || preview.plan.unknownAfter || preview.plan.underfilled
+  const unsafeReasons=new Set(['verify_lane','missing_mapping','restricted','stock_unknown']);
+  const unsafeLane=preview.plan.lanes.some(l=>l.after===null||l.action==='exception'||unsafeReasons.has(l.reason));
+  if (!['complete','partial'].includes(preview.plan.status) || preview.plan.unknownAfter || unsafeLane
     || preview.plan.errors.length || preview.plan.totalUnits < 1 || !Number.isFinite(Date.parse(preview.plan.expiresAt))
     || Date.parse(preview.plan.expiresAt) <= Date.now()) {
-    throw new StartTripError('The product plan is incomplete or expired. Resolve the shown lanes before starting.', 409);
+    throw new StartTripError('The product plan has an unsafe or expired lane. Verify mappings/readings before starting.', 409);
   }
   const saved = await a.db.rpc('snacky_start_smart_work_trip_v1', {
     p_auth_user: a.userId, p_actor: a.actorId, p_request: input.requestId,
