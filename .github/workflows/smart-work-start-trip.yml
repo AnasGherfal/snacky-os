@@ -6,8 +6,11 @@ on:
       - '.github/workflows/smart-work-start-trip.yml'
       - 'supabase/feature-sql/smart_work_start_trip.sql'
       - 'supabase/feature-sql/smart_work_dispatch_pilot_scope.sql'
+      - 'supabase/feature-sql/smart_work_partial_refill_lifecycle.sql'
       - 'supabase/migrations/*_smart_work_dispatch_pilot_scope.sql'
+      - 'supabase/migrations/*_smart_work_partial_refill_lifecycle.sql'
       - 'scripts/test-smart-work-pilot-scope.sql'
+      - 'scripts/test-smart-work-partial-refill-lifecycle.sql'
       - 'src/lib/smart-work-start-trip*'
       - 'src/app/api/operator/start-trip/**'
       - 'src/app/operator/product-plan/**'
@@ -44,7 +47,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.117.0
-      - name: Generate canonical pilot migration
+      - name: Generate canonical pilot migrations
         run: |
           set -euo pipefail
           if ! ls supabase/migrations/*_smart_work_dispatch_pilot_scope.sql >/dev/null 2>&1; then
@@ -52,13 +55,23 @@ jobs:
             file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
             cp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
           fi
+          if ! ls supabase/migrations/*_smart_work_partial_refill_lifecycle.sql >/dev/null 2>&1; then
+            supabase migration new smart_work_partial_refill_lifecycle
+            file2="$(find supabase/migrations -name '*_smart_work_partial_refill_lifecycle.sql' | head -1)"
+            cp supabase/feature-sql/smart_work_partial_refill_lifecycle.sql "$file2"
+          fi
           file="$(find supabase/migrations -name '*_smart_work_dispatch_pilot_scope.sql' | head -1)"
+          file2="$(find supabase/migrations -name '*_smart_work_partial_refill_lifecycle.sql' | head -1)"
           cmp supabase/feature-sql/smart_work_dispatch_pilot_scope.sql "$file"
+          cmp supabase/feature-sql/smart_work_partial_refill_lifecycle.sql "$file2"
           echo "MIGRATION_FILE=$file" >> "$GITHUB_ENV"
+          echo "LIFECYCLE_MIGRATION_FILE=$file2" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: smart-work-pilot-migration
-          path: supabase/migrations/*_smart_work_dispatch_pilot_scope.sql
+          path: |
+            supabase/migrations/*_smart_work_dispatch_pilot_scope.sql
+            supabase/migrations/*_smart_work_partial_refill_lifecycle.sql
           retention-days: 3
       - name: Isolated schema and transaction tests
         run: |
@@ -77,6 +90,16 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-pilot-scope.sql
       - name: Concurrent requests and mixed legacy writes
         run: bash scripts/test-smart-work-start-trip-race.sh
+      - name: Verified partial refill keeps duty alive until healthy
+        run: |
+          set -euo pipefail
+          dropdb --if-exists partial_lifecycle_test
+          createdb partial_lifecycle_test
+          PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-duty-fixture.sql
+          PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
+          PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
+          PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_partial_refill_lifecycle.sql
+          PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f scripts/test-smart-work-partial-refill-lifecycle.sql
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
