@@ -93,8 +93,10 @@ jobs:
       - name: Verified partial refill keeps duty alive until healthy
         run: |
           set -euo pipefail
-          dropdb --if-exists partial_lifecycle_test
-          createdb partial_lifecycle_test
+          dropdb --if-exists --maintenance-db=postgres smart_trip_test
+          psql -d postgres -v ON_ERROR_STOP=1 -c "drop role if exists anon, authenticated, service_role"
+          dropdb --if-exists --maintenance-db=postgres partial_lifecycle_test
+          createdb --maintenance-db=postgres partial_lifecycle_test
           PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f scripts/smart-work-duty-fixture.sql
           PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_coverage_setup.sql
           PGDATABASE=partial_lifecycle_test psql -v ON_ERROR_STOP=1 -f supabase/feature-sql/smart_work_daily_duties.sql
