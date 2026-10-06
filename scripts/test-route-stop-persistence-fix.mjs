@@ -20,17 +20,33 @@ test("saved machine photo state reaches the stop completion form", () => {
   assert.match(page, /persistedMachinePhotoReady/);
   assert.match(page, /window\.addEventListener\("snacky:machine-photo-persisted"/);
   assert.match(page, /const hasPersistedMachineProof = persistedMachinePhotoReady \|\| Boolean\(stopData\.hasCompletionPhoto\)/);
-  assert.match(page, /proofReady: Boolean\(finalPhotoFile \|\| persistedMachinePhotoReady \|\| stopData\.hasCompletionPhoto\)/);
+  assert.match(page, /proofReady: Boolean\(persistedMachinePhotoReady \|\| stopData\.hasCompletionPhoto\)/);
+  assert.doesNotMatch(page, /proofReady: Boolean\(finalPhotoFile/);
 });
 
 test("selecting the final machine photo persists it before stop submission", () => {
   const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const actions = read("src/lib/operator-actions.ts");
+  const start = page.indexOf("const saveFinalMachinePhotoImmediately");
+  const end = page.indexOf("\n  const handleCompleteStop", start);
+  const immediateSave = page.slice(start, end);
+  const uploadStart = actions.indexOf("export async function uploadRefillProofPhoto");
+  const uploadEnd = actions.indexOf("\nexport async function ", uploadStart + 1);
+  const uploadProof = actions.slice(uploadStart, uploadEnd);
+
   assert.match(page, /saveFinalMachinePhotoImmediately/);
   assert.match(page, /if \(file\) void saveFinalMachinePhotoImmediately\(file\)/);
-  assert.match(page, /completion-photo[\s\S]*method: "POST"/);
-  assert.match(page, /setPersistedMachinePhotoReady\(true\)/);
+  assert.doesNotMatch(immediateSave, /completion-photo/);
+  assert.match(immediateSave, /uploaded\.persisted !== true/);
+  assert.match(immediateSave, /setPersistedMachinePhotoReady\(true\)/);
   assert.match(page, /Photo saved\. You can close the app and return later\./);
   assert.match(page, /!finalPhotoSaving && cleaningDone/);
+
+  assert.match(uploadProof, /from\("machine_refill_history"\)/);
+  assert.match(uploadProof, /\.upsert\([\s\S]*onConflict: "legacy_refill_id"/);
+  assert.match(uploadProof, /precompletion_photo_saved: true/);
+  assert.match(uploadProof, /persisted: true/);
+  assert.match(uploadProof, /Retry the same photo; it will not create a duplicate file/);
 });
 
 test("role-array helper resolves with the empty route-writer search path", () => {
