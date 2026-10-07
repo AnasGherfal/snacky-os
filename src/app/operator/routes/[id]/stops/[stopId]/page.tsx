@@ -2316,21 +2316,21 @@ export default function MachineStopPage() {
                         <button
                           type="button"
                           className={xyReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-secondary min-h-11"}
-                          disabled={!returnReady || xyReady || xyQueued}
+                          disabled={!returnReady || xyReady}
                           onClick={() => {
                             setXySwapSourceSlotCode(null);
                             setXySwapTargetSlotCode("");
                             setXyEditSlotCode(requirement.slotCode);
-                            setXyChangeOffline(false);
+                            setXyChangeOffline(xyQueued);
                             setXyQueuePhysicalConfirmed(false);
                             setXyQueueLaneDisabled(false);
-                            setXyQueueActualQty(0);
+                            setXyQueueActualQty((stopData.queuedXyChanges ?? []).find((row) => row.slot_code === requirement.slotCode)?.target_stock_qty ?? laneFill);
                             setXyReplacementProductId(requirement.targetProductId);
                             setXyChangeError("");
                             setXyChangeSuccess("");
                           }}
                         >
-                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : xyQueued ? tr("Queued safely — reconnect pending", "تم الحفظ — بانتظار عودة الاتصال") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
+                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : xyQueued ? tr("Review queued change", "مراجعة التغيير المحفوظ") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
                         </button>
                       </div>
                     ) : null}
