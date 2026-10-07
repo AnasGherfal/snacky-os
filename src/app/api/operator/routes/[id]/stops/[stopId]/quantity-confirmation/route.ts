@@ -243,7 +243,7 @@ export async function POST(
       return NextResponse.json({ success: true, installed: true, confirmed: true, confirmation: data });
     }
 
-    if (!["xy_api","xy_screenshot","machine_offline"].includes(mode)) {
+    if (!["xy_api","xy_screenshot","machine_offline","sync_pending"].includes(mode)) {
       return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose direct XY verification, XY screenshots, or machine power off." }, { status: 400 });
     }
     const filledItemsError = validateFilledItems(payload.filledItems);
@@ -254,7 +254,11 @@ export async function POST(
       return NextResponse.json({ success: false, code: "XY_SCREENSHOT_REQUIRED", error: "Upload one to four current XY inventory screenshots." }, { status: 400 });
     }
     const offlineNote = clean(payload.offlineNote).slice(0, 500);
-    const offlineReason = mode === "machine_offline" ? offlineNote || "Machine has no electricity." : null;
+    const offlineReason = mode === "machine_offline"
+      ? offlineNote || "Machine has no electricity."
+      : mode === "sync_pending"
+        ? "XY sync pending — actual refill totals saved; machine status and lane sync require verification."
+        : null;
     const planRows = await loadPlanRows(context.admin, stopId, context.stop.machine_id);
     const sources = buildMachineQuantitySourcesFromPlan(planRows, payload.filledItems as MachineQuantityFilledItem[]);
     const rows = buildMachineQuantityRows(sources);
