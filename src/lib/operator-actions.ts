@@ -2140,6 +2140,12 @@ export async function skipStop(formData: FormData) {
 
 type CompleteStopResult = ActionResult<{ expectedCash: number | null; routeId: string; stopId: string }>;
 
+type CompleteStopSlotQuantity = {
+  machineSlotId?: string | null;
+  slotCode?: string | null;
+  quantity: number;
+};
+
 type CompleteStopInputItem = {
   refillOrderLineId?: string | null;
   productId: string;
@@ -2148,6 +2154,7 @@ type CompleteStopInputItem = {
   reason?: string;
   notes?: string;
   unavailable?: boolean;
+  slotQuantities?: CompleteStopSlotQuantity[];
 };
 
 type CompleteStopExtraItem = { productId: string; quantity: number; reason: string; notes?: string };
@@ -2199,15 +2206,40 @@ function normalizeCompleteStopItems(
   const normalizedFilledItems = filledItems.map((item, index) => {
     const productId = String(item.productId ?? "").trim();
     if (!productId) throw new Error(`Assigned fill line ${index + 1} is missing a product.`);
+    const quantity = normalizeSubmittedQuantity(item.quantity, `Filled quantity for assigned line ${index + 1}`);
+    const slotQuantities = Array.isArray(item.slotQuantities)
+      ? item.slotQuantities.map((slot, slotIndex) => {
+          const machineSlotId = String(slot?.machineSlotId ?? "").trim() || null;
+          const slotCode = String(slot?.slotCode ?? "").trim() || null;
+          if (!machineSlotId && !slotCode) throw new Error(`Lane ${slotIndex + 1} on assigned fill ${index + 1} is missing its lane id.`);
+          if (machineSlotId && !UUID_VALUE_PATTERN.test(machineSlotId)) throw new Error(`Lane ${slotIndex + 1} on assigned fill ${index + 1} has an invalid lane id.`);
+          return {
+            machineSlotId,
+            slotCode,
+            quantity: normalizeSubmittedQuantity(slot?.quantity, `Lane quantity ${slotIndex + 1} on assigned fill ${index + 1}`),
+          };
+        })
+      : undefined;
+    if (slotQuantities?.length) {
+      const seen = new Set<string>();
+      for (const slot of slotQuantities) {
+        const key = slot.machineSlotId || `slot:${slot.slotCode}`;
+        if (seen.has(key)) throw new Error(`Assigned fill ${index + 1} contains the same lane more than once.`);
+        seen.add(key);
+      }
+      const laneTotal = slotQuantities.reduce((sum, slot) => sum + slot.quantity, 0);
+      if (laneTotal !== quantity) throw new Error(`Lane quantities for assigned fill ${index + 1} must add up to the filled product quantity.`);
+    }
     return {
       ...item,
       productId,
       refillOrderLineId: item.refillOrderLineId || null,
-      quantity: normalizeSubmittedQuantity(item.quantity, `Filled quantity for assigned line ${index + 1}`),
+      quantity,
       assignedQty: normalizeSubmittedQuantity(item.assignedQty ?? 0, `Assigned quantity for assigned line ${index + 1}`),
       reason: item.reason?.trim() || undefined,
       notes: item.notes?.trim() || undefined,
       unavailable: Boolean(item.unavailable),
+      slotQuantities,
     };
   });
 
@@ -2275,7 +2307,7 @@ export async function completeStop({
   stopId: string;
   routeId: string;
   machineId: string;
-  filledItems: { refillOrderLineId?: string | null; productId: string; quantity: number; assignedQty?: number; reason?: string; notes?: string; unavailable?: boolean }[];
+  filledItems: { refillOrderLineId?: string | null; productId: string; quantity: number; assignedQty?: number; reason?: string; notes?: string; unavailable?: boolean; slotQuantities?: CompleteStopSlotQuantity[] }[];
   extraItems?: { productId: string; quantity: number; reason: string; notes?: string }[];
   missingProducts?: { productName: string; reason: string; notes?: string }[];
   cashCollected: boolean;
