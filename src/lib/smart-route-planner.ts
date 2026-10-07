@@ -194,6 +194,7 @@ export type SmartRouteSlotAllocation = {
   current_qty: number;
   observed_current_qty: number;
   target_qty: number;
+  capacity: number;
   recommended_take_qty: number;
   final_take_qty: number;
   allocation_kind: "slot";
@@ -774,6 +775,7 @@ function slotAssignmentItems(decisions: ValidatedDecision[]): SmartRoutePlanItem
         current_qty: startingQtyForSelectedProduct,
         observed_current_qty: decision.currentQty,
         target_qty: targetQty,
+        capacity: decision.capacity,
         recommended_take_qty: decision.quantity,
         final_take_qty: decision.quantity,
         allocation_kind: "slot" as const,
@@ -819,6 +821,7 @@ function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanIte
       current_qty: startingQtyForSelectedProduct,
       observed_current_qty: decision.currentQty,
       target_qty: Math.min(decision.capacity, startingQtyForSelectedProduct + decision.quantity),
+      capacity: decision.capacity,
       recommended_take_qty: decision.quantity,
       final_take_qty: decision.quantity,
       allocation_kind: "slot",
