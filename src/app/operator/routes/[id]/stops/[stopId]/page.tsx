@@ -1707,7 +1707,11 @@ export default function MachineStopPage() {
             <div className="mt-2 space-y-1">
               {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
                 <div key={change.id} className="rounded-lg bg-white px-3 py-2">
-                  {tr("Lane", "الخانة")} {change.slot_code} · {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Automatic retry pending", "بانتظار المحاولة التلقائية")}
+                  {tr("Lane", "الخانة")} {change.slot_code}
+                  {" · "}
+                  <strong>{productById.get(change.target_product_id)?.name ?? tr("Selected product", "المنتج المختار")}</strong>
+                  {" · "}
+                  {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Saved — updating XY automatically", "محفوظ — تحديث XY تلقائياً")}
                 </div>
               ))}
             </div>
@@ -2177,8 +2181,8 @@ export default function MachineStopPage() {
                             </div>
                             <div className="mt-1 text-xs leading-5 text-emerald-900">
                               {tr(
-                                "Snacky uses the current XY price for this product on this machine when available, then re-reads the slot before confirming success.",
-                                "يستخدم Snacky سعر XY الحالي لهذا المنتج على نفس الجهاز إن كان متوفراً، ثم يعيد قراءة الخانة قبل تأكيد النجاح.",
+                                "Save once. If XY is offline, Snacky remembers this selection and updates it automatically when connected. New product stock starts at zero until physically refilled.",
+                                "احفظ مرة واحدة. إذا كان XY غير متصل، يحتفظ سناكي باختيارك ويحدّثه تلقائياً عند عودة الاتصال. يبدأ مخزون المنتج الجديد من صفر إلى أن يُعبأ فعلياً.",
                               )}
                             </div>
                           </div>
