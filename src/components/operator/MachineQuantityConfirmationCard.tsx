@@ -54,10 +54,11 @@ export function MachineQuantityConfirmationCard({
   const [offlineNote, setOfflineNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const attemptedAutoSaveKey = useRef<string | null>(null);
   const savedEvidenceMatches = savedKey === currentKey || machineQuantityEvidenceMatches(savedRows, rows);
   const ready = rows.length === 0 || Boolean(installed && savedEvidenceMatches && machineQuantityEvidenceReady(status));
   const ownerPending = ready && status === "offline_pending";
-  const canUploadScreenshots = loaded && installed && !completed && status !== "offline_pending" && status !== "xy_api_verified";
+  const canUploadScreenshots = loaded && installed && !completed && status !== "xy_api_verified";
   const reusableEvidenceCount = savedEvidenceMatches && status === "xy_screenshot_saved" ? evidenceFiles.length : 0;
   const screenshotLimitReached = reusableEvidenceCount >= MAX_SCREENSHOTS;
 
@@ -96,11 +97,30 @@ export function MachineQuantityConfirmationCard({
     onStateChangeRef.current?.({ installed, ready });
   }, [installed, ready]);
 
+  // Actual product/lane quantities are saved automatically. Screenshot evidence
+  // and power-off explanations are optional; they must not block a normal stop.
+  useEffect(() => {
+    if (!loaded || !installed || completed || ready || saving || rows.length === 0
+      || attemptedAutoSaveKey.current === currentKey) return;
+    const timer = window.setTimeout(() => {
+      attemptedAutoSaveKey.current = currentKey;
+      setSaving(true);
+      setError("");
+      void saveMode("sync_pending")
+        .catch((cause) => setError(cause instanceof Error ? cause.message : tr(
+          "Could not save the actual quantities yet. Tap Save for later to retry.",
+          "تعذر حفظ الكميات الفعلية. اضغط حفظ للمزامنة لاحقاً لإعادة المحاولة.",
+        )))
+        .finally(() => setSaving(false));
+    }, 850);
+    return () => window.clearTimeout(timer);
+  }, [loaded, installed, completed, ready, saving, rows.length, currentKey]);
+
   function filledItemsPayload() {
     return items.map((item) => ({ productId: item.productId, quantity: item.filledQty, slotQuantities: item.slotQuantities }));
   }
 
-  async function saveMode(mode: "xy_api" | "xy_screenshot" | "machine_offline", files: MachineQuantityEvidenceFile[] = []) {
+  async function saveMode(mode: "xy_api" | "xy_screenshot" | "machine_offline" | "sync_pending", files: MachineQuantityEvidenceFile[] = []) {
     const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
       method: "POST",
       cache: "no-store",
@@ -119,7 +139,7 @@ export function MachineQuantityConfirmationCard({
     const confirmation = payload?.confirmation;
     const nextKey = String(confirmation?.confirmation_key ?? "");
     const nextRows = Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows as MachineQuantityRow[] : [];
-    if (!nextKey || (nextKey !== currentKey && !machineQuantityEvidenceMatches(nextRows, rows))) {
+    if (!nextKey || (mode !== "sync_pending" && nextKey !== currentKey && !machineQuantityEvidenceMatches(nextRows, rows))) {
       throw new Error(tr("The refill quantities changed. Upload screenshots for the new quantities.", "تغيرت كميات التعبئة. ارفع صوراً للكميات الجديدة."));
     }
     setInstalled(true);
@@ -215,7 +235,7 @@ export function MachineQuantityConfirmationCard({
           <p className="mt-1 text-sm leading-6 text-slate-700">{tr("After physically filling the machine, Snacky writes the confirmed lane quantities into XY and reads them back to verify the result. Screenshots remain available as a fallback.", "بعد تعبئة الجهاز فعلياً، يرسل سناكي كميات الخانات المؤكدة إلى XY ثم يقرأها من جديد للتحقق. تبقى صور الشاشة خياراً احتياطياً.")}</p>
         </div>
         <span className={ownerPending ? "shrink-0 rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white" : ready ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
-          {ownerPending ? tr("Owner follow-up", "متابعة المالك") : ready ? tr("Saved", "تم الحفظ") : tr("Required", "مطلوب")}
+          {ownerPending ? tr("Sync pending", "مزامنة معلقة") : ready ? tr("Saved", "تم الحفظ") : tr("Saving quantities", "حفظ الكميات")}
         </span>
       </div>
 
@@ -244,7 +264,7 @@ export function MachineQuantityConfirmationCard({
       {ready ? (
         <div className={`mt-4 rounded-lg border bg-white p-3 text-sm font-medium ${ownerPending ? "border-amber-300 text-amber-950" : "border-emerald-200 text-emerald-900"}`}>
           {ownerPending
-            ? tr("Power-off exception saved. You can finish this stop; the owner must update the machine quantities later.", "تم حفظ استثناء انقطاع الكهرباء. يمكنك إنهاء الموقع، وعلى المالك تحديث كميات الجهاز لاحقاً.")
+            ? tr("Actual quantities saved. This stop can be finished; XY synchronization is pending. Photos are optional.", "تم حفظ الكميات الفعلية. يمكنك إنهاء الموقع وستتم متابعة تحديث XY. الصور اختيارية.")
             : status==="xy_api_verified"
               ? tr("Updated and verified directly with XY.", "تم تحديث الكميات والتحقق منها مباشرة عبر XY.")
               : tr(`XY screenshot evidence saved (${evidenceFiles.length}).`, `تم حفظ إثبات صور شاشة XY (${evidenceFiles.length}).`)}
@@ -252,7 +272,7 @@ export function MachineQuantityConfirmationCard({
         </div>
       ) : null}
 
-      {!ready && savedKey && !savedEvidenceMatches ? (
+      {!ready && savedKey && !savedEvidenceMatches && status !== "offline_pending" ? (
         <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-900">
           {tr("The filled quantities changed. Upload new XY screenshots for the updated numbers.", "تغيرت كميات التعبئة. ارفع صور شاشة XY جديدة للأرقام المحدثة.")}
         </div>
@@ -270,6 +290,20 @@ export function MachineQuantityConfirmationCard({
         </button>
       ) : null}
 
+      {loaded && installed && !completed && !ready && !saving ? (
+        <button type="button" className="btn-secondary mt-3 w-full" onClick={() => {
+          attemptedAutoSaveKey.current = null;
+          setSaving(true);
+          setError("");
+          void saveMode("sync_pending")
+            .catch((cause) => setError(cause instanceof Error ? cause.message : tr("Could not save quantities.", "تعذر حفظ الكميات.")))
+            .finally(() => setSaving(false));
+        }}>
+          {tr("Save quantities & continue (sync later)", "احفظ الكميات وتابع (المزامنة لاحقاً)")}
+        </button>
+      ) : null}
+      <details className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">{tr("Optional: XY photos or connection/power note", "اختياري: صور XY أو ملاحظة الاتصال والكهرباء")}</summary>
       {canUploadScreenshots ? (
         <label className="mt-4 block rounded-xl border border-slate-200 bg-white p-4">
           <span className="block text-sm font-semibold text-slate-950">
@@ -323,6 +357,7 @@ export function MachineQuantityConfirmationCard({
           )}
         </div>
       ) : null}
+      </details>
       {saving ? <p className="mt-3 text-center text-sm font-semibold text-slate-700">{tr("Saving evidence...", "جارٍ حفظ الإثبات...")}</p> : null}
       {error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
     </section>
