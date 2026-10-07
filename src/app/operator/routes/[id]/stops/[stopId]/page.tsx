@@ -720,6 +720,7 @@ export default function MachineStopPage() {
   const [compressorProofReady, setCompressorProofReady] = useState(false);
   const [quantityConfirmationInstalled, setQuantityConfirmationInstalled] = useState(false);
   const [quantityConfirmationReady, setQuantityConfirmationReady] = useState(false);
+  const [quantityVerificationStatus, setQuantityVerificationStatus] = useState<string | null>(null);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
   const [xyEditSlotCode, setXyEditSlotCode] = useState<string | null>(null);
   const [xyReplacementProductId, setXyReplacementProductId] = useState("");
@@ -1496,7 +1497,7 @@ export default function MachineStopPage() {
         slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
       }));
 
-      if (!quantityConfirmationReady) {
+      if (!quantityConfirmationReady || quantityVerificationStatus === "offline_pending") {
         const evidenceResponse = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
           method: "POST",
           cache: "no-store",
@@ -2518,9 +2519,10 @@ export default function MachineStopPage() {
           machineId={stopData.machineId}
           items={machineQuantityItems}
           completed={false}
-          onStateChange={({ installed, ready }) => {
+          onStateChange={({ installed, ready, status }) => {
             setQuantityConfirmationInstalled(installed);
             setQuantityConfirmationReady(ready);
+            setQuantityVerificationStatus(status);
           }}
         />
 
