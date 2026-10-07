@@ -720,6 +720,7 @@ export default function MachineStopPage() {
   const [compressorProofReady, setCompressorProofReady] = useState(false);
   const [quantityConfirmationInstalled, setQuantityConfirmationInstalled] = useState(false);
   const [quantityConfirmationReady, setQuantityConfirmationReady] = useState(false);
+  const [quantityVerificationStatus, setQuantityVerificationStatus] = useState<string | null>(null);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
   const [xyEditSlotCode, setXyEditSlotCode] = useState<string | null>(null);
   const [xyReplacementProductId, setXyReplacementProductId] = useState("");
@@ -1477,17 +1478,51 @@ export default function MachineStopPage() {
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    if (quantityConfirmationInstalled && !quantityConfirmationReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
-      setError(tr("Upload the current XY inventory screenshot, or save that the machine has no electricity.", "ارفع صورة شاشة مخزون XY الحالية، أو احفظ أن الجهاز بدون كهرباء."));
-      document.getElementById("machine-quantity-confirmation")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-
+    // A quantity snapshot is automatically saved ON Complete Stop below.
+    // Do not block on a separate screenshot/power-off confirmation step.
     localDraft.saveNow();
     setSubmitting(true);
     setError("");
     try {
       await ensureFreshSession();
+
+      const actualFilledLines = stopData.refillItems.map((item) => ({
+        refillOrderLineId: item.refillOrderLineId ?? null,
+        productId: item.productId,
+        quantity: filledQtys[item.productId] ?? 0,
+        assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
+        reason: unavailableProducts[item.productId] ? "Product not in operator bag" : undefined,
+        notes: lineNotes[item.productId] || undefined,
+        unavailable: Boolean(unavailableProducts[item.productId]),
+        slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
+      }));
+
+      if (!quantityConfirmationReady || quantityVerificationStatus === "offline_pending") {
+        const evidenceResponse = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            mode: "sync_pending",
+            filledItems: actualFilledLines.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              slotQuantities: item.slotQuantities,
+            })),
+          }),
+        }, 30000);
+        const savedEvidence = await readServerResponse(evidenceResponse, {
+          operation: "save_actual_machine_quantities",
+          route_id: routeId,
+          route_stop_id: stopId,
+        });
+        if (!evidenceResponse.ok || savedEvidence.payload?.success !== true) {
+          throw new Error(responseMessage(savedEvidence.payload) || tr(
+            "Could not save actual machine quantities. Your draft is safe; retry Complete Stop.",
+            "تعذر حفظ الكميات الفعلية. المسودة محفوظة، أعد الضغط على إنهاء الموقع.",
+          ));
+        }
+      }
 
       let uploadedProof: Awaited<ReturnType<typeof uploadRefillProofPhoto>> | null = null;
       if (finalPhotoFile) {
@@ -1512,16 +1547,7 @@ export default function MachineStopPage() {
         stopId,
         routeId,
         machineId: stopData.machineId,
-        filledItems: stopData.refillItems.map((item) => ({
-          refillOrderLineId: item.refillOrderLineId ?? null,
-          productId: item.productId,
-          quantity: filledQtys[item.productId] ?? 0,
-          assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
-          reason: unavailableProducts[item.productId] ? "Product not in operator bag" : undefined,
-          notes: lineNotes[item.productId] || undefined,
-          unavailable: Boolean(unavailableProducts[item.productId]),
-          slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
-        })),
+        filledItems: actualFilledLines,
         extraItems: extraProducts
           .filter((item) => item.productId && item.quantity > 0)
           .map((item) => ({ productId: item.productId, quantity: item.quantity, reason: item.reason, notes: item.notes || undefined })),
@@ -1663,8 +1689,7 @@ export default function MachineStopPage() {
   }
 
   const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady;
-  const quantityReadyForSubmit = !quantityConfirmationInstalled || quantityConfirmationReady;
-  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit && quantityReadyForSubmit;
+  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit;
 
   return (
     <>
@@ -2291,21 +2316,21 @@ export default function MachineStopPage() {
                         <button
                           type="button"
                           className={xyReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-secondary min-h-11"}
-                          disabled={!returnReady || xyReady || xyQueued}
+                          disabled={!returnReady || xyReady}
                           onClick={() => {
                             setXySwapSourceSlotCode(null);
                             setXySwapTargetSlotCode("");
                             setXyEditSlotCode(requirement.slotCode);
-                            setXyChangeOffline(false);
+                            setXyChangeOffline(xyQueued);
                             setXyQueuePhysicalConfirmed(false);
                             setXyQueueLaneDisabled(false);
-                            setXyQueueActualQty(0);
+                            setXyQueueActualQty((stopData.queuedXyChanges ?? []).find((row) => row.slot_code === requirement.slotCode)?.target_stock_qty ?? laneFill);
                             setXyReplacementProductId(requirement.targetProductId);
                             setXyChangeError("");
                             setXyChangeSuccess("");
                           }}
                         >
-                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : xyQueued ? tr("Queued safely — reconnect pending", "تم الحفظ — بانتظار عودة الاتصال") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
+                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : xyQueued ? tr("Review queued change", "مراجعة التغيير المحفوظ") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
                         </button>
                       </div>
                     ) : null}
@@ -2494,9 +2519,10 @@ export default function MachineStopPage() {
           machineId={stopData.machineId}
           items={machineQuantityItems}
           completed={false}
-          onStateChange={({ installed, ready }) => {
+          onStateChange={({ installed, ready, status }) => {
             setQuantityConfirmationInstalled(installed);
             setQuantityConfirmationReady(ready);
+            setQuantityVerificationStatus(status);
           }}
         />
 

@@ -128,8 +128,10 @@ test("operator checkpoint saves XY screenshots and never blocks a power-off mach
   assert.match(card, /quantity-confirmation/);
   assert.doesNotMatch(card, /type="checkbox"/);
   assert.doesNotMatch(card, /quantityChoices|tap the same number/);
-  assert.match(page, /quantityReadyForSubmit/);
-  assert.match(page, /Upload the current XY inventory screenshot, or save that the machine has no electricity/);
+  assert.match(page, /save_actual_machine_quantities/);
+  assert.doesNotMatch(page, /quantityReadyForSubmit/);
+  assert.match(page, /mode: "sync_pending"/);
+  assert.match(page, /filledItems: actualFilledLines/);
   assert.match(api, /buildOperatorRouteAccessContext/);
   assert.match(api, /xy_screenshot/);
   assert.match(api, /machine_offline/);

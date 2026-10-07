@@ -1326,7 +1326,7 @@ export async function POST(
         const queuedWithPhysicalSafety = (queuedXyChanges ?? []).some((row: any) => (
           String(row.slot_code ?? "") === requirement.slotCode
           && String(row.target_product_id ?? "") === requirement.targetProductId
-          && Number(row.target_stock_qty ?? -1) >= 0
+          && Number(row.target_stock_qty ?? -1) === actualQty
           && row.physical_change_confirmed === true
           && row.lane_disabled_confirmed === true
           && ["pending", "verified"].includes(String(row.status ?? ""))
