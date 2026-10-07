@@ -55,7 +55,17 @@ export function MachineQuantityConfirmationCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const attemptedAutoSaveKey = useRef<string | null>(null);
-  const savedEvidenceMatches = savedKey === currentKey || machineQuantityEvidenceMatches(savedRows, rows);
+  const matchProductTotals = (previous: MachineQuantityRow[], current: MachineQuantityRow[]) => {
+    const totals = (values: MachineQuantityRow[]) => {
+      const sums = new Map<string, number>();
+      values.forEach((row) => sums.set(row.productId, (sums.get(row.productId) ?? 0) + row.addedQty));
+      return JSON.stringify(Array.from(sums.entries()).sort(([a], [b]) => a.localeCompare(b)));
+    };
+    return previous.length > 0 && current.length > 0 && totals(previous) === totals(current);
+  };
+  const savedEvidenceMatches = savedKey === currentKey
+    || machineQuantityEvidenceMatches(savedRows, rows)
+    || (!canSyncDirectlyWithXy && matchProductTotals(savedRows, rows));
   const ready = rows.length === 0 || Boolean(installed && savedEvidenceMatches && machineQuantityEvidenceReady(status));
   const ownerPending = ready && status === "offline_pending";
   const canUploadScreenshots = loaded && installed && !completed && status !== "xy_api_verified";
@@ -139,7 +149,12 @@ export function MachineQuantityConfirmationCard({
     const confirmation = payload?.confirmation;
     const nextKey = String(confirmation?.confirmation_key ?? "");
     const nextRows = Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows as MachineQuantityRow[] : [];
-    if (!nextKey || (mode !== "sync_pending" && nextKey !== currentKey && !machineQuantityEvidenceMatches(nextRows, rows))) {
+    if (!nextKey || (
+      mode !== "sync_pending"
+      && nextKey !== currentKey
+      && !machineQuantityEvidenceMatches(nextRows, rows)
+      && !(!canSyncDirectlyWithXy && matchProductTotals(nextRows, rows))
+    )) {
       throw new Error(tr("The refill quantities changed. Upload screenshots for the new quantities.", "تغيرت كميات التعبئة. ارفع صوراً للكميات الجديدة."));
     }
     setInstalled(true);
