@@ -12,6 +12,7 @@ type SmartPlanInput = {
   routeDate: string;
   operatorId?: string | null;
   requestedBy?: string | null;
+  excludeRouteId?: string | null;
 };
 
 type ProductRow = {
@@ -201,6 +202,7 @@ export type SmartRoutePlanResult = {
   summary: string;
   demandSource: "xy_live_sales" | "xy_live_sales_plus_stock_depletion" | "xy_stock_depletion";
   manualStopItems: SmartRoutePlanItem[];
+  slotAssignments: SmartRoutePlanItem[];
   substitutions: Array<{
     machineId: string;
     slotCode: string;
@@ -724,6 +726,27 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
   return validated;
 }
 
+function slotAssignmentItems(decisions: ValidatedDecision[]): SmartRoutePlanItem[] {
+  return decisions.map((decision) => {
+    let notes = `Slot ${decision.slotCode}: ${decision.reason}`;
+    if (decision.substituted && decision.transitionMode === "replace_now") {
+      notes = `PLANNED PRODUCT CHANGE — Slot ${decision.slotCode}: remove the remaining ${decision.returnCurrentQty} × ${decision.currentProductName} from the machine and record “Returned from machine → Product replaced”. Then change and verify the XY slot as ${decision.selectedProductName}, and fill ${decision.quantity} units. Do not mix the two products in one lane. ${decision.reason}`;
+    } else if (decision.substituted) {
+      notes = `Slot ${decision.slotCode}: replace ${decision.currentProductName} with ${decision.selectedProductName}. ${decision.reason}`;
+    }
+
+    return {
+      machineId: decision.machineId,
+      productId: decision.selectedProductId,
+      quantity: decision.quantity,
+      machineSlotId: decision.machineSlotId,
+      slotCode: decision.slotCode,
+      source: "smart_ai_plan" as const,
+      notes,
+    };
+  });
+}
+
 function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanItem[] {
   const grouped = new Map<string, {
     machineId: string;
@@ -889,7 +912,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const reservedByProduct = new Map<string, number>();
   (reservationsResult.data ?? []).forEach((row: any) => {
     const routeId = String(row.route_id ?? "");
-    if (!routeId || !reservingRouteIds.has(routeId)) return;
+    if (!routeId || routeId === String(input.excludeRouteId ?? "") || !reservingRouteIds.has(routeId)) return;
     const productId = String(row.product_id ?? "");
     if (!productId) return;
     reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + Math.max(0, units(row.planned_qty) - units(row.picked_qty)));
@@ -1109,6 +1132,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       summary: "No refill lines could be generated from current verified XY stock and storage.",
       demandSource,
       manualStopItems: [],
+      slotAssignments: [],
       substitutions: [],
       warnings,
       freshness: {
@@ -1138,6 +1162,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   }
 
   const decisions = validateDecisions(tasks, proposed, availableByProduct, warnings);
+  const slotAssignments = slotAssignmentItems(decisions);
   const manualStopItems = aggregateManualItems(decisions);
   const substitutions = decisions
     .filter((decision) => decision.substituted)
@@ -1175,6 +1200,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     summary,
     demandSource,
     manualStopItems,
+    slotAssignments,
     substitutions,
   };
   const { error: auditError } = await supabase.from("smart_route_plan_audits").insert({
@@ -1203,6 +1229,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     summary,
     demandSource,
     manualStopItems,
+    slotAssignments,
     substitutions,
     warnings: Array.from(new Set(warnings)),
     freshness: {
