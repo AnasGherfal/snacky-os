@@ -113,6 +113,7 @@ type SmartRouteSlotAllocation = {
   current_qty?: number;
   observed_current_qty?: number;
   target_qty?: number;
+  capacity?: number;
   recommended_take_qty?: number;
   final_take_qty?: number;
   allocation_kind?: "slot";
