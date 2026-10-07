@@ -117,6 +117,8 @@ export default function PickListPage() {
   const [confirmed, setConfirmed] = useState(false);
   const [remainingPickupMode, setRemainingPickupMode] = useState(false);
   const [supplementalMode, setSupplementalMode] = useState(false);
+  const [prepared, setPrepared] = useState(false);
+  const [smartPlanning, setSmartPlanning] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -176,6 +178,12 @@ export default function PickListPage() {
                 : "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
             extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
+            smartTitle: "استلام ذكي بالذكاء الاصطناعي",
+            smartDescription: "يفحص Snacky المبيعات الفعلية، كميات XY الحالية والمخزون المتوفر، ثم يعيد توزيع المنتجات والفتحات قبل أن تبدأ الاستلام.",
+            smartButton: "إنشاء الاستلام الذكي",
+            smartWorking: "جارٍ تحليل المبيعات والمخزون…",
+            smartNoEmpty: "قاعدة أساسية: لا تترك فتحة صالحة فارغة. يمكن تكرار نفس المنتج القوي في أكثر من فتحة إذا كان ذلك أفضل للمبيعات.",
+            smartApplied: "تم تطبيق خطة الاستلام الذكية.",
           }
         : {
             title: supplementalMode ? "Additional route pickup" : remainingPickupMode ? "Continue route pickup" : "Route pickup",
@@ -230,6 +238,12 @@ export default function PickListPage() {
                 : "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
             extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
+            smartTitle: "AI Smart Pickup",
+            smartDescription: "Snacky checks real sales, current XY quantities and available storage, then re-merchandises products and lanes before you pick stock.",
+            smartButton: "Build Smart Pickup",
+            smartWorking: "Analyzing sales and storage…",
+            smartNoEmpty: "Hard rule: no usable lane is left empty. The same strong seller may be repeated across multiple lanes when that is the better sales decision.",
+            smartApplied: "Smart pickup plan applied.",
           },
     [isArabic, remainingPickupMode, supplementalMode],
   );
@@ -381,6 +395,7 @@ export default function PickListPage() {
       setExtras(nextSupplementalMode || nextRemainingPickupMode ? [] : loadedExtras);
       setRemainingPickupMode(nextRemainingPickupMode);
       setSupplementalMode(nextSupplementalMode);
+      setPrepared(Boolean(payload.prepared));
       setLocked(Boolean(payload.locked));
       setConfirmed(Boolean(payload.confirmed));
     } catch (cause) {
@@ -454,6 +469,52 @@ export default function PickListPage() {
         notes: "Added by operator during route pickup",
       },
     ]);
+  }
+
+  async function buildSmartPickup() {
+    if (!routeId || locked || confirmed || prepared || remainingPickupMode || supplementalMode) return;
+
+    setSmartPlanning(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch(`/api/operator/routes/${routeId}/smart-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data: unknown = await response.json().catch(() => null);
+      const payload = data && typeof data === "object" && !Array.isArray(data) ? data as ApiRow : {};
+      if (!response.ok) {
+        throw new Error(textOrFallback(payload.error, isArabic ? "تعذر إنشاء خطة الاستلام الذكية." : "Could not build Smart Pickup."));
+      }
+
+      const substitutions = Array.isArray(payload.substitutions) ? payload.substitutions.length : 0;
+      const summary = optionalText(payload.summary);
+      setNotice(
+        [
+          copy.smartApplied,
+          substitutions > 0
+            ? (isArabic ? `تم إجراء ${substitutions} تبديلات للمنتجات.` : `${substitutions} product swaps were planned.`)
+            : null,
+          summary,
+        ].filter(Boolean).join(" "),
+      );
+
+      setCheckedPickupItemIds([]);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.removeItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+        } catch {
+          // Visual-only state; the Smart Route plan is already persisted server-side.
+        }
+      }
+      await loadPickList();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : (isArabic ? "تعذر إنشاء خطة الاستلام الذكية." : "Could not build Smart Pickup."));
+    } finally {
+      setSmartPlanning(false);
+    }
   }
 
   async function handleConfirm() {
@@ -597,6 +658,31 @@ export default function PickListPage() {
       ) : null}
       {locked ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{copy.locked}</div> : null}
       {confirmed ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{copy.alreadyConfirmed}</div> : null}
+
+      {!remainingPickupMode && !supplementalMode && !confirmed ? (
+        <section className="rounded-2xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="font-bold text-violet-950">{copy.smartTitle}</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-violet-900">{copy.smartDescription}</p>
+              <p className="mt-1 text-xs font-semibold text-violet-800">{copy.smartNoEmpty}</p>
+            </div>
+            <button
+              type="button"
+              className="min-h-12 shrink-0 rounded-xl bg-violet-700 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+              disabled={locked || prepared || submitting || smartPlanning}
+              onClick={() => void buildSmartPickup()}
+            >
+              {smartPlanning ? copy.smartWorking : copy.smartButton}
+            </button>
+          </div>
+          {prepared ? (
+            <p className="mt-2 text-xs font-semibold text-amber-800">
+              {isArabic ? "تم تجهيز لقطة الاستلام الحالية. أكّد الاستلام أو ارجع للمسار قبل إعادة التخطيط." : "The current pickup snapshot is already prepared. Confirm it or return to the route before replanning."}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
