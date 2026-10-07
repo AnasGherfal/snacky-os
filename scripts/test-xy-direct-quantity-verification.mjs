@@ -18,21 +18,28 @@ test('generic legacy VMS rows never auto-verify',()=>{
  assert.equal(result.mismatches[0].reason,'generic_slot');
 });
 
-test('quantity confirmation API reads live XY and fails closed on mismatch or outage',()=>{
+test('quantity confirmation API writes through the durable verified XY sync path',()=>{
  const api=fs.readFileSync('src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts','utf8');
- assert.match(api,/readXyMachineLayout/);
- assert.match(api,/verifyMachineQuantityRowsAgainstXy/);
- assert.match(api,/XY_QUANTITY_MISMATCH/);
- assert.match(api,/XY_LIVE_UNAVAILABLE/);
- assert.match(api,/verification_status: mode === "xy_api" \? "xy_api_verified"/);
+ const sync=fs.readFileSync('src/lib/xy-refill-quantity-sync.ts','utf8');
+ assert.match(api,/syncMachineQuantityRowsToXy/);
+ assert.match(api,/provisionalRecord/);
+ assert.match(api,/quantity_rows: preparedRows/);
+ assert.match(api,/verification_status: syncVerified \? "xy_api_verified"/);
+ assert.match(sync,/readXyMachineLayout/);
+ assert.match(sync,/setXySlotProduct/);
+ assert.match(sync,/verifyXySlot/);
+ assert.match(sync,/xySyncTargetQty/);
+ assert.match(sync,/persistPrepared/);
 });
 
-test('operator UI prefers direct XY verification but preserves screenshot and power-off fallback',()=>{
+test('operator UI sends refill quantities from Snacky OS and preserves the power-off queue',()=>{
  const card=fs.readFileSync('src/components/operator/MachineQuantityConfirmationCard.tsx','utf8');
- assert.match(card,/Verify with XY/);
+ assert.match(card,/Update XY from Snacky/);
  assert.match(card,/saveMode\("xy_api"\)/);
- assert.match(card,/Screenshots remain available as a fallback/);
+ assert.match(card,/You do not need to open the machine settings or take screenshots/);
  assert.match(card,/Machine has no electricity/);
+ assert.match(card,/Retry after fixing setup/);
+ assert.doesNotMatch(card,/Screenshots remain available as a fallback/);
 });
 
 test('direct XY verification is a ready status and owner queue recognizes it',()=>{
