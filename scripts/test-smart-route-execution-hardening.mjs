@@ -233,3 +233,15 @@ test("offline XY changes are durable, gated by physical safety, and retried by s
   assert.match(operatorLayout, /OperatorHomeShortcuts/);
   assert.match(homeShortcuts, /usePathname/);
 });
+
+
+test("quantity custody is recorded at Complete Stop, never when just opening a stop", () => {
+  assert.match(operatorStop, /const actualFilledLines = stopData\.refillItems\.map/);
+  assert.match(operatorStop, /mode: "sync_pending"/);
+  assert.match(operatorStop, /filledItems: actualFilledLines/);
+  assert.match(operatorStop, /quantityVerificationStatus === "offline_pending"/);
+  assert.match(operatorStop, /save_actual_machine_quantities/);
+  assert.match(quantityCard, /Save quantities & continue/);
+  assert.doesNotMatch(quantityCard, /Actual product\/lane quantities are saved automatically/);
+  assert.match(stopApi, /Number\(row\.target_stock_qty \?\? -1\) === actualQty/);
+});
