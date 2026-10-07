@@ -87,9 +87,9 @@ async function restoreBaseline(vmsMachineId: string, baseline: XySlotState) {
   const restored = await writeAndVerify({
     vmsMachineId,
     slotCode: baseline.slotCode,
-    vmsProductId: baseline.vmsProductId,
-    priceLyd: baseline.priceLyd,
-    stockQty: baseline.currentQty,
+    vmsProductId: baselineProductId,
+    priceLyd: baselinePriceLyd,
+    stockQty: baselineStockQty,
   });
   return restored.state;
 }
@@ -179,8 +179,21 @@ export async function POST(request: Request) {
     }
 
     const donor = occupied.find((lane) => lane.slotCode !== target.slotCode && clean(lane.vmsProductId) !== clean(target.vmsProductId))!;
-    const baseline: XySlotState = { ...target };
-    const qty = Number(baseline.currentQty);
+    const baselineProductId = clean(target.vmsProductId);
+    const baselinePriceLyd = Number(target.priceLyd);
+    const baselineStockQty = Number(target.currentQty);
+    if (!baselineProductId || !Number.isFinite(baselinePriceLyd) || baselinePriceLyd <= 0 || !Number.isSafeInteger(baselineStockQty) || baselineStockQty < 0) {
+      diagnostics.push({ machine: machine.machine_code, skipped: "Selected baseline lane is not safe to mutate." });
+      continue;
+    }
+
+    const baseline: XySlotState = {
+      ...target,
+      vmsProductId: baselineProductId,
+      priceLyd: baselinePriceLyd,
+      currentQty: baselineStockQty,
+    };
+    const qty = baselineStockQty;
     const capacity = baseline.capacity === null ? null : Number(baseline.capacity);
     const quantityTarget = qty > 0 ? qty - 1 : capacity !== null && capacity > qty ? qty + 1 : null;
     if (quantityTarget === null) {
@@ -195,8 +208,8 @@ export async function POST(request: Request) {
       donorSlotCode: donor.slotCode,
       baseline: {
         productId: baseline.vmsProductId,
-        priceLyd: baseline.priceLyd,
-        stockQty: baseline.currentQty,
+        priceLyd: baselinePriceLyd,
+        stockQty: baselineStockQty,
       },
     };
 
@@ -205,19 +218,19 @@ export async function POST(request: Request) {
       results.quantity = await writeAndVerify({
         vmsMachineId,
         slotCode: baseline.slotCode,
-        vmsProductId: baseline.vmsProductId,
-        priceLyd: baseline.priceLyd,
+        vmsProductId: baselineProductId,
+        priceLyd: baselinePriceLyd,
         stockQty: quantityTarget,
       });
       results.quantityRestore = await restoreBaseline(vmsMachineId, baseline);
 
-      const priceTarget = Number((baseline.priceLyd + 0.01).toFixed(2));
+      const priceTarget = Number((baselinePriceLyd + 0.01).toFixed(2));
       results.price = await writeAndVerify({
         vmsMachineId,
         slotCode: baseline.slotCode,
-        vmsProductId: baseline.vmsProductId,
+        vmsProductId: baselineProductId,
         priceLyd: priceTarget,
-        stockQty: baseline.currentQty,
+        stockQty: baselineStockQty,
       });
       results.priceRestore = await restoreBaseline(vmsMachineId, baseline);
 
@@ -226,8 +239,8 @@ export async function POST(request: Request) {
         vmsMachineId,
         slotCode: baseline.slotCode,
         vmsProductId: donor.vmsProductId,
-        priceLyd: baseline.priceLyd,
-        stockQty: baseline.currentQty,
+        priceLyd: baselinePriceLyd,
+        stockQty: baselineStockQty,
       });
       results.productRestore = await restoreBaseline(vmsMachineId, baseline);
 
