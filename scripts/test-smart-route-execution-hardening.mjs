@@ -173,3 +173,12 @@ test("admin route detail exposes a lane-level Smart Route execution audit", () =
   assert.match(adminRoute, /XY synced \+ verified/);
   assert.match(adminRoute, /Power-off pending/);
 });
+
+
+test("XY device offline is not treated as proof of a power outage", () => {
+  assert.match(xyProductApi, /设备不在线/);
+  assert.match(xyProductApi, /XY_MACHINE_OFFLINE/);
+  assert.match(operatorStop, /responseCode\(payload\) === "XY_MACHINE_OFFLINE"/);
+  assert.match(operatorStop, /لا تختَر «لا توجد كهرباء» إلا إذا كانت الكهرباء مقطوعة فعلاً/);
+  assert.match(operatorStop, /Do not put the replacement product in this lane before XY confirms the change/);
+});
