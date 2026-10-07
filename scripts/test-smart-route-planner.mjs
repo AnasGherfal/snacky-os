@@ -205,3 +205,21 @@ test("Smart Pickup apply is atomic planning only and leaves storage deduction to
   assert.match(applyMigration, /final_take_qty/);
   assert.match(applyMigration, /grant execute on function public\.snacky_apply_smart_route_plan_v1\(uuid, jsonb\) to service_role/);
 });
+
+
+test("Smart Route can re-merchandise a proven weak partially depleted lane", () => {
+  assert.match(planner, /const strongerLocalSeller = Boolean/);
+  assert.match(planner, /strongestAlternative\.machineSalesUnits >= 6/);
+  assert.match(planner, /strongestAlternative\.machineSalesUnits >= exactMachineSales \* 2\.5/);
+  assert.match(planner, /strongestAlternative\.score >= originalCandidate\.score \+ 10/);
+  assert.match(planner, /currentQty <= transitionFloorQty/);
+  assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
+  assert.match(planner, /candidates\.filter\(\(candidate\) => !candidate\.original\)/);
+  assert.match(planner, /AI assortment optimization:/);
+});
+
+test("Smart Route evaluates full lanes but only creates work when refill or replacement is justified", () => {
+  assert.match(planner, /if \(capacity <= 0\) continue/);
+  assert.match(planner, /if \(neededQty <= 0\) continue/);
+  assert.match(planner, /transitionMode === "replace_now" \? capacity : refillNeededQty/);
+});
