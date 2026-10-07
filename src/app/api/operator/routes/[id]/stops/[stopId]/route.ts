@@ -1247,7 +1247,7 @@ export async function POST(
     });
 
     if (smartSwapRequirements.length) {
-      const [{ data: smartReturns, error: smartReturnsError }, { data: xyEvents, error: xyEventsError }] = await Promise.all([
+      const [{ data: smartReturns, error: smartReturnsError }, { data: xyEvents, error: xyEventsError }, { data: queuedXyChanges, error: queuedXyError }] = await Promise.all([
         protectedClient
           .from("inventory_adjustments")
           .select("product_id, quantity, reason, notes, status")
@@ -1261,9 +1261,14 @@ export async function POST(
           .eq("action", "xy_slot_product_change")
           .contains("metadata", { route_id: routeId, route_stop_id: stopId })
           .order("created_at", { ascending: true }),
+        protectedClient
+          .from("xy_pending_slot_changes")
+          .select("slot_code,target_product_id,target_stock_qty,physical_change_confirmed,lane_disabled_confirmed,status")
+          .eq("route_stop_id", stopId)
+          .in("status", ["pending", "verified"]),
       ]);
 
-      if (smartReturnsError || xyEventsError) {
+      if (smartReturnsError || xyEventsError || queuedXyError) {
         statusCode = 500;
         return NextResponse.json(
           { success: false, code: "SMART_ROUTE_EXECUTION_CHECK_FAILED", error: "Could not verify Smart Route return/XY evidence." },
@@ -1307,13 +1312,22 @@ export async function POST(
           && event?.metadata?.smart_route_swap === true
         ));
 
-        if (!xyVerified) {
+        const queuedWithPhysicalSafety = (queuedXyChanges ?? []).some((row: any) => (
+          String(row.slot_code ?? "") === requirement.slotCode
+          && String(row.target_product_id ?? "") === requirement.targetProductId
+          && Number(row.target_stock_qty ?? -1) >= 0
+          && row.physical_change_confirmed === true
+          && row.lane_disabled_confirmed === true
+          && ["pending", "verified"].includes(String(row.status ?? ""))
+        ));
+
+        if (!xyVerified && !queuedWithPhysicalSafety) {
           statusCode = 409;
           return NextResponse.json(
             {
               success: false,
               code: "SMART_ROUTE_XY_CHANGE_REQUIRED",
-              error: `Lane ${requirement.slotCode} cannot be completed until the Smart Route product change is verified in XY.`,
+              error: `Lane ${requirement.slotCode} requires a verified XY change or an operator-confirmed queued change with vending disabled.`,
             },
             { status: statusCode, headers: jsonHeaders() },
           );
