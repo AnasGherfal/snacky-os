@@ -87,6 +87,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
             sync_attempt_count: nextAttemptCount,
             last_sync_attempt_at: attemptedAt,
             last_sync_error: result.message ?? "XY has not confirmed this refill yet.",
+            auto_sync_eligible: result.status === "pending",
             updated_at: attemptedAt,
           })
           .eq("id", record.id)
