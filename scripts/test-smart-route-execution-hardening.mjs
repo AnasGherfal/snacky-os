@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  buildMachineQuantityRows,
+  buildMachineQuantitySourcesFromPlan,
+} from "../src/lib/machine-quantity-confirmation.ts";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+
+const planner = read("src/lib/smart-route-planner.ts");
+const routeCreateApi = read("src/app/api/routes/route.ts");
+const operatorSmartApi = read("src/app/api/operator/routes/[id]/smart-plan/route.ts");
+const operatorStop = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+const smartReturnApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/smart-return/route.ts");
+const xyProductApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
+const quantityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts");
+const quantityCard = read("src/components/operator/MachineQuantityConfirmationCard.tsx");
+const adminRoute = read("src/app/routes/[id]/page.tsx");
+const hardeningMigration = read("supabase/migrations/20261007133000_smart_route_execution_hardening.sql");
+const xyWriteContract = read("src/lib/xy-slot-write-contract.ts");
+const xyControl = read("src/lib/xy-vms-control.ts");
+
+test("Smart Route preserves exact lane execution metadata through both route creation paths", () => {
+  assert.match(planner, /slotAllocations: SmartRouteSlotAllocation\[\]/);
+  assert.match(planner, /observed_current_qty: decision\.currentQty/);
+  assert.match(planner, /capacity: decision\.capacity/);
+  assert.match(planner, /transition_mode: decision\.transitionMode/);
+  assert.match(planner, /from_product_id: decision\.currentProductId/);
+  assert.match(planner, /return_current_qty: decision\.returnCurrentQty/);
+
+  assert.match(operatorSmartApi, /slot_allocations: item\.slotAllocations/);
+  assert.match(routeCreateApi, /slotAllocations\?: SmartRouteSlotAllocationPayload\[\]/);
+  assert.match(routeCreateApi, /slot_allocations: item\.slotAllocations/);
+  assert.match(hardeningMigration, /slot_allocations jsonb/);
+  assert.match(hardeningMigration, /coalesce\(item\.slot_allocations, '\[\]'::jsonb\)/);
+});
+
+test("operator records exact actual quantities by lane and server validates totals", () => {
+  assert.match(operatorStop, /Actual quantity by lane/);
+  assert.match(operatorStop, /laneFilledQtys/);
+  assert.match(operatorStop, /setLaneFilledQty/);
+  assert.match(operatorStop, /slotQuantities: slotQuantitiesForItem/);
+  assert.match(operatorStop, /physicalLaneMaximum/);
+
+  const rows = buildMachineQuantityRows([{
+    productId: "product-a",
+    productName: "Snack",
+    filledQty: 8,
+    slotAllocations: [
+      { machine_slot_id: "slot-a", slot_code: "11", current_qty: 2, final_take_qty: 4 },
+      { machine_slot_id: "slot-b", slot_code: "12", current_qty: 1, final_take_qty: 4 },
+    ],
+    slotQuantities: [
+      { machineSlotId: "slot-a", slotCode: "11", quantity: 3 },
+      { machineSlotId: "slot-b", slotCode: "12", quantity: 5 },
+    ],
+  }]);
+
+  assert.deepEqual(rows, [
+    { productId: "product-a", productName: "Snack", machineSlotId: "slot-a", slotCode: "11", previousQty: 2, addedQty: 3, finalQty: 5 },
+    { productId: "product-a", productName: "Snack", machineSlotId: "slot-b", slotCode: "12", previousQty: 1, addedQty: 5, finalQty: 6 },
+  ]);
+
+  const sources = buildMachineQuantitySourcesFromPlan(
+    [{
+      product_id: "product-a",
+      machine_slot_id: null,
+      slot_code: "11, 12",
+      planned_quantity: 8,
+      slot_allocations: [
+        { machine_slot_id: "slot-a", slot_code: "11", current_qty: 2, final_take_qty: 4 },
+        { machine_slot_id: "slot-b", slot_code: "12", current_qty: 1, final_take_qty: 4 },
+      ],
+      product: { name: "Snack" },
+    }],
+    [{
+      productId: "product-a",
+      quantity: 8,
+      slotQuantities: [
+        { machineSlotId: "slot-a", slotCode: "11", quantity: 3 },
+        { machineSlotId: "slot-b", slotCode: "12", quantity: 5 },
+      ],
+    }],
+  );
+  assert.deepEqual(sources[0].slotQuantities, [
+    { machineSlotId: "slot-a", slotCode: "11", quantity: 3 },
+    { machineSlotId: "slot-b", slotCode: "12", quantity: 5 },
+  ]);
+
+  assert.match(quantityApi, /Lane quantities on filled row/);
+  assert.match(quantityApi, /slotTotal !== quantity/);
+});
+
+test("executed AI swaps require old-product return before XY product change", () => {
+  assert.match(operatorStop, /Return old product → update XY → fill new product/);
+  assert.match(operatorStop, /recordSmartRouteReturn/);
+  assert.match(operatorStop, /unresolvedSmartReturnRequirements/);
+  assert.match(operatorStop, /unresolvedSmartXyRequirements/);
+  assert.match(operatorStop, /Set a lane's actual fill to 0 if the planned swap cannot be executed today/);
+
+  assert.match(smartReturnApi, /\.eq\("source", "smart_ai_plan"\)/);
+  assert.match(smartReturnApi, /transition_mode/);
+  assert.match(smartReturnApi, /return_current_qty/);
+  assert.match(smartReturnApi, /snacky_record_smart_route_return_v1/);
+
+  assert.match(xyProductApi, /smartRouteSwapRequested/);
+  assert.match(xyProductApi, /Record the/);
+  assert.match(xyProductApi, /returned old units before changing this Smart Route lane in XY/);
+  assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
+  assert.match(xyProductApi, /slotCode/);
+  assert.match(xyProductApi, /const targetStockQty = smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+});
+
+test("Smart Route returns remain in operator custody until normal route finalization", () => {
+  const functionStart = hardeningMigration.indexOf("create or replace function public.snacky_record_smart_route_return_v1");
+  assert.notEqual(functionStart, -1);
+  const returnFunction = hardeningMigration.slice(functionStart);
+
+  assert.match(returnFunction, /'machine'::public\.inventory_entity_type/);
+  assert.match(returnFunction, /'operator_bag'::public\.inventory_entity_type/);
+  assert.match(returnFunction, /'returned_from_machine'::public\.movement_reason/);
+  assert.match(returnFunction, /storage_movement_id is null/);
+  assert.doesNotMatch(
+    returnFunction.slice(0, returnFunction.indexOf("revoke all on function")),
+    /'operator_bag_to_storage'::public\.movement_reason/,
+  );
+  assert.match(returnFunction, /Route finalization later returns remaining operator bag stock to physical storage/);
+});
+
+test("direct XY quantity confirmation writes each lane then reads XY back", () => {
+  assert.match(quantityApi, /setXySlotProduct/);
+  assert.match(quantityApi, /pendingWrites/);
+  assert.match(quantityApi, /stockQty:Number\(row\.finalQty\)/);
+  assert.match(quantityApi, /for\(const delayMs of \[600,1200,2200\]\)/);
+  assert.match(quantityApi, /verifyMachineQuantityRowsAgainstXy/);
+  assert.match(quantityApi, /XY_QUANTITY_WRITE_FAILED/);
+
+  assert.match(quantityCard, /Update & verify with XY/);
+  assert.match(quantityCard, /Snacky writes the confirmed lane quantities into XY and reads them back/);
+});
+
+test("XY product and quantity writer uses the verified vendor contract", () => {
+  assert.match(xyWriteContract, /addInstructionSpxxByApi/);
+  assert.match(xyWriteContract, /"shbh","jqbh","hdbh","spbh","spjg","kcsl"/);
+  assert.match(xyControl, /buildXySlotProductWriteParams/);
+  assert.match(xyControl, /XY_SLOT_PRODUCT_WRITE_ENDPOINT/);
+  assert.match(xyControl, /expectedStockQty/);
+});
+
+test("admin route detail exposes a lane-level Smart Route execution audit", () => {
+  assert.match(adminRoute, /Smart Route audit/);
+  assert.match(adminRoute, /AI lane plan vs operator execution/);
+  assert.match(adminRoute, /route_stop_quantity_confirmations/);
+  assert.match(adminRoute, /smartRouteLaneRows/);
+  assert.match(adminRoute, /returnedQty/);
+  assert.match(adminRoute, /xy_slot_product_change/);
+  assert.match(adminRoute, /XY synced \+ verified/);
+  assert.match(adminRoute, /Power-off pending/);
+});
