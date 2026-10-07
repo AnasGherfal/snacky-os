@@ -116,7 +116,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   const writer = read("src/lib/xy-refill-quantity-sync.ts");
   const pendingWorker = read("src/lib/xy-pending-quantity-sync.ts");
   const cron = read("src/app/api/cron/xy-vms/route.ts");
-  const queueMigration = read("supabase/migrations/20261007110000_xy_refill_quantity_sync_queue.sql");
+  const queueMigration = read("supabase/migrations/20261007030148_xy_refill_quantity_sync_queue.sql");
   const ownerQueue = read("src/app/routes/quantity-updates/page.tsx");
   const dashboard = read("src/app/dashboard/page.tsx");
   const priceRoute = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
