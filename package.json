@@ -72,7 +72,7 @@
     "test:xy-vms-protocol": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs",
     "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs",
     "audit:performance": "node scripts/audit-performance-baseline.mjs",
-    "test:smart-route-planner": "node --experimental-strip-types --test scripts/test-smart-route-planner.mjs",
+    "test:smart-route-planner": "node --experimental-strip-types --test scripts/test-smart-route-planner.mjs scripts/test-smart-route-execution-hardening.mjs",
     "test:xy-live-sales": "node --experimental-strip-types --test scripts/test-xy-live-sales.mjs"
   },
   "dependencies": {
