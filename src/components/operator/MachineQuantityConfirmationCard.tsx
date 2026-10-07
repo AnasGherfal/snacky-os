@@ -38,6 +38,10 @@ export function MachineQuantityConfirmationCard({
   const onStateChangeRef = useRef(onStateChange);
   const rows = useMemo(() => buildMachineQuantityRows(items), [items]);
   const currentKey = useMemo(() => machineQuantityConfirmationKey(rows), [rows]);
+  // Older admin-created routes can hold product totals without a lane map.
+  // Never guess how many items to write into individual XY lanes.
+  const missingExactXyLanes = rows.filter((row) => !row.machineSlotId && ["", "VMS", "VMS item"].includes(row.slotCode));
+  const canSyncDirectlyWithXy = missingExactXyLanes.length === 0;
   const [installed, setInstalled] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
@@ -92,7 +96,7 @@ export function MachineQuantityConfirmationCard({
   }, [installed, ready]);
 
   function filledItemsPayload() {
-    return items.map((item) => ({ productId: item.productId, quantity: item.filledQty }));
+    return items.map((item) => ({ productId: item.productId, quantity: item.filledQty, slotQuantities: item.slotQuantities }));
   }
 
   async function saveMode(mode: "xy_api" | "xy_screenshot" | "machine_offline", files: MachineQuantityEvidenceFile[] = []) {
@@ -253,7 +257,17 @@ export function MachineQuantityConfirmationCard({
         </div>
       ) : null}
 
-      {!ready&&loaded&&installed&&!completed?<button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={()=>{setSaving(true);setError("");void saveMode("xy_api").catch((verifyError)=>setError(verifyError instanceof Error?verifyError.message:tr("Could not update and verify quantities with XY.","تعذر تحديث الكميات والتحقق منها عبر XY."))).finally(()=>setSaving(false));}}>{saving?tr("Updating XY...","جارٍ تحديث XY..."):tr("Update & verify with XY","حدّث وتحقق عبر XY")}</button>:null}
+      {!ready && loaded && installed && !completed && !canSyncDirectlyWithXy ? (
+        <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
+          <strong>{tr("This route has no exact XY lane assignments.", "هذه الجولة لا تحتوي على تعيينات دقيقة لخانات XY.")}</strong>{" "}
+          {tr("It was created with product-level quantities only. Snacky cannot safely split those totals between vending lanes automatically. After updating the machine's real lane quantities, upload current XY screenshots below to confirm this stop. Do not choose the power-off option unless the machine really has no electricity.", "أُنشئت هذه الجولة بكميات إجمالية لكل منتج فقط، ولا يمكن لسناكي توزيعها بأمان على خانات الجهاز دون معرفة الكميات الحقيقية. بعد تحديث كميات الخانات الفعلية في الجهاز، ارفع صور شاشة XY الحالية أدناه لإثبات التعبئة. لا تستخدم خيار انقطاع الكهرباء إلا إذا كان الجهاز دون كهرباء فعلاً.")}
+        </div>
+      ) : null}
+      {!ready && loaded && installed && !completed && canSyncDirectlyWithXy ? (
+        <button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={() => {setSaving(true);setError("");void saveMode("xy_api").catch((verifyError) => setError(verifyError instanceof Error ? verifyError.message : tr("Could not update and verify quantities with XY.", "تعذر تحديث الكميات والتحقق منها عبر XY."))).finally(() => setSaving(false));}}>
+          {saving ? tr("Updating XY...", "جارٍ تحديث XY...") : tr("Update & verify with XY", "حدّث وتحقق عبر XY")}
+        </button>
+      ) : null}
 
       {canUploadScreenshots ? (
         <label className="mt-4 block rounded-xl border border-slate-200 bg-white p-4">
