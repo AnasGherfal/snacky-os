@@ -32,6 +32,7 @@ export type XyQuantitySyncResult = {
   status: "verified" | "pending" | "blocked";
   rows: XyQuantitySyncRowResult[];
   message: string | null;
+  quantityRows?: XySyncMachineQuantityRow[];
 };
 
 export type XyQuantityPreparationResult = {
@@ -380,4 +381,48 @@ export async function applyPreparedMachineQuantityRowsToXy(args: {
     rows: results,
     message: firstMessage(results),
   };
+}
+
+
+function preparationAsSyncResult(preparation: XyQuantityPreparationResult): XyQuantitySyncResult {
+  const status = preparation.status === "pending" ? "pending" : "blocked";
+  return {
+    status,
+    message: preparation.message,
+    quantityRows: preparation.rows,
+    rows: preparation.rows.map((row) => ({
+      slotCode: row.slotCode,
+      expectedQty: safeUnit(row.xySyncTargetQty) ?? row.finalQty,
+      actualQty: null,
+      status,
+      message: preparation.message,
+    })),
+  };
+}
+
+/**
+ * Safe orchestration used by API and background retries.
+ *
+ * The callback is mandatory: Snacky persists the immutable XY targets before
+ * the first external write. That closes the "XY write succeeded but our DB
+ * save failed" window that could otherwise double-add stock on retry.
+ */
+export async function syncMachineQuantityRowsToXy(args: {
+  vmsMachineId: string;
+  rows: XySyncMachineQuantityRow[];
+  expectedVmsProductIds: Map<string, string>;
+  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<void>;
+}): Promise<XyQuantitySyncResult> {
+  const preparation = await prepareMachineQuantityRowsForXy(args);
+  if (preparation.status !== "prepared") {
+    return preparationAsSyncResult(preparation);
+  }
+
+  await args.persistPrepared(preparation.rows);
+  const result = await applyPreparedMachineQuantityRowsToXy({
+    vmsMachineId: args.vmsMachineId,
+    rows: preparation.rows,
+    expectedVmsProductIds: args.expectedVmsProductIds,
+  });
+  return { ...result, quantityRows: preparation.rows };
 }
