@@ -145,6 +145,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   assert.match(api, /syncResult\.status === "pending"/);
   assert.match(api, /provisionalRecord/);
   assert.match(api, /quantity_rows: preparedRows/);
+  assert.match(api, /eq\("updated_at", existing\.updated_at\)/);
   assert.match(api, /LEGACY_OFFLINE_REVIEW_REQUIRED/);
   assert.match(api, /xy_api_verified/);
 
@@ -153,6 +154,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   assert.match(writer, /liveQty \+ addedQty/);
   assert.match(writer, /stockQty: targetQty/);
   assert.match(writer, /persistPrepared/);
+  assert.match(writer, /canonicalRows/);
   assert.match(writer, /priceLyd/);
   assert.match(writer, /verifyXySlot/);
   assert.match(writer, /different XY product than the Snacky refill plan/);
@@ -164,6 +166,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   assert.match(pendingWorker, /syncMachineQuantityRowsToXy/);
   assert.match(pendingWorker, /persistPrepared/);
   assert.match(pendingWorker, /quantity_rows: preparedRows/);
+  assert.match(pendingWorker, /eq\("updated_at", record\.updated_at\)/);
   assert.match(pendingWorker, /verification_status: "xy_api_verified"/);
   assert.match(cron, /retryPendingXyQuantitySyncs/);
 
