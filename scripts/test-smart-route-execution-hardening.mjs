@@ -182,3 +182,19 @@ test("XY device offline is not treated as proof of a power outage", () => {
   assert.match(operatorStop, /لا تختَر «لا توجد كهرباء» إلا إذا كانت الكهرباء مقطوعة فعلاً/);
   assert.match(operatorStop, /Do not put the replacement product in this lane before XY confirms the change/);
 });
+
+
+test("legacy product totals cannot be written into catalogue-guessed XY lanes", () => {
+  const serverQuantity = read("src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts");
+  const stopData = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+  const quantityCard = read("src/components/operator/MachineQuantityConfirmationCard.tsx");
+  assert.match(serverQuantity, /original_exact_lane/);
+  assert.match(serverQuantity, /XY_LANE_ASSIGNMENT_REQUIRED/);
+  assert.match(serverQuantity, /missingOriginalAssignments/);
+  assert.match(stopData, /missingExactLanePlanForProduct/);
+  assert.match(stopData, /hasExactLanePlan:/);
+  assert.match(operatorStop, /hasExactLanePlan: item\.hasExactLanePlan/);
+  assert.match(quantityCard, /missingOriginalLanePlan/);
+  assert.match(quantityCard, /!missingOriginalLanePlan/);
+  assert.match(quantityCard, /Upload current XY inventory screenshot/);
+});
