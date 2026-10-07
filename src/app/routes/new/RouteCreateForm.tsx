@@ -107,6 +107,22 @@ type RecommendationGroup = {
   priority: string;
 };
 
+type SmartRouteSlotAllocation = {
+  machine_slot_id?: string | null;
+  slot_code?: string | null;
+  current_qty?: number;
+  observed_current_qty?: number;
+  target_qty?: number;
+  recommended_take_qty?: number;
+  final_take_qty?: number;
+  allocation_kind?: "slot";
+  transition_mode?: "none" | "empty_lane" | "replace_now";
+  substituted?: boolean;
+  from_product_id?: string;
+  from_product_name?: string;
+  return_current_qty?: number;
+};
+
 type ManualStopItem = {
   machineId: string;
   productId: string;
@@ -115,6 +131,7 @@ type ManualStopItem = {
   slotCode?: string | null;
   source?: "smart_ai_plan";
   notes?: string | null;
+  slotAllocations?: SmartRouteSlotAllocation[];
 };
 
 type SmartPlanSubstitution = {
