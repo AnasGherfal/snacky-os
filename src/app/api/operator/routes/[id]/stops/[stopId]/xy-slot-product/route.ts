@@ -30,7 +30,7 @@ export async function POST(
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
   }
 
-  let body: { slotCode?: unknown; productId?: unknown };
+  let body: { slotCode?: unknown; productId?: unknown; priceLyd?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -39,8 +39,13 @@ export async function POST(
 
   const slotCode = String(body.slotCode ?? "").trim();
   const productId = String(body.productId ?? "").trim();
+  const hasRequestedPrice = body.priceLyd !== undefined && body.priceLyd !== null && String(body.priceLyd).trim() !== "";
+  const requestedPriceLyd = hasRequestedPrice ? toPositiveNumber(body.priceLyd) : null;
   if (!slotCode || !isUuid(productId)) {
     return NextResponse.json({ success: false, error: "Choose a valid slot and product." }, { status: 400 });
+  }
+  if (hasRequestedPrice && !requestedPriceLyd) {
+    return NextResponse.json({ success: false, code: "INVALID_XY_PRICE", error: "Enter a selling price greater than 0 LYD." }, { status: 400 });
   }
 
   const [{ data: route, error: routeError }, { data: stop, error: stopError }] = await Promise.all([
@@ -117,16 +122,17 @@ export async function POST(
       .map((slot) => Number(slot.priceLyd)),
   ));
 
-  if (machinePrices.length > 1) {
+  if (!requestedPriceLyd && machinePrices.length > 1) {
     return NextResponse.json({
       success: false,
-      error: `${product.name} currently has more than one XY price on this machine. Snacky will not guess which price to use.`,
+      error: `${product.name} currently has more than one XY price on this machine. Enter the intended price in Snacky OS instead of guessing.`,
       code: "AMBIGUOUS_MACHINE_PRICE",
       prices: machinePrices,
     }, { status: 409 });
   }
 
-  let priceLyd: number | null = machinePrices.length > 0 ? machinePrices[0] : null;
+  let priceSource = requestedPriceLyd ? "snacky_os_operator" : machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product";
+  let priceLyd: number | null = requestedPriceLyd ?? (machinePrices.length > 0 ? machinePrices[0] : null);
   if (!priceLyd) {
     const { data: catalog } = await admin
       .from("vms_product_catalog_snapshots")
@@ -175,7 +181,7 @@ export async function POST(
         vms_machine_id: machine.vms_machine_id,
         selected_product_id: product.id,
         selected_vms_product_id: targetVmsProductId,
-        price_source: machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product",
+        price_source: priceSource,
         xy_http_status: write.httpStatus,
         xy_code: write.code,
         xy_message: write.message,
@@ -229,7 +235,7 @@ export async function POST(
       vms_machine_id: machine.vms_machine_id,
       selected_product_id: product.id,
       selected_vms_product_id: targetVmsProductId,
-      price_source: machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product",
+      price_source: priceSource,
       xy_http_status: write.httpStatus,
       xy_code: write.code,
       xy_message: write.message,
