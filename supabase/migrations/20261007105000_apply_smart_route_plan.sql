@@ -1,6 +1,31 @@
 -- Atomically replace an unpicked route's ordinary refill plan with a Smart Route plan.
 -- Storage is NOT deducted here. The existing pickup-confirmation workflow remains the
 -- single place that verifies/deducts physical warehouse stock.
+--
+-- Smart Route is a first-class planning source. The live schema historically
+-- allowed only refill_recommendation/manual_admin_assignment, so extend the
+-- existing checks before inserting AI-planned rows.
+alter table public.route_stop_items
+  drop constraint if exists route_stop_items_source_check;
+
+alter table public.route_stop_items
+  add constraint route_stop_items_source_check
+  check (source = any (array[
+    'refill_recommendation'::text,
+    'manual_admin_assignment'::text,
+    'smart_ai_plan'::text
+  ]));
+
+alter table public.refill_order_lines
+  drop constraint if exists refill_order_lines_source_check;
+
+alter table public.refill_order_lines
+  add constraint refill_order_lines_source_check
+  check (source = any (array[
+    'refill_recommendation'::text,
+    'manual_admin_assignment'::text,
+    'smart_ai_plan'::text
+  ]));
 
 create or replace function public.snacky_apply_smart_route_plan_v1(
   p_route_id uuid,
@@ -8,8 +33,8 @@ create or replace function public.snacky_apply_smart_route_plan_v1(
 )
 returns jsonb
 language plpgsql
-security definer
-set search_path = public, pg_catalog
+security invoker
+set search_path = pg_catalog
 as $$
 declare
   v_route public.routes%rowtype;
@@ -108,6 +133,8 @@ begin
     machine_slot_id,
     slot_code,
     planned_quantity,
+    recommended_take_qty,
+    final_take_qty,
     picked_quantity,
     source,
     notes
@@ -119,6 +146,8 @@ begin
     item.product_id,
     item.machine_slot_id,
     nullif(btrim(item.slot_code), ''),
+    item.quantity,
+    item.quantity,
     item.quantity,
     null,
     'smart_ai_plan',
@@ -161,6 +190,8 @@ begin
     suggested_qty,
     available_storage_qty,
     final_qty_to_take,
+    recommended_take_qty,
+    final_take_qty,
     source
   )
   select
@@ -169,6 +200,8 @@ begin
     nullif(btrim(item.slot_code), ''),
     item.product_id,
     0,
+    item.quantity,
+    item.quantity,
     item.quantity,
     item.quantity,
     item.quantity,
