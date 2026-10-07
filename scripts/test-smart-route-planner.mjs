@@ -13,6 +13,9 @@ const rulesPage = fs.readFileSync(path.join(repoRoot, "src/app/settings/smart-ro
 const operatorStop = fs.readFileSync(path.join(repoRoot, "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004061000_smart_route_planner.sql"), "utf8");
 const contextMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004062500_smart_route_machine_context.sql"), "utf8");
+const operatorPickList = fs.readFileSync(path.join(repoRoot, "src/app/operator/routes/[id]/pick-list/page.tsx"), "utf8");
+const operatorSmartApi = fs.readFileSync(path.join(repoRoot, "src/app/api/operator/routes/[id]/smart-plan/route.ts"), "utf8");
+const applyMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261007105000_apply_smart_route_plan.sql"), "utf8");
 
 test("smart planner is draft-only and refreshes XY before reasoning", () => {
   assert.match(planner, /import "server-only"/);
@@ -149,4 +152,48 @@ test("route-wide allocation retries another compatible product instead of droppi
 test("historical exact-slot evidence can override imperfect inferred fit labels", () => {
   assert.match(planner, /candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen/);
   assert.match(planner, /!explicitAllowed && !historicallySeen && candidateFit !== currentFit/);
+});
+
+
+test("smart plan preserves per-lane assignments separately from pickup totals", () => {
+  assert.match(planner, /slotAssignments: SmartRoutePlanItem\[\]/);
+  assert.match(planner, /function slotAssignmentItems/);
+  assert.match(planner, /machineSlotId: decision\.machineSlotId/);
+  assert.match(planner, /slotCode: decision\.slotCode/);
+  assert.match(planner, /slotAssignments,\s*substitutions/);
+});
+
+test("replanning an existing route excludes that route's old reservation", () => {
+  assert.match(planner, /excludeRouteId\?: string \| null/);
+  assert.match(planner, /routeId === String\(input\.excludeRouteId \?\? ""\)/);
+  assert.match(operatorSmartApi, /excludeRouteId: routeId/);
+});
+
+test("operator can build Smart Pickup at storage before confirmation", () => {
+  assert.match(operatorPickList, /AI Smart Pickup/);
+  assert.match(operatorPickList, /Build Smart Pickup/);
+  assert.match(operatorPickList, /\/api\/operator\/routes\/\$\{routeId\}\/smart-plan/);
+  assert.match(operatorPickList, /no usable lane is left empty/);
+  assert.match(operatorPickList, /setPrepared\(Boolean\(payload\.prepared\)\)/);
+  assert.match(operatorSmartApi, /generateSmartRoutePlan/);
+  assert.match(operatorSmartApi, /plan\.slotAssignments/);
+});
+
+test("Smart Pickup refuses to overwrite physical pickup history", () => {
+  assert.match(operatorSmartApi, /picked_quantity/);
+  assert.match(operatorSmartApi, /picked_qty/);
+  assert.match(operatorSmartApi, /storage_to_operator_bag/);
+  assert.match(operatorSmartApi, /prepared_at/);
+  assert.match(applyMigration, /Smart Route cannot be regenerated after pickup has started/);
+});
+
+test("Smart Pickup apply is atomic planning only and leaves storage deduction to confirmation", () => {
+  assert.match(applyMigration, /snacky_apply_smart_route_plan_v1/);
+  assert.match(applyMigration, /delete from public\.route_stop_items/);
+  assert.match(applyMigration, /insert into public\.route_stop_items/);
+  assert.match(applyMigration, /insert into public\.route_stock_lines/);
+  assert.match(applyMigration, /'smart_ai_plan'/);
+  assert.doesNotMatch(applyMigration, /insert into public\.inventory_movements/i);
+  assert.doesNotMatch(applyMigration, /update public\.inventory/i);
+  assert.match(applyMigration, /grant execute on function public\.snacky_apply_smart_route_plan_v1\(uuid, jsonb\) to service_role/);
 });
