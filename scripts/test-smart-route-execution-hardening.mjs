@@ -39,6 +39,7 @@ test("Smart Route preserves exact lane execution metadata through both route cre
   assert.match(routeCreateApi, /slot_allocations: item\.slotAllocations/);
   assert.match(hardeningMigration, /slot_allocations jsonb/);
   assert.match(hardeningMigration, /coalesce\(item\.slot_allocations, '\[\]'::jsonb\)/);
+  assert.match(hardeningMigration, /'assigned'::public\.refill_status/);
 });
 
 test("operator records exact actual quantities by lane and server validates totals", () => {
