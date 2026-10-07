@@ -149,7 +149,10 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Could not verify the old-product return before changing XY." }, { status: 500 });
     }
     const recordedReturnQty = (returnRows ?? [])
-      .filter((row: any) => String(row.notes ?? "").startsWith("Smart Route product swap"))
+      .filter((row: any) => (
+        String(row.notes ?? "").startsWith("Smart Route product swap")
+        && String(row.notes ?? "").includes(`lane ${slotCode}`)
+      ))
       .reduce((sum: number, row: any) => sum + Math.max(0, Number(row.quantity ?? 0)), 0);
     if (recordedReturnQty < smartRouteSwap.returnCurrentQty) {
       return NextResponse.json({
