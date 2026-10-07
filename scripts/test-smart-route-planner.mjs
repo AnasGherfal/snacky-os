@@ -39,8 +39,8 @@ test("substitutions use a transition zone before an unavailable product reaches 
   assert.match(planner, /projectedQtyAtNextService/);
   assert.match(planner, /originalAvailableUnits <= 0/);
   assert.match(planner, /transitionMode !== "none"/);
-  assert.match(planner, /replaceNow \? capacity : refillNeededQty/);
-  assert.match(planner, /if \(!allowSubstitution\) return null/);
+  assert.match(planner, /transitionMode === "replace_now" \? capacity : refillNeededQty/);
+  assert.match(planner, /if \(!preliminaryAllowSubstitution\) return null/);
   assert.match(planner, /candidateFit !== currentFit/);
   assert.match(planner, /explicitlyAllowedIds/);
   assert.match(planner, /historically_seen_exact_slot/);
