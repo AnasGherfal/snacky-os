@@ -137,7 +137,7 @@ async function syncRowsForContext(
   admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   stop: { machine?: unknown },
   rows: XySyncMachineQuantityRow[],
-  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<void>,
+  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<XySyncMachineQuantityRow[]>,
 ): Promise<XyQuantitySyncResult> {
   const machineRelation = Array.isArray(stop.machine) ? stop.machine[0] as Record<string, unknown> | undefined : stop.machine as Record<string, unknown> | null | undefined;
   const vmsMachineId = clean(machineRelation?.vms_machine_id);
