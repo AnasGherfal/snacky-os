@@ -411,18 +411,18 @@ export async function syncMachineQuantityRowsToXy(args: {
   vmsMachineId: string;
   rows: XySyncMachineQuantityRow[];
   expectedVmsProductIds: Map<string, string>;
-  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<void>;
+  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<XySyncMachineQuantityRow[]>;
 }): Promise<XyQuantitySyncResult> {
   const preparation = await prepareMachineQuantityRowsForXy(args);
   if (preparation.status !== "prepared") {
     return preparationAsSyncResult(preparation);
   }
 
-  await args.persistPrepared(preparation.rows);
+  const canonicalRows = await args.persistPrepared(preparation.rows);
   const result = await applyPreparedMachineQuantityRowsToXy({
     vmsMachineId: args.vmsMachineId,
-    rows: preparation.rows,
+    rows: canonicalRows,
     expectedVmsProductIds: args.expectedVmsProductIds,
   });
-  return { ...result, quantityRows: preparation.rows };
+  return { ...result, quantityRows: canonicalRows };
 }
