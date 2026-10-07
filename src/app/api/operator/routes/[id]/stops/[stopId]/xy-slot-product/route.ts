@@ -44,11 +44,12 @@ export async function POST(
   // somebody physically emptied/refilled a lane. To keep it one tap, retry
   // automatically while forcing the new mapping's sellable quantity to ZERO.
   // Smart Route execution still follows its stricter physical-return workflow.
-  const queueOnOffline = body.queueOnOffline !== false;
   const verifiedPhysicalSwap = body.physicalChangeConfirmed === true
     && body.laneDisabledConfirmed === true
     && Number.isSafeInteger(Number(body.actualSlotQty))
     && Number(body.actualSlotQty) >= 0;
+  const queueOnOffline = body.queueOnOffline !== false
+    && (!smartRouteSwapRequested || verifiedPhysicalSwap);
   const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap;
   const actualSlotQty = verifiedPhysicalSwap ? Number(body.actualSlotQty) : 0;
   if (!slotCode || !isUuid(productId)) {
