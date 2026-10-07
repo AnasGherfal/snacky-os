@@ -16,6 +16,7 @@ const planner = read("src/lib/smart-route-planner.ts");
 const routeCreateApi = read("src/app/api/routes/route.ts");
 const operatorSmartApi = read("src/app/api/operator/routes/[id]/smart-plan/route.ts");
 const operatorStop = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
 const smartReturnApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/smart-return/route.ts");
 const xyProductApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
 const quantityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts");
@@ -114,6 +115,13 @@ test("executed AI swaps require old-product return before XY product change", ()
   assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
   assert.match(xyProductApi, /slotCode/);
   assert.match(xyProductApi, /const targetStockQty = smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+  assert.match(xyProductApi, /slot_code: slotCode/);
+
+  assert.match(stopApi, /SMART_ROUTE_RETURN_REQUIRED/);
+  assert.match(stopApi, /SMART_ROUTE_XY_CHANGE_REQUIRED/);
+  assert.match(stopApi, /smartSwapRequirements/);
+  assert.match(stopApi, /event\?\.metadata\?\.smart_route_swap === true/);
+  assert.match(stopApi, /laneActual/);
 });
 
 test("Smart Route returns remain in operator custody until normal route finalization", () => {
