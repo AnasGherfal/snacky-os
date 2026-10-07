@@ -760,11 +760,11 @@ async function getDashboardData() {
     canManageMachineQuantityUpdates
       ? safeDashboardCount({
           key: "machineQuantityUpdates",
-          label: "route_stop_quantity_confirmations offline pending",
+          label: "route_stop_quantity_confirmations XY sync pending",
           promise: supabase
             .from("route_stop_quantity_confirmations")
             .select("id", { count: "exact", head: true })
-            .eq("verification_status", "offline_pending"),
+            .in("verification_status", ["offline_pending", "xy_sync_pending"]),
           errors,
         })
       : Promise.resolve(0),
@@ -900,10 +900,10 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   if (data.canManageMachineQuantityUpdates && data.pendingMachineQuantityUpdateCount > 0) {
     actionItems.push({
       key: "machine-quantity-updates",
-      title: localize("Update machines that had no electricity", "تحديث الأجهزة التي كانت بدون كهرباء"),
+      title: localize("XY quantity updates waiting", "تحديثات كميات XY بانتظار المزامنة"),
       detail: localize(
-        `${data.pendingMachineQuantityUpdateCount} machine quantity update${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} are waiting for you.`,
-        `${data.pendingMachineQuantityUpdateCount} من تحديثات كميات الأجهزة بانتظارك.`,
+        `${data.pendingMachineQuantityUpdateCount} machine quantity update${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} need attention. New eligible refills retry automatically; legacy records stay manual.`,
+        `${data.pendingMachineQuantityUpdateCount} من تحديثات كميات الأجهزة تحتاج متابعة. التعبئات الجديدة المؤهلة يعيد سناكي محاولتها تلقائياً، أما السجلات القديمة فتبقى يدوية.`,
       ),
       href: "/routes/quantity-updates",
       cta: localize("Open quantity updates", "فتح تحديثات الكميات"),

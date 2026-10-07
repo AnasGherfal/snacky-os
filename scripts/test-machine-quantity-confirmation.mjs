@@ -99,55 +99,92 @@ test("zero-filled products do not require a machine quantity update", () => {
   }]), []);
 });
 
-test("only screenshot evidence or a recorded power-off exception makes the stop ready", () => {
-  assert.equal(machineQuantityEvidenceReady("xy_screenshot_saved"), true);
+test("verified or durably queued XY updates make the stop ready", () => {
+  assert.equal(machineQuantityEvidenceReady("xy_api_verified"), true);
+  assert.equal(machineQuantityEvidenceReady("xy_sync_pending"), true);
   assert.equal(machineQuantityEvidenceReady("offline_pending"), true);
+  assert.equal(machineQuantityEvidenceReady("xy_screenshot_saved"), true);
   assert.equal(machineQuantityEvidenceReady("owner_completed"), true);
   assert.equal(machineQuantityEvidenceReady("legacy_confirmed"), false);
   assert.equal(machineQuantityEvidenceReady(null), false);
 });
 
-test("operator checkpoint saves XY screenshots and never blocks a power-off machine", () => {
+test("operator checkpoint pushes quantities through Snacky OS and queues offline retries", () => {
   const card = read("src/components/operator/MachineQuantityConfirmationCard.tsx");
   const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
   const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts");
-  const actions = read("src/lib/operator-actions.ts");
-  const migration = read("supabase/migrations/20260910191149_route_stop_machine_quantity_confirmation.sql");
-  const evidenceMigration = read("supabase/migrations/20260911173023_machine_quantity_evidence_and_offline_followup.sql");
+  const writer = read("src/lib/xy-refill-quantity-sync.ts");
+  const pendingWorker = read("src/lib/xy-pending-quantity-sync.ts");
+  const cron = read("src/app/api/cron/xy-vms/route.ts");
+  const queueMigration = read("supabase/migrations/20261007030148_xy_refill_quantity_sync_queue.sql");
   const ownerQueue = read("src/app/routes/quantity-updates/page.tsx");
   const dashboard = read("src/app/dashboard/page.tsx");
+  const priceRoute = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
 
-  assert.match(card, /Upload current XY inventory screenshot\(s\)/);
+  assert.match(card, /Update XY from Snacky/);
+  assert.match(card, /You do not need to open the machine settings or take screenshots/);
   assert.match(card, /Machine has no electricity/);
-  assert.match(card, /uploadRefillProofPhoto/);
-  assert.match(card, /multiple/);
-  assert.match(card, /Add more XY screenshots/);
-  assert.match(card, /add them one at a time/);
-  assert.match(card, /reusableEvidenceCount/);
+  assert.match(card, /Retry XY now/);
+  assert.doesNotMatch(card, /Upload current XY inventory screenshot\(s\)/);
+  assert.doesNotMatch(card, /uploadRefillProofPhoto/);
   assert.match(card, /machineQuantityEvidenceMatches/);
   assert.match(card, /quantity-confirmation/);
-  assert.doesNotMatch(card, /type="checkbox"/);
-  assert.doesNotMatch(card, /quantityChoices|tap the same number/);
+
   assert.match(page, /quantityReadyForSubmit/);
-  assert.match(page, /Upload the current XY inventory screenshot, or save that the machine has no electricity/);
-  assert.match(api, /buildOperatorRouteAccessContext/);
-  assert.match(api, /xy_screenshot/);
-  assert.match(api, /machine_offline/);
-  assert.match(api, /owner_resolved/);
-  assert.match(api, /confirmation_key/);
-  assert.match(api, /enrichMachineQuantityPlanRows/);
-  assert.match(actions, /enrichMachineQuantityPlanRows/);
-  assert.match(actions, /legacyQuantityKey/);
-  assert.match(actions, /route_stop_quantity_confirmations/);
-  assert.match(actions, /expectedQuantityKey/);
-  assert.match(actions, /machineQuantityEvidenceReady/);
-  assert.match(migration, /enable row level security/i);
-  assert.match(migration, /revoke all on public\.route_stop_quantity_confirmations from public, anon, authenticated/i);
-  assert.match(evidenceMigration, /verification_status/i);
-  assert.match(evidenceMigration, /offline_pending/i);
-  assert.match(evidenceMigration, /evidence_files/i);
+  assert.match(page, /Send the refill quantities to XY from Snacky OS/);
+  assert.match(page, /Selling price \(LYD\)/);
+  assert.match(page, /priceLyd: requestedPriceLyd/);
+  assert.match(page, /product\/price was updated in XY and verified/);
+
+  assert.match(api, /syncMachineQuantityRowsToXy/);
+  assert.match(api, /loadConfirmedXyProductIds/);
+  assert.match(api, /xy_sync_pending/);
+  assert.match(api, /retry_pending/);
+  assert.match(api, /last_sync_error/);
+  assert.match(api, /auto_sync_eligible/);
+  assert.match(api, /syncResult\.status === "pending"/);
+  assert.match(api, /provisionalRecord/);
+  assert.match(api, /quantity_rows: preparedRows/);
+  assert.match(api, /eq\("updated_at", existing\.updated_at\)/);
+  assert.match(api, /LEGACY_OFFLINE_REVIEW_REQUIRED/);
+  assert.match(api, /xy_api_verified/);
+
+  assert.match(writer, /setXySlotProduct/);
+  assert.match(writer, /xySyncTargetQty/);
+  assert.match(writer, /liveQty \+ addedQty/);
+  assert.match(writer, /stockQty: targetQty/);
+  assert.match(writer, /persistPrepared/);
+  assert.match(writer, /canonicalRows/);
+  assert.match(writer, /priceLyd/);
+  assert.match(writer, /verifyXySlot/);
+  assert.match(writer, /different XY product than the Snacky refill plan/);
+
+  assert.match(pendingWorker, /offline_pending/);
+  assert.match(pendingWorker, /xy_sync_pending/);
+  assert.match(pendingWorker, /auto_sync_eligible/);
+  assert.match(pendingWorker, /auto_sync_eligible: result\.status === "pending"/);
+  assert.match(pendingWorker, /syncMachineQuantityRowsToXy/);
+  assert.match(pendingWorker, /persistPrepared/);
+  assert.match(pendingWorker, /quantity_rows: preparedRows/);
+  assert.match(pendingWorker, /eq\("updated_at", record\.updated_at\)/);
+  assert.match(pendingWorker, /verification_status: "xy_api_verified"/);
+  assert.match(cron, /retryPendingXyQuantitySyncs/);
+
+  assert.match(queueMigration, /xy_api_verified/);
+  assert.match(queueMigration, /xy_sync_pending/);
+  assert.match(queueMigration, /sync_attempt_count/);
+  assert.match(queueMigration, /last_sync_attempt_at/);
+  assert.match(queueMigration, /last_sync_error/);
+  assert.match(queueMigration, /auto_sync_eligible boolean not null default false/);
+  assert.doesNotMatch(queueMigration, /delete\s+from|truncate\s+table|drop\s+table/i);
+
+  assert.match(ownerQueue, /xy_sync_pending/);
+  assert.match(ownerQueue, /verificationStatus=\{record\.verification_status\}/);
   assert.match(ownerQueue, /PendingMachineQuantityUpdateCard/);
-  assert.match(dashboard, /pendingMachineQuantityUpdateCount/);
-  assert.doesNotMatch(migration, /delete\s+from|truncate\s+table|drop\s+table/i);
-  assert.doesNotMatch(evidenceMigration, /delete\s+from|truncate\s+table|drop\s+table/i);
+  assert.match(dashboard, /xy_sync_pending/);
+
+  assert.match(priceRoute, /priceLyd\?: unknown/);
+  assert.match(priceRoute, /requestedPriceLyd/);
+  assert.match(priceRoute, /snacky_os_operator/);
+  assert.match(priceRoute, /verifyXySlot/);
 });

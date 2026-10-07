@@ -14,8 +14,12 @@ import {
 } from "@/lib/machine-quantity-confirmation";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
-import { readXyMachineLayout } from "@/lib/xy-vms-control";
-import { verifyMachineQuantityRowsAgainstXy } from "@/lib/xy-quantity-verification";
+import {
+  loadConfirmedXyProductIds,
+  syncMachineQuantityRowsToXy,
+  type XyQuantitySyncResult,
+  type XySyncMachineQuantityRow,
+} from "@/lib/xy-refill-quantity-sync";
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
@@ -40,7 +44,7 @@ function isMissingEvidenceSchema(error: unknown) {
   const row = error as { code?: unknown; message?: unknown } | null;
   const message = String(row?.message ?? "");
   return (row?.code === "42703" || row?.code === "PGRST204")
-    && ["verification_status", "evidence_files", "offline_reason", "submitted_at"].some((column) => message.includes(column));
+    && ["verification_status", "evidence_files", "offline_reason", "submitted_at", "sync_attempt_count", "last_sync_attempt_at", "last_sync_error", "auto_sync_eligible"].some((column) => message.includes(column));
 }
 
 function errorMessage(error: unknown) {
@@ -97,7 +101,7 @@ async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdm
   return enrichMachineQuantityPlanRows(planRows, machineSlots ?? []);
 }
 
-const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at";
+const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at, sync_attempt_count, last_sync_attempt_at, last_sync_error, auto_sync_eligible, updated_at";
 
 function normalizeEvidenceFiles(value: unknown, routeId: string, stopId: string, now: string): MachineQuantityEvidenceFile[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
@@ -127,6 +131,72 @@ function validateFilledItems(value: unknown) {
     if (!Number.isSafeInteger(quantity) || quantity < 0) return `Filled row ${index + 1} must have a whole quantity of zero or more.`;
   }
   return null;
+}
+
+async function syncRowsForContext(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  stop: { machine?: unknown },
+  rows: XySyncMachineQuantityRow[],
+  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<XySyncMachineQuantityRow[]>,
+): Promise<XyQuantitySyncResult> {
+  const machineRelation = Array.isArray(stop.machine) ? stop.machine[0] as Record<string, unknown> | undefined : stop.machine as Record<string, unknown> | null | undefined;
+  const vmsMachineId = clean(machineRelation?.vms_machine_id);
+  if (!vmsMachineId) {
+    return {
+      status: "blocked",
+      message: "This machine is not linked to an XY machine id.",
+      rows: rows.map((row) => ({
+        slotCode: row.slotCode,
+        expectedQty: row.xySyncTargetQty ?? row.finalQty,
+        actualQty: null,
+        status: "blocked" as const,
+        message: "This machine is not linked to an XY machine id.",
+      })),
+      quantityRows: rows,
+    };
+  }
+
+  const mappings = await loadConfirmedXyProductIds(admin as any, rows.map((row) => row.productId));
+  return syncMachineQuantityRowsToXy({
+    vmsMachineId,
+    rows,
+    expectedVmsProductIds: mappings,
+    persistPrepared,
+  });
+}
+
+async function logSyncAttempt(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  context: any,
+  routeId: string,
+  stopId: string,
+  result: XyQuantitySyncResult,
+) {
+  try {
+    await admin.from("system_activity_logs").insert({
+      actor_user_id: context.profile.id,
+      actor_team_member_id: context.profile.team_member_id,
+      actor_name: context.profile.full_name,
+      actor_role: context.profile.role,
+      action: result.status === "verified" ? "xy_refill_quantity_sync_verified" : "xy_refill_quantity_sync_pending",
+      entity_type: "route_stop_quantity_confirmation",
+      entity_id: stopId,
+      entity_label: stopId,
+      before_data: null,
+      after_data: result.rows,
+      metadata: {
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: context.stop.machine_id,
+        sync_status: result.status,
+      },
+      summary: result.status === "verified"
+        ? "Snacky OS pushed refill quantities to XY and verified them"
+        : "Snacky OS saved refill quantities for XY follow-up",
+    });
+  } catch (error) {
+    console.warn("[xy-refill-sync] Could not write activity log.", error);
+  }
 }
 
 export async function GET(
@@ -207,8 +277,100 @@ export async function POST(
       return NextResponse.json({ success: true, installed: true, confirmed: true, confirmation: data });
     }
 
+    if (mode === "retry_pending") {
+      const { data: existing, error: existingError } = await context.admin
+        .from("route_stop_quantity_confirmations")
+        .select(CONFIRMATION_SELECT)
+        .eq("route_stop_id", stopId)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (!existing || !["offline_pending", "xy_sync_pending"].includes(String(existing.verification_status))) {
+        return NextResponse.json({ success: false, code: "XY_SYNC_NOT_PENDING", error: "This refill is not waiting for an XY quantity update." }, { status: 409 });
+      }
+      if (existing.auto_sync_eligible !== true && existing.verification_status === "offline_pending") {
+        return NextResponse.json({
+          success: false,
+          code: "LEGACY_OFFLINE_REVIEW_REQUIRED",
+          error: "This is a legacy power-off record from before automatic XY sync. Review it manually; Snacky will not write an old saved quantity into the current machine.",
+        }, { status: 409 });
+      }
+
+      const rows = Array.isArray(existing.quantity_rows) ? existing.quantity_rows as XySyncMachineQuantityRow[] : [];
+      const attemptedAt = new Date().toISOString();
+      const syncResult = await syncRowsForContext(
+        context.admin,
+        context.stop,
+        rows,
+        async (preparedRows) => {
+          const { data: claimed, error: targetSaveError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .update({
+              quantity_rows: preparedRows,
+              verification_status: "xy_sync_pending",
+              auto_sync_eligible: true,
+              updated_at: attemptedAt,
+            })
+            .eq("route_stop_id", stopId)
+            .eq("updated_at", existing.updated_at)
+            .in("verification_status", ["offline_pending", "xy_sync_pending"])
+            .select("quantity_rows")
+            .maybeSingle();
+          if (targetSaveError) throw targetSaveError;
+          if (claimed?.quantity_rows && Array.isArray(claimed.quantity_rows)) {
+            return claimed.quantity_rows as XySyncMachineQuantityRow[];
+          }
+
+          const { data: current, error: currentError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .select("quantity_rows")
+            .eq("route_stop_id", stopId)
+            .single();
+          if (currentError) throw currentError;
+          const canonicalRows = Array.isArray(current.quantity_rows)
+            ? current.quantity_rows as XySyncMachineQuantityRow[]
+            : [];
+          if (!canonicalRows.length) throw new Error("The saved refill target changed during XY synchronization.");
+          return canonicalRows;
+        },
+      );
+      const verified = syncResult.status === "verified";
+      const { data, error } = await context.admin
+        .from("route_stop_quantity_confirmations")
+        .update({
+          verification_status: verified ? "xy_api_verified" : "xy_sync_pending",
+          quantity_rows: syncResult.quantityRows ?? rows,
+          offline_reason: verified ? null : existing.offline_reason,
+          sync_attempt_count: Number(existing.sync_attempt_count ?? 0) + 1,
+          last_sync_attempt_at: attemptedAt,
+          last_sync_error: verified ? null : (syncResult.message ?? "XY has not confirmed this refill yet."),
+          auto_sync_eligible: verified ? false : syncResult.status === "pending",
+          resolved_at: verified ? attemptedAt : null,
+          resolved_by_user_id: verified ? context.profile.id : null,
+          updated_at: attemptedAt,
+        })
+        .eq("route_stop_id", stopId)
+        .in("verification_status", ["offline_pending", "xy_sync_pending"])
+        .select(CONFIRMATION_SELECT)
+        .single();
+      if (error) throw error;
+      await logSyncAttempt(context.admin, context, routeId, stopId, syncResult);
+      revalidatePath("/dashboard");
+      revalidatePath("/routes/quantity-updates");
+      revalidatePath(`/operator/routes/${routeId}/stops/${stopId}`);
+      revalidatePath(`/routes/${routeId}`);
+      return NextResponse.json({
+        success: true,
+        installed: true,
+        confirmed: true,
+        synced: verified,
+        pending: !verified,
+        syncResult,
+        confirmation: data,
+      });
+    }
+
     if (!["xy_api","xy_screenshot","machine_offline"].includes(mode)) {
-      return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose direct XY verification, XY screenshots, or machine power off." }, { status: 400 });
+      return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose Snacky-to-XY sync, legacy screenshot evidence, or machine power off." }, { status: 400 });
     }
     const filledItemsError = validateFilledItems(payload.filledItems);
     if (filledItemsError) return NextResponse.json({ success: false, code: "INVALID_FILLED_ITEMS", error: filledItemsError }, { status: 400 });
@@ -224,43 +386,70 @@ export async function POST(
     const rows = buildMachineQuantityRows(sources);
     const confirmationKey = machineQuantityConfirmationKey(rows);
 
-    if(mode==="xy_api"){
-      const machineRelation=Array.isArray(context.stop.machine)?context.stop.machine[0]:context.stop.machine;
-      const vmsMachineId=clean(machineRelation?.vms_machine_id);
-      if(!vmsMachineId){
-        return NextResponse.json({success:false,installed:true,code:"XY_MACHINE_ID_MISSING",error:"This machine is not connected to an XY machine id. Use screenshot evidence instead."},{status:409});
-      }
-      let liveLayout;
-      try{
-        liveLayout=await readXyMachineLayout(vmsMachineId);
-      }catch(error){
-        return NextResponse.json({success:false,installed:true,code:"XY_LIVE_UNAVAILABLE",error:"Could not read the machine from XY right now. Wait and retry, upload screenshots, or use the power-off option."},{status:503});
-      }
-      const verification=verifyMachineQuantityRowsAgainstXy(rows,liveLayout);
-      if(!verification.verified){
-        return NextResponse.json({
-          success:false,installed:true,code:"XY_QUANTITY_MISMATCH",
-          error:"XY does not show the expected post-refill quantities yet. Refresh the machine/XY connection and retry, or upload screenshots.",
-          mismatches:verification.mismatches,
-        },{status:409});
-      }
+    let syncResult: XyQuantitySyncResult | null = null;
+    if (mode === "xy_api") {
+      syncResult = await syncRowsForContext(
+        context.admin,
+        context.stop,
+        rows,
+        async (preparedRows) => {
+          const provisionalRecord = {
+            route_id: routeId,
+            route_stop_id: stopId,
+            machine_id: context.stop.machine_id,
+            operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
+            quantity_rows: preparedRows,
+            confirmation_key: confirmationKey,
+            verification_status: "xy_sync_pending",
+            evidence_files: [],
+            offline_reason: null,
+            submitted_at: now,
+            confirmed_at: now,
+            created_by_user_id: context.profile.id,
+            sync_attempt_count: 1,
+            last_sync_attempt_at: now,
+            last_sync_error: null,
+            auto_sync_eligible: true,
+            resolved_at: null,
+            resolved_by_user_id: null,
+            updated_at: now,
+          };
+          const { data: targetRecord, error: targetSaveError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .upsert(provisionalRecord, { onConflict: "route_stop_id" })
+            .select("quantity_rows")
+            .single();
+          if (targetSaveError) throw targetSaveError;
+          return Array.isArray(targetRecord.quantity_rows)
+            ? targetRecord.quantity_rows as XySyncMachineQuantityRow[]
+            : preparedRows;
+        },
+      );
+      await logSyncAttempt(context.admin, context, routeId, stopId, syncResult);
     }
+
+    const syncVerified = mode === "xy_api" && syncResult?.status === "verified";
+    const syncPending = mode === "xy_api" && !syncVerified;
 
     const record = {
       route_id: routeId,
       route_stop_id: stopId,
       machine_id: context.stop.machine_id,
       operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
-      quantity_rows: rows,
+      quantity_rows: syncResult?.quantityRows ?? rows,
       confirmation_key: confirmationKey,
-      verification_status: mode === "xy_api" ? "xy_api_verified" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
+      verification_status: syncVerified ? "xy_api_verified" : syncPending ? "xy_sync_pending" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
       evidence_files: evidenceFiles,
       offline_reason: offlineReason,
       submitted_at: now,
       confirmed_at: now,
       created_by_user_id: context.profile.id,
-      resolved_at: null,
-      resolved_by_user_id: null,
+      sync_attempt_count: mode === "xy_api" ? 1 : 0,
+      last_sync_attempt_at: mode === "xy_api" ? now : null,
+      last_sync_error: syncPending ? (syncResult?.message ?? "XY has not confirmed this refill yet.") : null,
+      auto_sync_eligible: mode === "machine_offline" || (syncPending && syncResult?.status === "pending"),
+      resolved_at: syncVerified ? now : null,
+      resolved_by_user_id: syncVerified ? context.profile.id : null,
       updated_at: now,
     };
     const { data, error } = await context.admin
@@ -277,7 +466,15 @@ export async function POST(
     revalidatePath(`/operator/routes/${routeId}`);
     revalidatePath(`/operator/routes/${routeId}/stops/${stopId}`);
     revalidatePath(`/routes/${routeId}`);
-    return NextResponse.json({ success: true, installed: true, confirmed: machineQuantityEvidenceReady(data?.verification_status), confirmation: data });
+    return NextResponse.json({
+      success: true,
+      installed: true,
+      confirmed: machineQuantityEvidenceReady(data?.verification_status),
+      synced: data?.verification_status === "xy_api_verified",
+      pending: ["xy_sync_pending", "offline_pending"].includes(String(data?.verification_status)),
+      syncResult,
+      confirmation: data,
+    });
   } catch (error) {
     return NextResponse.json({ success: false, installed: true, code: "QUANTITY_CONFIRMATION_SAVE_FAILED", error: errorMessage(error) }, { status: 500 });
   }

@@ -3,22 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
-import type { MachineQuantityEvidenceFile, MachineQuantityRow } from "@/lib/machine-quantity-confirmation";
-import { uploadRefillProofPhoto } from "@/lib/operator-actions";
-
-const MAX_SCREENSHOTS = 4;
-const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
-const SCREENSHOT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+import type { MachineQuantityRow } from "@/lib/machine-quantity-confirmation";
 
 export function PendingMachineQuantityUpdateCard({
   routeId,
   stopId,
-  machineId,
   machineName,
   machineCode,
   routeDate,
   operatorName,
   offlineReason,
+  verificationStatus,
+  autoSyncEligible,
   rows,
 }: {
   routeId: string;
@@ -29,76 +25,58 @@ export function PendingMachineQuantityUpdateCard({
   routeDate: string | null;
   operatorName: string | null;
   offlineReason: string | null;
+  verificationStatus: string;
+  autoSyncEligible: boolean;
   rows: MachineQuantityRow[];
 }) {
   const router = useRouter();
   const { t, locale } = useLanguage();
   const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
-  const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const legacyPending = verificationStatus === "offline_pending" && !autoSyncEligible;
+  const setupReviewPending = verificationStatus === "xy_sync_pending" && !autoSyncEligible;
 
-  function chooseFiles(selected: File[]) {
-    setError("");
-    if (selected.length < 1 || selected.length > MAX_SCREENSHOTS) {
-      setFiles([]);
-      setError(tr(`Choose one to ${MAX_SCREENSHOTS} screenshots.`, `اختر من صورة إلى ${MAX_SCREENSHOTS} صور شاشة.`));
-      return;
-    }
-    if (selected.some((file) => !SCREENSHOT_TYPES.has(file.type) || file.size <= 0 || file.size > MAX_SCREENSHOT_BYTES)) {
-      setFiles([]);
-      setError(tr("Screenshots must be PNG, JPG, or WEBP and under 10MB each.", "يجب أن تكون الصور بصيغة PNG أو JPG أو WEBP وأقل من 10 ميغابايت لكل صورة."));
-      return;
-    }
-    setFiles(selected);
-  }
-
-  async function resolveUpdate() {
-    if (!files.length) {
-      setError(tr("Update the machine, refresh XY, then choose the current screenshot(s).", "حدّث الجهاز وصفحة XY، ثم اختر صور الشاشة الحالية."));
-      return;
-    }
+  async function retryNow() {
     setSaving(true);
     setError("");
+    setMessage("");
     try {
-      const evidenceFiles: MachineQuantityEvidenceFile[] = [];
-      for (const file of files) {
-        const form = new FormData();
-        form.append("routeId", routeId);
-        form.append("stopId", stopId);
-        form.append("machineId", machineId);
-        form.append("photo", file);
-        const uploaded = await uploadRefillProofPhoto(form);
-        if (uploaded.uploadUnavailable || !uploaded.photoPath) throw new Error(tr("A screenshot could not be uploaded. Try again.", "تعذر رفع إحدى الصور. حاول مرة أخرى."));
-        evidenceFiles.push({
-          photoUrl: uploaded.photoUrl ?? null,
-          photoPath: uploaded.photoPath,
-          originalName: uploaded.originalName ?? file.name,
-          uploadedAt: new Date().toISOString(),
-        });
-      }
-
       const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
         method: "POST",
         cache: "no-store",
         headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "owner_resolved", evidenceFiles }),
+        body: JSON.stringify({ mode: "retry_pending" }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success === false) throw new Error(payload?.error || tr("Could not close this update.", "تعذر إغلاق هذا التحديث."));
-      setResolved(true);
-      setFiles([]);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || tr("Could not retry this XY update.", "تعذر إعادة محاولة تحديث XY."));
+      }
+      if (payload?.synced === true) {
+        setResolved(true);
+        setMessage(tr("XY confirmed every saved lane quantity.", "أكد XY كل كميات الخانات المحفوظة."));
+      } else {
+        setMessage(String(payload?.syncResult?.message ?? tr(
+          "Still waiting for XY. Snacky will keep retrying automatically.",
+          "ما زلنا بانتظار XY. سيواصل سناكي إعادة المحاولة تلقائياً.",
+        )));
+      }
       router.refresh();
-    } catch (resolveError) {
-      setError(resolveError instanceof Error ? resolveError.message : tr("Could not close this update.", "تعذر إغلاق هذا التحديث."));
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : tr("Could not retry this XY update.", "تعذر إعادة محاولة تحديث XY."));
     } finally {
       setSaving(false);
     }
   }
 
   if (resolved) {
-    return <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">{tr("Machine quantities updated and XY evidence saved.", "تم تحديث كميات الجهاز وحفظ إثبات XY.")}</div>;
+    return (
+      <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
+        {tr("Machine quantities synced and verified by XY.", "تمت مزامنة كميات الجهاز والتحقق منها عبر XY.")}
+      </div>
+    );
   }
 
   return (
@@ -108,28 +86,64 @@ export function PendingMachineQuantityUpdateCard({
           <h2 className="text-lg font-semibold text-slate-950">{machineName}</h2>
           <p className="text-xs text-slate-600">{machineCode ?? "-"} · {routeDate ?? "-"}{operatorName ? ` · ${operatorName}` : ""}</p>
         </div>
-        <span className="self-start rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white">{tr("Power-off follow-up", "متابعة انقطاع الكهرباء")}</span>
+        <span className="self-start rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white">
+          {legacyPending
+            ? tr("Legacy review", "مراجعة سجل قديم")
+            : setupReviewPending
+              ? tr("Needs review", "يحتاج مراجعة")
+              : tr("Waiting for XY", "بانتظار XY")}
+        </span>
       </div>
+
       {offlineReason ? <p className="mt-3 rounded-lg border border-amber-200 bg-white p-3 text-sm text-amber-950">{offlineReason}</p> : null}
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((row) => (
           <div key={`${row.productId}:${row.machineSlotId ?? row.slotCode}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
-            <div className="min-w-0"><div className="text-xs font-semibold text-slate-500">{tr("Selection", "الخانة")} {row.slotCode}</div><div className="truncate text-sm text-slate-900">{row.productName}</div></div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-slate-500">{tr("Selection", "الخانة")} {row.slotCode}</div>
+              <div className="truncate text-sm text-slate-900">{row.productName}</div>
+            </div>
             <div className="text-xl font-bold text-slate-950">{row.finalQty}</div>
           </div>
         ))}
       </div>
 
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-semibold text-slate-950">{tr("After electricity returns", "بعد عودة الكهرباء")}</div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">{tr("Set the quantities above, refresh the XY cargo-lane page, then upload the current screenshot(s).", "اضبط الكميات أعلاه، وحدّث صفحة خانات XY، ثم ارفع صور الشاشة الحالية.")}</p>
-        <input type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={saving} className="field-input mt-3" onChange={(event) => chooseFiles(Array.from(event.target.files ?? []))} />
-        {files.length ? <div className="mt-2 text-xs text-slate-600">{files.length} {tr("screenshot(s) selected", "صورة شاشة محددة")}</div> : null}
+        <div className="text-sm font-semibold text-slate-950">
+          {legacyPending
+            ? tr("Legacy power-off record", "سجل قديم لانقطاع الكهرباء")
+            : setupReviewPending
+              ? tr("XY setup needs review", "إعداد XY يحتاج مراجعة")
+              : tr("Automatic XY retry", "إعادة محاولة XY تلقائياً")}
+        </div>
+        <p className="mt-1 text-xs leading-5 text-slate-600">
+          {legacyPending
+            ? tr(
+                "This refill was saved before automatic XY sync existed. Snacky will not push its old quantity into the current machine automatically.",
+                "تم حفظ هذه التعبئة قبل وجود المزامنة التلقائية مع XY. لن يرسل سناكي كميتها القديمة إلى الجهاز الحالي تلقائياً.",
+              )
+            : setupReviewPending
+              ? tr(
+                  "Automatic retry is paused because the lane, product mapping, or XY price needs review. Fix the setup, then retry this saved refill.",
+                  "تم إيقاف إعادة المحاولة التلقائية لأن الخانة أو ربط المنتج أو سعر XY يحتاج مراجعة. أصلح الإعداد ثم أعد محاولة هذه التعبئة المحفوظة.",
+                )
+              : tr(
+                  "Snacky OS keeps these exact quantities and retries them during the XY sync. No machine-settings entry or screenshot is required.",
+                  "يحتفظ Snacky OS بهذه الكميات الدقيقة ويعيد إرسالها أثناء مزامنة XY. لا يلزم الدخول إلى إعدادات الجهاز أو رفع صورة شاشة.",
+                )}
+        </p>
+        {message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{message}</div> : null}
         {error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
-        <button type="button" onClick={() => void resolveUpdate()} disabled={saving} className="btn-primary mt-3 w-full disabled:opacity-50">
-          {saving ? tr("Saving...", "جارٍ الحفظ...") : tr("Save XY proof and close follow-up", "احفظ إثبات XY وأغلق المتابعة")}
-        </button>
+        {!legacyPending ? (
+          <button type="button" onClick={() => void retryNow()} disabled={saving} className="btn-primary mt-3 w-full disabled:opacity-50">
+            {saving
+              ? tr("Checking XY...", "جارٍ التحقق من XY...")
+              : setupReviewPending
+                ? tr("Retry after fixing setup", "إعادة المحاولة بعد إصلاح الإعداد")
+                : tr("Retry XY now", "إعادة محاولة XY الآن")}
+          </button>
+        ) : null}
       </div>
     </article>
   );

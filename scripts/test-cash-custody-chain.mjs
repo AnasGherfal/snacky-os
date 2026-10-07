@@ -88,7 +88,7 @@ test("cash count asks only for one combined total and derives its period automat
   assert.match(custodyForms, /name="total_amount_lyd"/);
   assert.doesNotMatch(custodyForms, /name="period_start"|name="period_end"|Cash period from|Cash period to/);
   assert.match(custodyForms, /previous full cash-removal record/);
-  assert.match(detailPage, /last full cash-removal record for each machine/);
+  assert.match(detailPage, /Automatic per machine from previous removal/);
   assert.doesNotMatch(custodyForms, /name="count_witness_id"|denominationFieldName|Count every denomination/);
   assert.doesNotMatch(custodyForms, /formType="cash-total-count"[\s\S]*name="evidence_file"/);
   assert.doesNotMatch(custodyForms, /machine_expected|machine_counted/);
