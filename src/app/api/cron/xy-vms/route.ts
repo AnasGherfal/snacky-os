@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ensureFreshXyRoutePlanningData, syncXyMachineStatus } from "@/lib/xy-vms-sync";
 import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
+import { retryPendingXyQuantitySyncs } from "@/lib/xy-pending-quantity-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,19 @@ async function refreshXy(request: NextRequest) {
         machineStatusSync={error:error instanceof Error?error.message:"Machine status refresh failed."};
       }
     }
+    let pendingQuantitySync:
+      | Awaited<ReturnType<typeof retryPendingXyQuantitySyncs>>
+      | { skipped: true; error: string } = { skipped: true, error: "Not attempted." };
+    try {
+      pendingQuantitySync = await retryPendingXyQuantitySyncs(20);
+    } catch (error) {
+      console.warn("[xy-cron] Pending refill quantity sync failed; normal XY refresh will continue.", error);
+      pendingQuantitySync = {
+        skipped: true,
+        error: error instanceof Error ? error.message : "Pending refill quantity sync failed.",
+      };
+    }
+
     const automation = ["refreshed", "already_fresh"].includes(result.outcome)
       ? await runRefillRouteAutomation()
       : { skipped: true, reason: `XY planning data is ${result.outcome}.` };
@@ -75,6 +89,7 @@ async function refreshXy(request: NextRequest) {
       results: result.results,
       refillRouteAutomation: automation,
       machineStatusSync,
+      pendingQuantitySync,
     }, {
       status,
       headers: { "Cache-Control": "no-store" },
