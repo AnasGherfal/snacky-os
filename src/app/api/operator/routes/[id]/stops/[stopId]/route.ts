@@ -142,6 +142,7 @@ type RefillLineItem = {
   reason: string | null;
   notes: string | null;
   sourceLabel?: string | null;
+  hasExactLanePlan?: boolean;
   createdAt?: string | null;
   availableQty?: number;
   vmsSalePriceLyd?: number | null;
@@ -554,6 +555,24 @@ export async function GET(
     if (slotsError) logOptionalStopDataIssue({ step: "load_machine_slots", query: "machine_slots", routeId, stopId, profile, route, stop, error: slotsError });
     const slotRows = slotsError ? [] : (slots ?? []);
 
+    const missingExactLanePlanForProduct = new Set(
+      (stopPlanItems ?? [])
+        .filter((row) => {
+          const allocations = Array.isArray(row.slot_allocations) ? row.slot_allocations : [];
+          const hasExactAllocations = allocations.length > 0 && allocations.every((allocation: any) => (
+            Boolean(String(allocation?.machine_slot_id ?? "").trim())
+            && Boolean(String(allocation?.slot_code ?? "").trim())
+          ));
+          const hasExactSingleLane = Boolean(
+            String(row.machine_slot_id ?? "").trim()
+            && String(row.slot_code ?? "").trim()
+            && !String(row.slot_code ?? "").includes(",")
+          );
+          return !hasExactAllocations && !hasExactSingleLane;
+        })
+        .map((row) => String(row.product_id ?? ""))
+        .filter(Boolean),
+    );
     const quantityPlanItems = enrichMachineQuantityPlanRows((stopPlanItems ?? []) as StopPlanItemRow[], slotRows);
 
     const plannedByProduct = new Map<string, PlannedProductLine>();
@@ -649,6 +668,7 @@ export async function GET(
       reason: existingFill?.reason ?? null,
       notes: existingFill?.notes ?? null,
       sourceLabel,
+      hasExactLanePlan: !missingExactLanePlanForProduct.has(String(line.productId)),
       createdAt: line.createdAt ?? null,
     });
     });
