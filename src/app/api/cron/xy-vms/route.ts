@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ensureFreshXyRoutePlanningData, syncXyMachineStatus } from "@/lib/xy-vms-sync";
 import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
+import { retryPendingXySlotChanges } from "@/lib/xy-pending-slot-changes";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,15 @@ async function refreshXy(request: NextRequest) {
   }
 
   try {
+    // The existing secured ten-minute XY scheduler also retries operator-approved
+    // offline product changes. A failure here does not stop normal stock refresh.
+    let pendingSlotChanges: unknown = { skipped: true };
+    try {
+      pendingSlotChanges = await retryPendingXySlotChanges();
+    } catch (cause) {
+      console.error("[xy-cron] Pending offline lane sync failed", cause);
+      pendingSlotChanges = { error: "Pending XY changes could not be checked." };
+    }
     const result = await ensureFreshXyRoutePlanningData();
     let machineStatusSync:{status?:string;error?:string;skipped?:boolean;reason?:string}={skipped:true,reason:"Planning refresh still running."};
     if(result.outcome!=="in_progress"){
@@ -75,6 +85,7 @@ async function refreshXy(request: NextRequest) {
       results: result.results,
       refillRouteAutomation: automation,
       machineStatusSync,
+      pendingSlotChanges,
     }, {
       status,
       headers: { "Cache-Control": "no-store" },

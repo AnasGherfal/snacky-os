@@ -142,6 +142,7 @@ type RefillLineItem = {
   reason: string | null;
   notes: string | null;
   sourceLabel?: string | null;
+  hasExactLanePlan?: boolean;
   createdAt?: string | null;
   availableQty?: number;
   vmsSalePriceLyd?: number | null;
@@ -554,6 +555,24 @@ export async function GET(
     if (slotsError) logOptionalStopDataIssue({ step: "load_machine_slots", query: "machine_slots", routeId, stopId, profile, route, stop, error: slotsError });
     const slotRows = slotsError ? [] : (slots ?? []);
 
+    const missingExactLanePlanForProduct = new Set(
+      (stopPlanItems ?? [])
+        .filter((row) => {
+          const allocations = Array.isArray(row.slot_allocations) ? row.slot_allocations : [];
+          const hasExactAllocations = allocations.length > 0 && allocations.every((allocation: any) => (
+            Boolean(String(allocation?.machine_slot_id ?? "").trim())
+            && Boolean(String(allocation?.slot_code ?? "").trim())
+          ));
+          const hasExactSingleLane = Boolean(
+            String(row.machine_slot_id ?? "").trim()
+            && String(row.slot_code ?? "").trim()
+            && !String(row.slot_code ?? "").includes(",")
+          );
+          return !hasExactAllocations && !hasExactSingleLane;
+        })
+        .map((row) => String(row.product_id ?? ""))
+        .filter(Boolean),
+    );
     const quantityPlanItems = enrichMachineQuantityPlanRows((stopPlanItems ?? []) as StopPlanItemRow[], slotRows);
 
     const plannedByProduct = new Map<string, PlannedProductLine>();
@@ -649,6 +668,7 @@ export async function GET(
       reason: existingFill?.reason ?? null,
       notes: existingFill?.notes ?? null,
       sourceLabel,
+      hasExactLanePlan: !missingExactLanePlanForProduct.has(String(line.productId)),
       createdAt: line.createdAt ?? null,
     });
     });
@@ -1019,6 +1039,16 @@ export async function GET(
       };
     });
 
+    const { data: queuedXyChanges, error: queuedXyError } = await operationalReadClient
+      .from("xy_pending_slot_changes")
+      .select("id,slot_code,target_product_id,target_stock_qty,status,last_error,verified_at,created_at")
+      .eq("route_stop_id", stopId)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (queuedXyError && queuedXyError.code !== "42P01" && queuedXyError.code !== "PGRST205") {
+      console.warn("[operator:stop-data] Could not load queued XY changes", { routeId, stopId, error: queuedXyError });
+    }
+
     return NextResponse.json({
       stopId,
       routeId,
@@ -1041,6 +1071,7 @@ export async function GET(
       machineStorageStock: machineStorageStockRows ?? [],
       adjustments,
       machineIssues,
+      queuedXyChanges: queuedXyError ? [] : queuedXyChanges ?? [],
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
@@ -1227,7 +1258,7 @@ export async function POST(
     });
 
     if (smartSwapRequirements.length) {
-      const [{ data: smartReturns, error: smartReturnsError }, { data: xyEvents, error: xyEventsError }] = await Promise.all([
+      const [{ data: smartReturns, error: smartReturnsError }, { data: xyEvents, error: xyEventsError }, { data: queuedXyChanges, error: queuedXyError }] = await Promise.all([
         protectedClient
           .from("inventory_adjustments")
           .select("product_id, quantity, reason, notes, status")
@@ -1241,9 +1272,14 @@ export async function POST(
           .eq("action", "xy_slot_product_change")
           .contains("metadata", { route_id: routeId, route_stop_id: stopId })
           .order("created_at", { ascending: true }),
+        protectedClient
+          .from("xy_pending_slot_changes")
+          .select("slot_code,target_product_id,target_stock_qty,physical_change_confirmed,lane_disabled_confirmed,status")
+          .eq("route_stop_id", stopId)
+          .in("status", ["pending", "verified"]),
       ]);
 
-      if (smartReturnsError || xyEventsError) {
+      if (smartReturnsError || xyEventsError || queuedXyError) {
         statusCode = 500;
         return NextResponse.json(
           { success: false, code: "SMART_ROUTE_EXECUTION_CHECK_FAILED", error: "Could not verify Smart Route return/XY evidence." },
@@ -1287,13 +1323,22 @@ export async function POST(
           && event?.metadata?.smart_route_swap === true
         ));
 
-        if (!xyVerified) {
+        const queuedWithPhysicalSafety = (queuedXyChanges ?? []).some((row: any) => (
+          String(row.slot_code ?? "") === requirement.slotCode
+          && String(row.target_product_id ?? "") === requirement.targetProductId
+          && Number(row.target_stock_qty ?? -1) >= 0
+          && row.physical_change_confirmed === true
+          && row.lane_disabled_confirmed === true
+          && ["pending", "verified"].includes(String(row.status ?? ""))
+        ));
+
+        if (!xyVerified && !queuedWithPhysicalSafety) {
           statusCode = 409;
           return NextResponse.json(
             {
               success: false,
               code: "SMART_ROUTE_XY_CHANGE_REQUIRED",
-              error: `Lane ${requirement.slotCode} cannot be completed until the Smart Route product change is verified in XY.`,
+              error: `Lane ${requirement.slotCode} requires a verified XY change or an operator-confirmed queued change with vending disabled.`,
             },
             { status: statusCode, headers: jsonHeaders() },
           );

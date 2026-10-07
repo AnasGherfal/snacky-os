@@ -399,6 +399,16 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
   const routeQuantityConfirmations = quantityConfirmationsResult.error ? [] : (quantityConfirmationsResult.data ?? []);
   const smartXyEvents = smartXyEventsResult.error ? [] : (smartXyEventsResult.data ?? []);
+  const { data: queuedXyChanges, error: queuedXyError } = await supportClient
+    .from("xy_pending_slot_changes")
+    .select("id,machine_id,slot_code,target_product_id,target_stock_qty,status,last_error,attempt_count,verified_at,created_at")
+    .eq("route_id", id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (queuedXyError && !isMissingTable(queuedXyError, "xy_pending_slot_changes")) {
+    console.warn("[routes:detail] Pending XY changes unavailable", { id, error: queuedXyError });
+  }
+  const xyQueueRows = queuedXyError ? [] : (queuedXyChanges ?? []);
   const completionImageStopDescriptors = routeStops.map((stop: any) => ({
     id: String(stop.id),
     title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
@@ -1000,6 +1010,36 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+        {xyQueueRows.length ? (
+          <section className="surface-card border-amber-200 p-4">
+            <h2 className="text-lg font-semibold">{tr(locale, "XY changes awaiting reconnect", "تغييرات XY التي تنتظر عودة الاتصال")}</h2>
+            <p className="mt-1 text-sm text-slate-600">{tr(locale,
+              "Pending changes are retried by the secured XY scheduler after the stop is completed. Operators must keep those lanes disabled from vending until verified.",
+              "يعيد مجدول XY الآمن المحاولة بعد إنهاء الموقع. يجب إبقاء الخانات المعنية معطلة عن البيع إلى حين التحقق.",
+            )}</p>
+            <DataTable headers={[
+              tr(locale, "Machine", "الجهاز"),
+              tr(locale, "Lane", "الخانة"),
+              tr(locale, "New product", "المنتج الجديد"),
+              tr(locale, "Quantity", "الكمية"),
+              tr(locale, "Status", "الحالة"),
+              tr(locale, "Attempts / notes", "المحاولات والملاحظات"),
+            ]}>
+              {xyQueueRows.map((row: any) => (
+                <tr key={row.id}>
+                  <td>{formatMachineDisplayName(machineById.get(row.machine_id) ?? null, { includeArea: true })}</td>
+                  <td>{row.slot_code}</td>
+                  <td>{productById.get(row.target_product_id)?.name ?? row.target_product_id}</td>
+                  <td>{row.target_stock_qty}</td>
+                  <td><StatusBadge status={row.status === "verified" ? "complete" : "needs_review"}
+                    label={row.status === "verified" ? tr(locale, "Verified", "تم التحقق") : row.status === "conflict" ? tr(locale, "Manual review", "مراجعة يدوية") : tr(locale, "Pending", "معلق")} /></td>
+                  <td>{row.attempt_count ?? 0} {row.last_error ? <p className="text-xs text-rose-700">{row.last_error}</p> : null}</td>
+                </tr>
+              ))}
+            </DataTable>
+          </section>
+        ) : null}
 
         {smartRouteLaneRows.length ? (
           <section className="surface-card border-violet-200 p-4">

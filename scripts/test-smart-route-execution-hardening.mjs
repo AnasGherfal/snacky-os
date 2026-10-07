@@ -115,7 +115,7 @@ test("executed AI swaps require old-product return before XY product change", ()
   assert.match(xyProductApi, /returned old units before changing this Smart Route lane in XY/);
   assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
   assert.match(xyProductApi, /slotCode/);
-  assert.match(xyProductApi, /const targetStockQty = smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+  assert.match(xyProductApi, /const targetStockQty = queueOnOffline \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
   assert.match(xyProductApi, /slot_code: slotCode/);
 
   assert.match(stopApi, /SMART_ROUTE_RETURN_REQUIRED/);
@@ -172,4 +172,64 @@ test("admin route detail exposes a lane-level Smart Route execution audit", () =
   assert.match(adminRoute, /xy_slot_product_change/);
   assert.match(adminRoute, /XY synced \+ verified/);
   assert.match(adminRoute, /Power-off pending/);
+});
+
+
+test("XY device offline is not treated as proof of a power outage", () => {
+  assert.match(xyProductApi, /设备不在线/);
+  assert.match(xyProductApi, /XY_MACHINE_OFFLINE/);
+  assert.match(operatorStop, /responseCode\(payload\) === "XY_MACHINE_OFFLINE"/);
+  assert.match(operatorStop, /لا تختَر «لا توجد كهرباء» إلا إذا كانت الكهرباء مقطوعة فعلاً/);
+  assert.match(operatorStop, /Do not put the replacement product in this lane before XY confirms the change/);
+});
+
+
+test("legacy product totals cannot be written into catalogue-guessed XY lanes", () => {
+  const serverQuantity = read("src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts");
+  const stopData = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+  const quantityCard = read("src/components/operator/MachineQuantityConfirmationCard.tsx");
+  assert.match(serverQuantity, /original_exact_lane/);
+  assert.match(serverQuantity, /XY_LANE_ASSIGNMENT_REQUIRED/);
+  assert.match(serverQuantity, /missingOriginalAssignments/);
+  assert.match(stopData, /missingExactLanePlanForProduct/);
+  assert.match(stopData, /hasExactLanePlan:/);
+  assert.match(operatorStop, /hasExactLanePlan: item\.hasExactLanePlan/);
+  assert.match(quantityCard, /missingOriginalLanePlan/);
+  assert.match(quantityCard, /!missingOriginalLanePlan/);
+  assert.match(quantityCard, /Upload current XY inventory screenshot/);
+  assert.match(operatorStop, /item\.hasExactLanePlan === false/);
+  assert.match(operatorStop, /if \(item\.hasExactLanePlan === false\) return undefined/);
+  assert.match(operatorStop, /This older route lists a product total, not exact machine lanes/);
+});
+
+
+test("offline XY changes are durable, gated by physical safety, and retried by secured cron", () => {
+  const queueSchema = read("supabase/migrations/20261008010000_xy_offline_slot_change_queue.sql");
+  const queueWorker = read("src/lib/xy-pending-slot-changes.ts");
+  const xyCron = read("src/app/api/cron/xy-vms/route.ts");
+  const operatorLayout = read("src/app/operator/layout.tsx");
+  const homeShortcuts = read("src/components/operator/OperatorHomeShortcuts.tsx");
+  const quantityCard = read("src/components/operator/MachineQuantityConfirmationCard.tsx");
+  const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+
+  assert.match(queueSchema, /xy_pending_slot_changes/);
+  assert.match(queueSchema, /xy_one_pending_change_per_lane/);
+  assert.match(queueSchema, /enable row level security/);
+  assert.match(queueSchema, /to service_role/);
+  assert.match(xyProductApi, /physicalChangeConfirmed/);
+  assert.match(xyProductApi, /laneDisabledConfirmed/);
+  assert.match(xyProductApi, /queueOnOffline/);
+  assert.match(xyProductApi, /queued: true/);
+  assert.match(queueWorker, /stop.status !== "completed"/);
+  assert.match(queueWorker, /previous_stock_qty/);
+  assert.match(queueWorker, /status.*conflict/);
+  assert.match(queueWorker, /verifyXySlot/);
+  assert.match(xyCron, /retryPendingXySlotChanges/);
+  assert.match(stopApi, /queuedWithPhysicalSafety/);
+  assert.match(operatorStop, /Save and retry automatically/);
+  assert.match(operatorStop, /Keep affected lanes disabled from selling/);
+  assert.match(quantityCard, /saveMode\("sync_pending"\)/);
+  assert.match(quantityCard, /Photos are optional/);
+  assert.match(operatorLayout, /OperatorHomeShortcuts/);
+  assert.match(homeShortcuts, /usePathname/);
 });
