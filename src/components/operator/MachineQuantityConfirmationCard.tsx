@@ -49,6 +49,8 @@ export function MachineQuantityConfirmationCard({
   const ready = rows.length === 0 || Boolean(installed && savedMatches && machineQuantityEvidenceReady(status));
   const pending = ready && (status === "xy_sync_pending" || status === "offline_pending");
   const synced = ready && status === "xy_api_verified";
+  const legacyPending = pending && status === "offline_pending" && !autoSyncEligible;
+  const setupReviewPending = pending && status === "xy_sync_pending" && !autoSyncEligible;
 
   useEffect(() => {
     onStateChangeRef.current = onStateChange;
@@ -209,7 +211,15 @@ export function MachineQuantityConfirmationCard({
           : ready
             ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white"
             : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
-          {pending ? tr("Waiting for XY", "بانتظار XY") : ready ? tr("Saved", "تم الحفظ") : tr("Required", "مطلوب")}
+          {legacyPending
+            ? tr("Legacy review", "مراجعة سجل قديم")
+            : setupReviewPending
+              ? tr("Needs review", "يحتاج مراجعة")
+              : pending
+                ? tr("Waiting for XY", "بانتظار XY")
+                : ready
+                  ? tr("Saved", "تم الحفظ")
+                  : tr("Required", "مطلوب")}
         </span>
       </div>
 
@@ -249,25 +259,36 @@ export function MachineQuantityConfirmationCard({
       {pending ? (
         <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm text-amber-950">
           <div className="font-semibold">
-            {autoSyncEligible
-              ? tr("Refill saved in Snacky OS — waiting for XY", "تم حفظ التعبئة في Snacky OS — بانتظار XY")
-              : tr("Legacy power-off record — manual review", "سجل قديم لانقطاع الكهرباء — يحتاج مراجعة يدوية")}
+            {legacyPending
+              ? tr("Legacy power-off record — manual review", "سجل قديم لانقطاع الكهرباء — يحتاج مراجعة يدوية")
+              : setupReviewPending
+                ? tr("XY setup needs review", "إعداد XY يحتاج مراجعة")
+                : tr("Refill saved in Snacky OS — waiting for XY", "تم حفظ التعبئة في Snacky OS — بانتظار XY")}
           </div>
           <p className="mt-1 leading-6">
-            {autoSyncEligible
+            {legacyPending
               ? tr(
-                  "You can finish this stop. Snacky retries this saved refill automatically and only marks it synced after XY confirms the quantities.",
-                  "يمكنك إنهاء هذا الموقع. يعيد سناكي محاولة هذه التعبئة المحفوظة تلقائياً ولا يعتبرها متزامنة إلا بعد أن يؤكد XY الكميات.",
-                )
-              : tr(
                   "This record was created before automatic XY sync. Snacky will not push an old quantity into the current machine automatically.",
                   "تم إنشاء هذا السجل قبل المزامنة التلقائية مع XY. لن يرسل سناكي كمية قديمة إلى الجهاز الحالي تلقائياً.",
-                )}
+                )
+              : setupReviewPending
+                ? tr(
+                    "Snacky paused automatic retries because the lane, product mapping, or XY price needs review. Fix the setup, then retry here.",
+                    "أوقف سناكي إعادة المحاولة التلقائية لأن الخانة أو ربط المنتج أو سعر XY يحتاج مراجعة. أصلح الإعداد ثم أعد المحاولة من هنا.",
+                  )
+                : tr(
+                    "You can finish this stop. Snacky retries this saved refill automatically and only marks it synced after XY confirms the quantities.",
+                    "يمكنك إنهاء هذا الموقع. يعيد سناكي محاولة هذه التعبئة المحفوظة تلقائياً ولا يعتبرها متزامنة إلا بعد أن يؤكد XY الكميات.",
+                  )}
           </p>
           {lastSyncError ? <p className="mt-2 text-xs text-amber-800">{lastSyncError}</p> : null}
-          {autoSyncEligible && !completed ? (
+          {!legacyPending && !completed ? (
             <button type="button" onClick={() => void retryPending()} disabled={saving} className="btn-secondary mt-3 w-full disabled:opacity-50">
-              {saving ? tr("Checking XY...", "جارٍ التحقق من XY...") : tr("Retry XY now", "إعادة محاولة XY الآن")}
+              {saving
+                ? tr("Checking XY...", "جارٍ التحقق من XY...")
+                : setupReviewPending
+                  ? tr("Retry after fixing setup", "إعادة المحاولة بعد إصلاح الإعداد")
+                  : tr("Retry XY now", "إعادة محاولة XY الآن")}
             </button>
           ) : null}
         </div>
