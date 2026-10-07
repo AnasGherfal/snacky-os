@@ -320,6 +320,14 @@ begin
   if v_route.operator_id is null then
     raise exception 'Route must have an assigned operator before a Smart Route return.';
   end if;
+  if not exists (
+    select 1
+    from public.operator_route_custody_leases lease
+    where lease.route_id = p_route_id
+      and lease.operator_id = v_route.operator_id
+  ) then
+    raise exception 'The operator does not own this route stock yet. Confirm pickup before recording a Smart Route return.';
+  end if;
   if v_route.status::text in ('completed', 'reviewed', 'cancelled', 'canceled') then
     raise exception 'A terminal route cannot receive a Smart Route return.';
   end if;
