@@ -118,6 +118,7 @@ interface StopRefillItem {
     current_qty?: unknown;
     observed_current_qty?: unknown;
     target_qty?: unknown;
+    capacity?: unknown;
     final_take_qty?: unknown;
     recommended_take_qty?: unknown;
     transition_mode?: "none" | "empty_lane" | "replace_now";
@@ -1274,7 +1275,10 @@ export default function MachineStopPage() {
       return rowKey === key ? sum : sum + Math.max(0, Number(laneFilledQtys[rowKey] ?? 0));
     }, 0);
     const plannedMaximum = plannedLaneAddition(allocation);
-    const laneMaximum = Math.max(0, Math.min(plannedMaximum || maximumProductTotal, maximumProductTotal - otherLaneTotal));
+    const startingQty = laneStartingQty(allocation);
+    const capacity = Math.max(0, Math.floor(Number(allocation.capacity ?? 0)));
+    const physicalLaneMaximum = capacity > 0 ? Math.max(0, capacity - startingQty) : plannedMaximum;
+    const laneMaximum = Math.max(0, Math.min(physicalLaneMaximum || maximumProductTotal, maximumProductTotal - otherLaneTotal));
     const nextLaneQty = Math.max(0, Math.min(laneMaximum, Math.floor(Number(quantity) || 0)));
     const nextTotal = otherLaneTotal + nextLaneQty;
     setLaneFilledQtys((prev) => ({ ...prev, [key]: nextLaneQty }));
