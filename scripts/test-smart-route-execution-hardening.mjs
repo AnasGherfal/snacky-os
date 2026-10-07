@@ -115,7 +115,7 @@ test("executed AI swaps require old-product return before XY product change", ()
   assert.match(xyProductApi, /returned old units before changing this Smart Route lane in XY/);
   assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
   assert.match(xyProductApi, /slotCode/);
-  assert.match(xyProductApi, /const targetStockQty = queueOnOffline \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+  assert.match(xyProductApi, /const targetStockQty = zeroStockRelabel \? 0 : queueOnOffline \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
   assert.match(xyProductApi, /slot_code: slotCode/);
 
   assert.match(stopApi, /SMART_ROUTE_RETURN_REQUIRED/);
@@ -226,8 +226,10 @@ test("offline XY changes are durable, gated by physical safety, and retried by s
   assert.match(queueWorker, /verifyXySlot/);
   assert.match(xyCron, /retryPendingXySlotChanges/);
   assert.match(stopApi, /queuedWithPhysicalSafety/);
-  assert.match(operatorStop, /Save and retry automatically/);
-  assert.match(operatorStop, /Keep affected lanes disabled from selling/);
+  assert.match(operatorStop, /queueOnOffline: true/);
+  assert.doesNotMatch(operatorStop, /I physically replaced the product in this lane/);
+  assert.doesNotMatch(operatorStop, /I disabled this lane from vending/);
+  assert.match(operatorStop, /Saved in Snacky/);
   assert.match(quantityCard, /saveMode\("sync_pending"\)/);
   assert.match(quantityCard, /Photos are optional/);
   assert.match(operatorLayout, /OperatorHomeShortcuts/);
@@ -244,4 +246,27 @@ test("quantity custody is recorded at Complete Stop, never when just opening a s
   assert.match(quantityCard, /Save quantities & continue/);
   assert.doesNotMatch(quantityCard, /Actual product\/lane quantities are saved automatically/);
   assert.match(stopApi, /Number\(row\.target_stock_qty \?\? -1\) === actualQty/);
+});
+
+
+test("one-tap manual XY changes save without fake physical confirmations and will sell zero new units", () => {
+  const safeQueue = read("supabase/migrations/20261008081500_xy_zero_stock_offline_relabel.sql");
+  const worker = read("src/lib/xy-pending-slot-changes.ts");
+
+  assert.match(xyProductApi, /const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap/);
+  assert.match(xyProductApi, /const queueOnOffline = body.queueOnOffline !== false/);
+  assert.match(xyProductApi, /target_stock_qty: zeroStockRelabel \? 0 : actualSlotQty/);
+  assert.match(xyProductApi, /zero_stock_relabel: zeroStockRelabel/);
+  assert.match(xyProductApi, /physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap/);
+  assert.match(worker, /safeZeroStockRelabel/);
+  assert.match(worker, /before.currentQty > item.previous_stock_qty/);
+  assert.match(worker, /!safeZeroStockRelabel && stop.status !== "completed"/);
+  assert.match(safeQueue, /target_stock_qty = 0/);
+  assert.match(safeQueue, /smart_route_swap = false/);
+  assert.match(safeQueue, /physical_change_confirmed = false/);
+  assert.match(operatorStop, /queueOnOffline: true/);
+  assert.match(operatorStop, /Saved in Snacky/);
+  assert.match(operatorStop, /Saved — updating XY automatically/);
+  assert.doesNotMatch(operatorStop, /xyQueuePhysicalConfirmed/);
+  assert.doesNotMatch(operatorStop, /xyQueueLaneDisabled/);
 });
