@@ -101,7 +101,7 @@ async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdm
   return enrichMachineQuantityPlanRows(planRows, machineSlots ?? []);
 }
 
-const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at, sync_attempt_count, last_sync_attempt_at, last_sync_error, auto_sync_eligible";
+const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at, sync_attempt_count, last_sync_attempt_at, last_sync_error, auto_sync_eligible, updated_at";
 
 function normalizeEvidenceFiles(value: unknown, routeId: string, stopId: string, now: string): MachineQuantityEvidenceFile[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
@@ -302,7 +302,7 @@ export async function POST(
         context.stop,
         rows,
         async (preparedRows) => {
-          const { error: targetSaveError } = await context.admin
+          const { data: claimed, error: targetSaveError } = await context.admin
             .from("route_stop_quantity_confirmations")
             .update({
               quantity_rows: preparedRows,
@@ -311,8 +311,26 @@ export async function POST(
               updated_at: attemptedAt,
             })
             .eq("route_stop_id", stopId)
-            .in("verification_status", ["offline_pending", "xy_sync_pending"]);
+            .eq("updated_at", existing.updated_at)
+            .in("verification_status", ["offline_pending", "xy_sync_pending"])
+            .select("quantity_rows")
+            .maybeSingle();
           if (targetSaveError) throw targetSaveError;
+          if (claimed?.quantity_rows && Array.isArray(claimed.quantity_rows)) {
+            return claimed.quantity_rows as XySyncMachineQuantityRow[];
+          }
+
+          const { data: current, error: currentError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .select("quantity_rows")
+            .eq("route_stop_id", stopId)
+            .single();
+          if (currentError) throw currentError;
+          const canonicalRows = Array.isArray(current.quantity_rows)
+            ? current.quantity_rows as XySyncMachineQuantityRow[]
+            : [];
+          if (!canonicalRows.length) throw new Error("The saved refill target changed during XY synchronization.");
+          return canonicalRows;
         },
       );
       const verified = syncResult.status === "verified";
@@ -396,10 +414,15 @@ export async function POST(
             resolved_by_user_id: null,
             updated_at: now,
           };
-          const { error: targetSaveError } = await context.admin
+          const { data: targetRecord, error: targetSaveError } = await context.admin
             .from("route_stop_quantity_confirmations")
-            .upsert(provisionalRecord, { onConflict: "route_stop_id" });
+            .upsert(provisionalRecord, { onConflict: "route_stop_id" })
+            .select("quantity_rows")
+            .single();
           if (targetSaveError) throw targetSaveError;
+          return Array.isArray(targetRecord.quantity_rows)
+            ? targetRecord.quantity_rows as XySyncMachineQuantityRow[]
+            : preparedRows;
         },
       );
       await logSyncAttempt(context.admin, context, routeId, stopId, syncResult);
