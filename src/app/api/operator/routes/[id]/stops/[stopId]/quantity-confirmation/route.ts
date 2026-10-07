@@ -43,7 +43,7 @@ function isMissingEvidenceSchema(error: unknown) {
   const row = error as { code?: unknown; message?: unknown } | null;
   const message = String(row?.message ?? "");
   return (row?.code === "42703" || row?.code === "PGRST204")
-    && ["verification_status", "evidence_files", "offline_reason", "submitted_at", "sync_attempt_count", "last_sync_attempt_at", "last_sync_error"].some((column) => message.includes(column));
+    && ["verification_status", "evidence_files", "offline_reason", "submitted_at", "sync_attempt_count", "last_sync_attempt_at", "last_sync_error", "auto_sync_eligible"].some((column) => message.includes(column));
 }
 
 function errorMessage(error: unknown) {
@@ -100,7 +100,7 @@ async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdm
   return enrichMachineQuantityPlanRows(planRows, machineSlots ?? []);
 }
 
-const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at, sync_attempt_count, last_sync_attempt_at, last_sync_error";
+const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at, sync_attempt_count, last_sync_attempt_at, last_sync_error, auto_sync_eligible";
 
 function normalizeEvidenceFiles(value: unknown, routeId: string, stopId: string, now: string): MachineQuantityEvidenceFile[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
@@ -283,6 +283,13 @@ export async function POST(
       if (!existing || !["offline_pending", "xy_sync_pending"].includes(String(existing.verification_status))) {
         return NextResponse.json({ success: false, code: "XY_SYNC_NOT_PENDING", error: "This refill is not waiting for an XY quantity update." }, { status: 409 });
       }
+      if (existing.auto_sync_eligible !== true) {
+        return NextResponse.json({
+          success: false,
+          code: "LEGACY_OFFLINE_REVIEW_REQUIRED",
+          error: "This is a legacy power-off record from before automatic XY sync. Review it manually; Snacky will not write an old saved quantity into the current machine.",
+        }, { status: 409 });
+      }
 
       const rows = Array.isArray(existing.quantity_rows) ? existing.quantity_rows : [];
       const syncResult = await syncRowsForContext(context.admin, context.stop, rows);
@@ -296,6 +303,7 @@ export async function POST(
           sync_attempt_count: Number(existing.sync_attempt_count ?? 0) + 1,
           last_sync_attempt_at: attemptedAt,
           last_sync_error: verified ? null : (syncResult.message ?? "XY has not confirmed this refill yet."),
+          auto_sync_eligible: !verified,
           resolved_at: verified ? attemptedAt : null,
           resolved_by_user_id: verified ? context.profile.id : null,
           updated_at: attemptedAt,
@@ -363,6 +371,7 @@ export async function POST(
       sync_attempt_count: mode === "xy_api" ? 1 : 0,
       last_sync_attempt_at: mode === "xy_api" ? now : null,
       last_sync_error: syncPending ? (syncResult?.message ?? "XY has not confirmed this refill yet.") : null,
+      auto_sync_eligible: syncPending || mode === "machine_offline",
       resolved_at: syncVerified ? now : null,
       resolved_by_user_id: syncVerified ? context.profile.id : null,
       updated_at: now,
