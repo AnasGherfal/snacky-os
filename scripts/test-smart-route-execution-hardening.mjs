@@ -231,5 +231,5 @@ test("offline XY changes are durable, gated by physical safety, and retried by s
   assert.match(quantityCard, /saveMode\("sync_pending"\)/);
   assert.match(quantityCard, /Photos are optional/);
   assert.match(operatorLayout, /OperatorHomeShortcuts/);
-  assert.match(homeShortcuts, /\/operator\/routes/);
+  assert.match(homeShortcuts, /usePathname/);
 });
