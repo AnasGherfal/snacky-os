@@ -20,6 +20,7 @@ type SmartRouteSlotAllocationPayload = {
   current_qty?: number;
   observed_current_qty?: number;
   target_qty?: number;
+  capacity?: number;
   recommended_take_qty?: number;
   final_take_qty?: number;
   allocation_kind?: "slot";
@@ -478,6 +479,7 @@ export async function POST(request: Request) {
         current_qty: planQuantity(allocation?.current_qty),
         observed_current_qty: planQuantity(allocation?.observed_current_qty),
         target_qty: planQuantity(allocation?.target_qty),
+        capacity: planQuantity(allocation?.capacity),
         recommended_take_qty: planQuantity(allocation?.recommended_take_qty),
         final_take_qty: planQuantity(allocation?.final_take_qty),
         allocation_kind: "slot" as const,
