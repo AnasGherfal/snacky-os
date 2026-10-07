@@ -196,5 +196,12 @@ test("Smart Pickup apply is atomic planning only and leaves storage deduction to
   assert.match(applyMigration, /'smart_ai_plan'/);
   assert.doesNotMatch(applyMigration, /insert into public\.inventory_movements/i);
   assert.doesNotMatch(applyMigration, /update public\.inventory/i);
+  assert.match(applyMigration, /security invoker/);
+  assert.match(applyMigration, /set search_path = pg_catalog/);
+  assert.match(applyMigration, /route_stop_items_source_check/);
+  assert.match(applyMigration, /refill_order_lines_source_check/);
+  assert.match(applyMigration, /'smart_ai_plan'::text/);
+  assert.match(applyMigration, /recommended_take_qty/);
+  assert.match(applyMigration, /final_take_qty/);
   assert.match(applyMigration, /grant execute on function public\.snacky_apply_smart_route_plan_v1\(uuid, jsonb\) to service_role/);
 });
