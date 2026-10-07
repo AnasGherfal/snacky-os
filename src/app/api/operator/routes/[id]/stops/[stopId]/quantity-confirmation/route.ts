@@ -125,6 +125,27 @@ function validateFilledItems(value: unknown) {
     if (!isUuid(row?.productId)) return `Filled row ${index + 1} has an invalid product.`;
     const quantity = Number(row?.quantity);
     if (!Number.isSafeInteger(quantity) || quantity < 0) return `Filled row ${index + 1} must have a whole quantity of zero or more.`;
+
+    if (row.slotQuantities !== undefined && row.slotQuantities !== null) {
+      if (!Array.isArray(row.slotQuantities) || row.slotQuantities.length > 100) {
+        return `Filled row ${index + 1} has invalid lane quantities.`;
+      }
+      const seen = new Set<string>();
+      let slotTotal = 0;
+      for (const [slotIndex, slot] of row.slotQuantities.entries()) {
+        const machineSlotId = clean(slot?.machineSlotId);
+        const slotCode = clean(slot?.slotCode);
+        const slotQuantity = Number(slot?.quantity);
+        if (!machineSlotId && !slotCode) return `Lane ${slotIndex + 1} on filled row ${index + 1} is missing its lane id.`;
+        if (machineSlotId && !isUuid(machineSlotId)) return `Lane ${slotIndex + 1} on filled row ${index + 1} has an invalid lane id.`;
+        if (!Number.isSafeInteger(slotQuantity) || slotQuantity < 0) return `Lane ${slotIndex + 1} on filled row ${index + 1} must have a whole quantity of zero or more.`;
+        const key = machineSlotId || `slot:${slotCode}`;
+        if (seen.has(key)) return `Filled row ${index + 1} contains the same lane more than once.`;
+        seen.add(key);
+        slotTotal += slotQuantity;
+      }
+      if (slotTotal !== quantity) return `Lane quantities on filled row ${index + 1} must add up to the filled product quantity.`;
+    }
   }
   return null;
 }
