@@ -2252,6 +2252,11 @@ export default function MachineStopPage() {
                 const returnReady = active && smartReturnReadyFor(requirement);
                 const liveSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
                 const xyReady = active && liveSlot?.productId === requirement.targetProductId;
+                const xyQueued = active && (stopData.queuedXyChanges ?? []).some((row) => (
+                  row.slot_code === requirement.slotCode
+                  && row.target_product_id === requirement.targetProductId
+                  && row.status === "pending"
+                ));
                 const savingKey = `${requirement.slotCode}:${requirement.fromProductId}`;
                 return (
                   <article key={`${requirement.slotCode}:${requirement.targetProductId}`} className="rounded-xl border border-violet-200 bg-white p-4">
@@ -2266,7 +2271,7 @@ export default function MachineStopPage() {
                         </div>
                       </div>
                       <span className={active ? (returnReady && xyReady ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800" : "rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900") : "rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"}>
-                        {!active ? tr("Skipped — fill is 0", "متروك — التعبئة 0") : returnReady && xyReady ? tr("Ready to fill", "جاهز للتعبئة") : tr("Action required", "يتطلب إجراء")}
+                        {!active ? tr("Skipped — fill is 0", "متروك — التعبئة 0") : returnReady && xyReady ? tr("Ready to fill", "جاهز للتعبئة") : returnReady && xyQueued ? tr("Saved for XY reconnect — keep lane disabled", "محفوظ إلى عودة XY — أبقِ الخانة معطلة") : tr("Action required", "يتطلب إجراء")}
                       </span>
                     </div>
                     {active ? (
@@ -2286,7 +2291,7 @@ export default function MachineStopPage() {
                         <button
                           type="button"
                           className={xyReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-secondary min-h-11"}
-                          disabled={!returnReady || xyReady}
+                          disabled={!returnReady || xyReady || xyQueued}
                           onClick={() => {
                             setXySwapSourceSlotCode(null);
                             setXySwapTargetSlotCode("");
@@ -2300,7 +2305,7 @@ export default function MachineStopPage() {
                             setXyChangeSuccess("");
                           }}
                         >
-                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
+                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : xyQueued ? tr("Queued safely — reconnect pending", "تم الحفظ — بانتظار عودة الاتصال") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
                         </button>
                       </div>
                     ) : null}
