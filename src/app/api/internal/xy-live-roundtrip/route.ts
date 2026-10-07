@@ -95,10 +95,6 @@ async function restoreBaseline(vmsMachineId: string, baseline: XySlotState) {
 }
 
 export async function POST(request: Request) {
-  if (!authorized(request)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-
   let body: Record<string, unknown> = {};
   try {
     body = await request.json() as Record<string, unknown>;
@@ -112,6 +108,50 @@ export async function POST(request: Request) {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     return NextResponse.json({ ok: false, error: "Supabase admin client unavailable" }, { status: 503 });
+  }
+
+  if (!authorized(request)) {
+    const nonce = clean(body.nonce);
+    if (!nonce) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const armedSince = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: armed, error: armedError } = await admin
+      .from("system_activity_logs")
+      .select("id, created_at")
+      .eq("action", "xy_live_roundtrip_armed")
+      .contains("metadata", { nonce })
+      .gte("created_at", armedSince)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (armedError || !armed) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { count: consumed, error: consumedError } = await admin
+      .from("system_activity_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("action", "xy_live_roundtrip_consumed")
+      .contains("metadata", { nonce });
+    if (consumedError) {
+      return NextResponse.json({ ok: false, error: "Could not validate one-time authorization." }, { status: 503 });
+    }
+    if ((consumed ?? 0) > 0) {
+      return NextResponse.json({ ok: false, error: "One-time authorization was already consumed." }, { status: 409 });
+    }
+
+    const { error: consumeError } = await admin.from("system_activity_logs").insert({
+      action: "xy_live_roundtrip_consumed",
+      entity_type: "machine_xy_layout",
+      entity_label: "One-time live XY verification authorization",
+      metadata: { nonce, armed_log_id: armed.id, run_key: RUN_KEY },
+      summary: "Consumed one-time authorization for live XY round-trip verification",
+    });
+    if (consumeError) {
+      return NextResponse.json({ ok: false, error: "Could not consume one-time authorization." }, { status: 503 });
+    }
   }
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
