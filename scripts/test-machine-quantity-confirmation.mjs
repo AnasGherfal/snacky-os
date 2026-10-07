@@ -141,6 +141,8 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   assert.match(api, /xy_sync_pending/);
   assert.match(api, /retry_pending/);
   assert.match(api, /last_sync_error/);
+  assert.match(api, /auto_sync_eligible/);
+  assert.match(api, /LEGACY_OFFLINE_REVIEW_REQUIRED/);
   assert.match(api, /xy_api_verified/);
 
   assert.match(writer, /setXySlotProduct/);
@@ -151,6 +153,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
 
   assert.match(pendingWorker, /offline_pending/);
   assert.match(pendingWorker, /xy_sync_pending/);
+  assert.match(pendingWorker, /auto_sync_eligible/);
   assert.match(pendingWorker, /syncMachineQuantityRowsToXy/);
   assert.match(pendingWorker, /verification_status: "xy_api_verified"/);
   assert.match(cron, /retryPendingXyQuantitySyncs/);
@@ -160,6 +163,7 @@ test("operator checkpoint pushes quantities through Snacky OS and queues offline
   assert.match(queueMigration, /sync_attempt_count/);
   assert.match(queueMigration, /last_sync_attempt_at/);
   assert.match(queueMigration, /last_sync_error/);
+  assert.match(queueMigration, /auto_sync_eligible boolean not null default false/);
   assert.doesNotMatch(queueMigration, /delete\s+from|truncate\s+table|drop\s+table/i);
 
   assert.match(ownerQueue, /xy_sync_pending/);
