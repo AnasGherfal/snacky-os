@@ -39,6 +39,7 @@ export function MachineQuantityConfirmationCard({
   const [savedRows, setSavedRows] = useState<MachineQuantityRow[]>([]);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [lastSyncError, setLastSyncError] = useState("");
+  const [autoSyncEligible, setAutoSyncEligible] = useState(false);
   const [showOffline, setShowOffline] = useState(false);
   const [offlineNote, setOfflineNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -71,6 +72,7 @@ export function MachineQuantityConfirmationCard({
         setOfflineNote(String(confirmation?.offline_reason ?? ""));
         setSavedAt(confirmation?.submitted_at ?? confirmation?.confirmed_at ?? null);
         setLastSyncError(String(confirmation?.last_sync_error ?? ""));
+        setAutoSyncEligible(confirmation?.auto_sync_eligible === true);
       })
       .catch(() => {
         if (!active) return;
@@ -104,6 +106,7 @@ export function MachineQuantityConfirmationCard({
     setSavedRows(nextRows);
     setOfflineNote(String(confirmation?.offline_reason ?? ""));
     setLastSyncError(String(confirmation?.last_sync_error ?? payload?.syncResult?.message ?? ""));
+    setAutoSyncEligible(confirmation?.auto_sync_eligible === true);
     setSavedAt(confirmation?.submitted_at ?? confirmation?.confirmed_at ?? new Date().toISOString());
     setShowOffline(false);
     onStateChangeRef.current?.({ installed: true, ready: true });
@@ -245,15 +248,24 @@ export function MachineQuantityConfirmationCard({
 
       {pending ? (
         <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm text-amber-950">
-          <div className="font-semibold">{tr("Refill saved in Snacky OS — waiting for XY", "تم حفظ التعبئة في Snacky OS — بانتظار XY")}</div>
+          <div className="font-semibold">
+            {autoSyncEligible
+              ? tr("Refill saved in Snacky OS — waiting for XY", "تم حفظ التعبئة في Snacky OS — بانتظار XY")
+              : tr("Legacy power-off record — manual review", "سجل قديم لانقطاع الكهرباء — يحتاج مراجعة يدوية")}
+          </div>
           <p className="mt-1 leading-6">
-            {tr(
-              "You can finish this stop. Snacky will retry automatically when the XY sync runs; it will only mark this synced after XY confirms the quantities.",
-              "يمكنك إنهاء هذا الموقع. سيعيد سناكي المحاولة تلقائياً عند مزامنة XY، ولن يعتبرها متزامنة إلا بعد أن يؤكد XY الكميات.",
-            )}
+            {autoSyncEligible
+              ? tr(
+                  "You can finish this stop. Snacky retries this saved refill automatically and only marks it synced after XY confirms the quantities.",
+                  "يمكنك إنهاء هذا الموقع. يعيد سناكي محاولة هذه التعبئة المحفوظة تلقائياً ولا يعتبرها متزامنة إلا بعد أن يؤكد XY الكميات.",
+                )
+              : tr(
+                  "This record was created before automatic XY sync. Snacky will not push an old quantity into the current machine automatically.",
+                  "تم إنشاء هذا السجل قبل المزامنة التلقائية مع XY. لن يرسل سناكي كمية قديمة إلى الجهاز الحالي تلقائياً.",
+                )}
           </p>
           {lastSyncError ? <p className="mt-2 text-xs text-amber-800">{lastSyncError}</p> : null}
-          {!completed ? (
+          {autoSyncEligible && !completed ? (
             <button type="button" onClick={() => void retryPending()} disabled={saving} className="btn-secondary mt-3 w-full disabled:opacity-50">
               {saving ? tr("Checking XY...", "جارٍ التحقق من XY...") : tr("Retry XY now", "إعادة محاولة XY الآن")}
             </button>
