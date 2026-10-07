@@ -283,7 +283,7 @@ export async function POST(
       if (!existing || !["offline_pending", "xy_sync_pending"].includes(String(existing.verification_status))) {
         return NextResponse.json({ success: false, code: "XY_SYNC_NOT_PENDING", error: "This refill is not waiting for an XY quantity update." }, { status: 409 });
       }
-      if (existing.auto_sync_eligible !== true) {
+      if (existing.auto_sync_eligible !== true && existing.verification_status === "offline_pending") {
         return NextResponse.json({
           success: false,
           code: "LEGACY_OFFLINE_REVIEW_REQUIRED",
@@ -303,7 +303,7 @@ export async function POST(
           sync_attempt_count: Number(existing.sync_attempt_count ?? 0) + 1,
           last_sync_attempt_at: attemptedAt,
           last_sync_error: verified ? null : (syncResult.message ?? "XY has not confirmed this refill yet."),
-          auto_sync_eligible: !verified,
+          auto_sync_eligible: verified ? false : syncResult.status === "pending",
           resolved_at: verified ? attemptedAt : null,
           resolved_by_user_id: verified ? context.profile.id : null,
           updated_at: attemptedAt,
@@ -371,7 +371,7 @@ export async function POST(
       sync_attempt_count: mode === "xy_api" ? 1 : 0,
       last_sync_attempt_at: mode === "xy_api" ? now : null,
       last_sync_error: syncPending ? (syncResult?.message ?? "XY has not confirmed this refill yet.") : null,
-      auto_sync_eligible: syncPending || mode === "machine_offline",
+      auto_sync_eligible: mode === "machine_offline" || (syncPending && syncResult?.status === "pending"),
       resolved_at: syncVerified ? now : null,
       resolved_by_user_id: syncVerified ? context.profile.id : null,
       updated_at: now,
