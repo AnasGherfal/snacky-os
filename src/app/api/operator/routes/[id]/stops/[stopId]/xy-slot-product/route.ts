@@ -205,9 +205,20 @@ export async function POST(
   }
   if (pendingLane) {
     if (pendingLane.route_id === routeId && pendingLane.route_stop_id === stopId && pendingLane.target_product_id === productId) {
+      if (queueOnOffline && Number(pendingLane.target_stock_qty ?? -1) !== actualSlotQty) {
+        const { error: correctionError } = await admin.from("xy_pending_slot_changes")
+          .update({ target_stock_qty: actualSlotQty, updated_at: new Date().toISOString() })
+          .eq("id", pendingLane.id).eq("status", "pending");
+        if (correctionError) {
+          return NextResponse.json({
+            success: false, code: "XY_QUEUE_QUANTITY_UPDATE_FAILED",
+            error: "Could not update the saved lane quantity. Keep the lane disabled and ask an admin.",
+          }, { status: 409 });
+        }
+      }
       return NextResponse.json({
         success: true, verified: false, queued: true, queueId: pendingLane.id,
-        error: null, message: "Your XY product change is already saved. Snacky will retry it after this stop is completed and XY reconnects.",
+        error: null, message: "Your XY product change is saved. Snacky will retry it after this stop is completed and XY reconnects.",
       }, { status: 202 });
     }
     return NextResponse.json({
