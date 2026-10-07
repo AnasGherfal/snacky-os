@@ -40,19 +40,18 @@ export async function POST(
   const slotCode = String(body.slotCode ?? "").trim();
   const productId = String(body.productId ?? "").trim();
   const smartRouteSwapRequested = body.smartRouteSwap === true;
-  const queueOnOffline = body.queueOnOffline === true;
-  const actualSlotQty = Number(body.actualSlotQty);
-  if (queueOnOffline && (
-    body.physicalChangeConfirmed !== true
-    || body.laneDisabledConfirmed !== true
-    || !Number.isSafeInteger(actualSlotQty)
-    || actualSlotQty < 0
-  )) {
-    return NextResponse.json({
-      success: false, code: "PHYSICAL_CONFIRMATION_REQUIRED",
-      error: "Confirm the physical replacement, that the lane is disabled from selling, and the actual number of new items inside the lane.",
-    }, { status: 400 });
-  }
+  // A normal change is a *desired catalogue selection*, not evidence that
+  // somebody physically emptied/refilled a lane. To keep it one tap, retry
+  // automatically while forcing the new mapping's sellable quantity to ZERO.
+  // Smart Route execution still follows its stricter physical-return workflow.
+  const verifiedPhysicalSwap = body.physicalChangeConfirmed === true
+    && body.laneDisabledConfirmed === true
+    && Number.isSafeInteger(Number(body.actualSlotQty))
+    && Number(body.actualSlotQty) >= 0;
+  const queueOnOffline = body.queueOnOffline !== false
+    && (!smartRouteSwapRequested || verifiedPhysicalSwap);
+  const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap;
+  const actualSlotQty = verifiedPhysicalSwap ? Number(body.actualSlotQty) : 0;
   if (!slotCode || !isUuid(productId)) {
     return NextResponse.json({ success: false, error: "Choose a valid slot and product." }, { status: 400 });
   }
@@ -189,8 +188,8 @@ export async function POST(
       error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
     }, { status: 409 });
   }
-  const targetStockQty = queueOnOffline ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
-  if (queueOnOffline && (targetStockQty > 500 || (beforeSlot.capacity !== null && targetStockQty > beforeSlot.capacity))) {
+  const targetStockQty = zeroStockRelabel ? 0 : queueOnOffline ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
+  if (targetStockQty > 500 || (beforeSlot.capacity !== null && targetStockQty > beforeSlot.capacity)) {
     return NextResponse.json({ success: false, code: "XY_CAPACITY_EXCEEDED", error: "Actual lane stock exceeds the XY lane capacity." }, { status: 400 });
   }
 
@@ -205,7 +204,7 @@ export async function POST(
   }
   if (pendingLane) {
     if (pendingLane.route_id === routeId && pendingLane.route_stop_id === stopId && pendingLane.target_product_id === productId) {
-      if (queueOnOffline && Number(pendingLane.target_stock_qty ?? -1) !== actualSlotQty) {
+      if (queueOnOffline && verifiedPhysicalSwap && Number(pendingLane.target_stock_qty ?? -1) !== actualSlotQty) {
         const { error: correctionError } = await admin.from("xy_pending_slot_changes")
           .update({ target_stock_qty: actualSlotQty, updated_at: new Date().toISOString() })
           .eq("id", pendingLane.id).eq("status", "pending");
@@ -218,7 +217,7 @@ export async function POST(
       }
       return NextResponse.json({
         success: true, verified: false, queued: true, queueId: pendingLane.id,
-        error: null, message: "Your XY product change is saved. Snacky will retry it after this stop is completed and XY reconnects.",
+        error: null, message: "Change saved in Snacky. XY will be retried automatically after reconnecting. Sellable stock will remain zero until the lane is physically checked/refilled.",
       }, { status: 202 });
     }
     return NextResponse.json({
@@ -323,9 +322,10 @@ export async function POST(
         target_product_id: product.id,
         target_vms_product_id: targetVmsProductId,
         target_price_lyd: priceLyd,
-        target_stock_qty: actualSlotQty,
-        physical_change_confirmed: true,
-        lane_disabled_confirmed: true,
+        target_stock_qty: zeroStockRelabel ? 0 : actualSlotQty,
+        physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
+        lane_disabled_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
+        zero_stock_relabel: zeroStockRelabel,
         smart_route_swap: Boolean(smartRouteSwap),
         created_by_user_id: profile.id,
       }).select("id").single();
@@ -337,7 +337,7 @@ export async function POST(
       }
       return NextResponse.json({
         success: true, verified: false, queued: true, queueId: queued.id,
-        message: "Saved. After this stop is completed, Snacky retries when XY reconnects. Keep the lane disabled from vending until an admin sees XY verified.",
+        message: "Saved in Snacky. XY will retry automatically. The new product starts with zero sellable units until the lane is physically verified and refilled.",
       }, { status: 202 });
     }
     return NextResponse.json({
