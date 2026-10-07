@@ -59,7 +59,8 @@ test("planned product changes return old stock before XY replacement and never m
 test("AI can choose only backend-provided candidates and invalid choices fall back safely", () => {
   assert.match(planner, /Never invent a product ID/);
   assert.match(planner, /task\.candidates\.find\(\(row\) => row\.productId === String\(decision\?\.selectedProductId/);
-  assert.match(planner, /fallbackDecision\(task\)/);
+  assert.match(planner, /fallbackDecision\(\{/);
+  assert.match(planner, /next highest-ranked compatible in-stock product/);
   assert.match(planner, /plannerMode: "ai" \| "deterministic_fallback"/);
 });
 
