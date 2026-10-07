@@ -41,7 +41,8 @@ export function MachineQuantityConfirmationCard({
   // Older admin-created routes can hold product totals without a lane map.
   // Never guess how many items to write into individual XY lanes.
   const missingExactXyLanes = rows.filter((row) => !row.machineSlotId && ["", "VMS", "VMS item"].includes(row.slotCode));
-  const canSyncDirectlyWithXy = missingExactXyLanes.length === 0;
+  const missingOriginalLanePlan = items.some((item) => item.hasExactLanePlan === false && Number(item.filledQty ?? 0) > 0);
+  const canSyncDirectlyWithXy = missingExactXyLanes.length === 0 && !missingOriginalLanePlan;
   const [installed, setInstalled] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
