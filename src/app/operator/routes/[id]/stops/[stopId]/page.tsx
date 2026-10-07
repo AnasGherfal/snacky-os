@@ -219,6 +219,16 @@ interface InventoryAdjustmentRow {
   createdAt: string | null;
 }
 
+type SmartSwapRequirement = {
+  laneKey: string;
+  slotCode: string;
+  fromProductId: string;
+  fromProductName: string;
+  targetProductId: string;
+  targetProductName: string;
+  returnQty: number;
+};
+
 interface MachineStorageStockRow {
   id: string;
   machineId: string | null;
@@ -708,6 +718,7 @@ export default function MachineStopPage() {
   const [xySwapSaving, setXySwapSaving] = useState(false);
   const [xySwapError, setXySwapError] = useState("");
   const [xySwapSuccess, setXySwapSuccess] = useState("");
+  const [smartReturnSavingKey, setSmartReturnSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
     const editorOpen = Boolean(xyEditSlotCode || xySwapSourceSlotCode);
@@ -811,6 +822,68 @@ export default function MachineStopPage() {
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
   const machineLayoutRows = useMemo(() => groupMachineLayoutRows(stopData?.machineLayout ?? []), [stopData?.machineLayout]);
+  const smartSwapRequirements = useMemo<SmartSwapRequirement[]>(() => {
+    if (!stopData) return [];
+    const requirements: SmartSwapRequirement[] = [];
+    stopData.refillItems.forEach((item) => {
+      (item.slotAllocations ?? []).forEach((allocation) => {
+        const fromProductId = String(allocation.from_product_id ?? "").trim();
+        const returnQty = Math.max(0, Math.floor(Number(allocation.return_current_qty ?? 0)));
+        const slotCode = String(allocation.slot_code ?? item.slotCode ?? "").trim();
+        if (
+          allocation.substituted !== true
+          || allocation.transition_mode !== "replace_now"
+          || !fromProductId
+          || !slotCode
+          || returnQty <= 0
+        ) return;
+        requirements.push({
+          laneKey: laneFillKey(item.productId, allocation),
+          slotCode,
+          fromProductId,
+          fromProductName: String(allocation.from_product_name ?? "Previous product").trim() || "Previous product",
+          targetProductId: item.productId,
+          targetProductName: item.productName,
+          returnQty,
+        });
+      });
+    });
+    return requirements;
+  }, [stopData]);
+
+  const activeSmartSwapRequirements = useMemo(
+    () => smartSwapRequirements.filter((requirement) => Math.max(0, Number(laneFilledQtys[requirement.laneKey] ?? 0)) > 0),
+    [laneFilledQtys, smartSwapRequirements],
+  );
+  const smartRequiredReturnByProduct = useMemo(() => {
+    const totals = new Map<string, number>();
+    activeSmartSwapRequirements.forEach((requirement) => {
+      totals.set(requirement.fromProductId, (totals.get(requirement.fromProductId) ?? 0) + requirement.returnQty);
+    });
+    return totals;
+  }, [activeSmartSwapRequirements]);
+  const smartReturnedQtyByProduct = useMemo(() => {
+    const totals = new Map<string, number>();
+    (stopData?.adjustments ?? []).forEach((adjustment) => {
+      if (
+        adjustment.adjustmentType !== "returned_from_machine"
+        || adjustment.reason !== "Product replaced"
+        || !String(adjustment.notes ?? "").startsWith("Smart Route product swap")
+        || !adjustment.productId
+      ) return;
+      totals.set(adjustment.productId, (totals.get(adjustment.productId) ?? 0) + Math.max(0, Number(adjustment.quantity ?? 0)));
+    });
+    return totals;
+  }, [stopData?.adjustments]);
+  const smartReturnReadyFor = (requirement: SmartSwapRequirement) => (
+    (smartReturnedQtyByProduct.get(requirement.fromProductId) ?? 0)
+      >= (smartRequiredReturnByProduct.get(requirement.fromProductId) ?? requirement.returnQty)
+  );
+  const unresolvedSmartReturnRequirements = activeSmartSwapRequirements.filter((requirement) => !smartReturnReadyFor(requirement));
+  const unresolvedSmartXyRequirements = activeSmartSwapRequirements.filter((requirement) => {
+    const liveSlot = (stopData?.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
+    return liveSlot?.productId !== requirement.targetProductId;
+  });
   const machineStorageStockRows = stopData?.machineStorageStock ?? [];
   const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
   const machineStorageStockUnits = machineStorageStockRows.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
@@ -881,7 +954,14 @@ export default function MachineStopPage() {
       const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`, {
         method: "POST",
         headers: { "content-type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ slotCode: xyEditSlotCode, productId: xyReplacementProductId }),
+        body: JSON.stringify({
+          slotCode: xyEditSlotCode,
+          productId: xyReplacementProductId,
+          smartRouteSwap: activeSmartSwapRequirements.some((requirement) => (
+            requirement.slotCode === xyEditSlotCode
+            && requirement.targetProductId === xyReplacementProductId
+          )),
+        }),
       }, 30000);
       const parsed = await readServerResponse(response, {
         operation: "operator_xy_slot_product_change",
@@ -933,7 +1013,7 @@ export default function MachineStopPage() {
     } finally {
       setXyChangeSaving(false);
     }
-  }, [fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
+  }, [activeSmartSwapRequirements, fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
 
   const applyXySlotSwap = useCallback(async () => {
     if (!routeId || !stopId || !xySwapSourceSlotCode || !xySwapTargetSlotCode || !stopData) return;
@@ -1204,6 +1284,59 @@ export default function MachineStopPage() {
     }
   };
 
+  const recordSmartRouteReturn = async (requirement: SmartSwapRequirement) => {
+    const returnKey = `${requirement.slotCode}:${requirement.fromProductId}`;
+    if (smartReturnSavingKey) return;
+    setSmartReturnSavingKey(returnKey);
+    setError("");
+    try {
+      const clientSubmissionId = `smart-route-return:v1:${routeId}:${stopId}:${requirement.slotCode}:${requirement.fromProductId}`;
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/smart-return`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: requirement.fromProductId,
+          quantity: requirement.returnQty,
+          slotCode: requirement.slotCode,
+          clientSubmissionId,
+        }),
+      });
+      const parsed = await readServerResponse(response, {
+        operation: "operator_smart_route_return",
+        route_id: routeId,
+        route_stop_id: stopId,
+        slot_code: requirement.slotCode,
+        product_id: requirement.fromProductId,
+      });
+      if (!response.ok || parsed.payload?.success === false || !parsed.payload?.adjustment) {
+        throw new Error(responseMessage(parsed.payload) || tr("Could not record the Smart Route return.", "تعذر تسجيل المنتج الراجع لخطة الجولة الذكية."));
+      }
+
+      const row = parsed.payload.adjustment as Record<string, unknown>;
+      const savedAdjustment: InventoryAdjustmentRow = {
+        id: String(row.id ?? clientSubmissionId),
+        adjustmentType: String(row.adjustment_type ?? "returned_from_machine"),
+        productId: row.product_id ? String(row.product_id) : requirement.fromProductId,
+        productName: String(row.product_name ?? requirement.fromProductName),
+        quantity: Number(row.quantity ?? requirement.returnQty),
+        reason: String(row.reason ?? "Product replaced"),
+        notes: String(row.notes ?? ""),
+        photoUrl: null,
+        status: String(row.status ?? "confirmed"),
+        createdAt: String(row.created_at ?? new Date().toISOString()),
+      };
+      setStopData((current) => current ? {
+        ...current,
+        adjustments: [savedAdjustment, ...(current.adjustments ?? []).filter((adjustment) => adjustment.id !== savedAdjustment.id)],
+      } : current);
+    } catch (returnError) {
+      setError(returnError instanceof Error ? returnError.message : tr("Could not record the Smart Route return.", "تعذر تسجيل المنتج الراجع لخطة الجولة الذكية."));
+    } finally {
+      setSmartReturnSavingKey(null);
+    }
+  };
+
   const addExtraProduct = () => {
     setExtraProducts((prev) => [...prev, { id: newClientId(), productId: "", quantity: 0, reason: "extra_stock_left_at_machine", notes: "" }]);
   };
@@ -1260,6 +1393,22 @@ export default function MachineStopPage() {
     }
     if (!finalPhotoFile && !canReuseCompletedProof) {
       setError(tr("Please take or upload the final machine photo before completing the stop.", "التقط أو ارفع الصورة النهائية للجهاز قبل إنهاء الموقع."));
+      return;
+    }
+    if (unresolvedSmartReturnRequirements.length && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr(
+        "Record every required old-product return before completing this Smart Route stop.",
+        "سجّل كل المنتجات القديمة المطلوب إرجاعها قبل إنهاء موقع الجولة الذكية.",
+      ));
+      document.getElementById("smart-route-changes")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (unresolvedSmartXyRequirements.length && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr(
+        "Update and verify every executed Smart Route product change in XY before completing this stop.",
+        "حدّث وتحقق من كل تغيير منتج تم تنفيذه في XY قبل إنهاء هذا الموقع.",
+      ));
+      document.getElementById("smart-route-changes")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     if (compressorSafetyInstalled && !compressorProofReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
@@ -1965,6 +2114,84 @@ export default function MachineStopPage() {
             );
           })() : null}
         </section>
+
+        {smartSwapRequirements.length ? (
+          <section id="smart-route-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-violet-700">{tr("Smart Route product changes", "تغييرات منتجات الجولة الذكية")}</div>
+                <h2 className="mt-1 text-lg font-bold text-violet-950">{tr("Return old product → update XY → fill new product", "أرجع المنتج القديم ← حدّث XY ← عبّئ المنتج الجديد")}</h2>
+                <p className="mt-1 text-sm leading-6 text-violet-900">{tr(
+                  "These steps are enforced only for lanes you actually fill. Set a lane's actual fill to 0 if the planned swap cannot be executed today.",
+                  "تُفرض هذه الخطوات فقط على الخانات التي ستعبئها فعلياً. اجعل تعبئة الخانة 0 إذا تعذر تنفيذ التبديل اليوم.",
+                )}</p>
+              </div>
+              <span className="rounded-full bg-violet-700 px-3 py-1 text-xs font-bold text-white">
+                {activeSmartSwapRequirements.length} {tr("active", "نشط")}
+              </span>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {smartSwapRequirements.map((requirement) => {
+                const laneFill = Math.max(0, Number(laneFilledQtys[requirement.laneKey] ?? 0));
+                const active = laneFill > 0;
+                const returnReady = active && smartReturnReadyFor(requirement);
+                const liveSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
+                const xyReady = active && liveSlot?.productId === requirement.targetProductId;
+                const savingKey = `${requirement.slotCode}:${requirement.fromProductId}`;
+                return (
+                  <article key={`${requirement.slotCode}:${requirement.targetProductId}`} className="rounded-xl border border-violet-200 bg-white p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-slate-950">{tr("Lane", "الخانة")} {requirement.slotCode}</div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          {requirement.fromProductName} → <strong>{requirement.targetProductName}</strong>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {tr("Planned new fill", "التعبئة الجديدة المخططة")}: {laneFill} · {tr("Old units to remove", "الوحدات القديمة المطلوب إخراجها")}: {requirement.returnQty}
+                        </div>
+                      </div>
+                      <span className={active ? (returnReady && xyReady ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800" : "rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900") : "rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"}>
+                        {!active ? tr("Skipped — fill is 0", "متروك — التعبئة 0") : returnReady && xyReady ? tr("Ready to fill", "جاهز للتعبئة") : tr("Action required", "يتطلب إجراء")}
+                      </span>
+                    </div>
+                    {active ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          className={returnReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-primary min-h-11"}
+                          disabled={returnReady || smartReturnSavingKey !== null}
+                          onClick={() => void recordSmartRouteReturn(requirement)}
+                        >
+                          {returnReady
+                            ? tr("Old product return recorded", "تم تسجيل إرجاع المنتج القديم")
+                            : smartReturnSavingKey === savingKey
+                              ? tr("Recording return...", "جارٍ تسجيل الإرجاع...")
+                              : tr(`I removed ${requirement.returnQty} × ${requirement.fromProductName}`, `أخرجت ${requirement.returnQty} × ${requirement.fromProductName}`)}
+                        </button>
+                        <button
+                          type="button"
+                          className={xyReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-secondary min-h-11"}
+                          disabled={!returnReady || xyReady}
+                          onClick={() => {
+                            setXySwapSourceSlotCode(null);
+                            setXySwapTargetSlotCode("");
+                            setXyEditSlotCode(requirement.slotCode);
+                            setXyReplacementProductId(requirement.targetProductId);
+                            setXyChangeError("");
+                            setXyChangeSuccess("");
+                          }}
+                        >
+                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
