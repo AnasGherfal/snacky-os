@@ -727,10 +727,6 @@ export default function MachineStopPage() {
   const [xyChangeSaving, setXyChangeSaving] = useState(false);
   const [xyChangeError, setXyChangeError] = useState("");
   const [xyChangeSuccess, setXyChangeSuccess] = useState("");
-  const [xyChangeOffline, setXyChangeOffline] = useState(false);
-  const [xyQueuePhysicalConfirmed, setXyQueuePhysicalConfirmed] = useState(false);
-  const [xyQueueLaneDisabled, setXyQueueLaneDisabled] = useState(false);
-  const [xyQueueActualQty, setXyQueueActualQty] = useState(0);
   const [xySwapSourceSlotCode, setXySwapSourceSlotCode] = useState<string | null>(null);
   const [xySwapTargetSlotCode, setXySwapTargetSlotCode] = useState("");
   const [xySwapSaving, setXySwapSaving] = useState(false);
@@ -953,7 +949,7 @@ export default function MachineStopPage() {
     }
   }, [fullProductCatalog, routeId, stopId]);
 
-  const applyXyProductChange = useCallback(async (queueOnOffline = false) => {
+  const applyXyProductChange = useCallback(async () => {
     if (!routeId || !stopId || !xyEditSlotCode || !xyReplacementProductId || !stopData) return;
 
     const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
@@ -980,10 +976,7 @@ export default function MachineStopPage() {
         body: JSON.stringify({
           slotCode: xyEditSlotCode,
           productId: xyReplacementProductId,
-          queueOnOffline,
-          physicalChangeConfirmed: queueOnOffline && xyQueuePhysicalConfirmed,
-          laneDisabledConfirmed: queueOnOffline && xyQueueLaneDisabled,
-          actualSlotQty: queueOnOffline ? xyQueueActualQty : undefined,
+          queueOnOffline: true,
           smartRouteSwap: activeSmartSwapRequirements.some((requirement) => (
             requirement.slotCode === xyEditSlotCode
             && requirement.targetProductId === xyReplacementProductId
@@ -1006,7 +999,7 @@ export default function MachineStopPage() {
               id: String(payload.queueId ?? `${xyEditSlotCode}:${xyReplacementProductId}`),
               slot_code: xyEditSlotCode,
               target_product_id: xyReplacementProductId,
-              target_stock_qty: xyQueueActualQty,
+              target_stock_qty: 0,
               status: "pending" as const,
               last_error: null,
             },
@@ -1014,17 +1007,17 @@ export default function MachineStopPage() {
           ],
         } : current);
         setXyChangeSuccess(tr(
-          "Change saved. Snacky will retry after this stop is completed and XY reconnects. Keep this lane disabled from selling until verified.",
-          "تم حفظ التغيير. سيعيد سناكي المحاولة بعد إنهاء الموقع وعودة اتصال XY. أبقِ هذه الخانة معطلة عن البيع حتى يتم التحقق.",
+          "Saved in Snacky. XY will update automatically when the machine reconnects. The new product starts with 0 sellable units until it is physically stocked.",
+          "تم حفظ التغيير في سناكي. سيتم تحديث XY تلقائياً عند عودة اتصال الجهاز. يبدأ المنتج الجديد بمخزون قابل للبيع يساوي صفراً حتى تتم تعبئته فعلياً.",
         ));
         setXyEditSlotCode(null);
         setXyReplacementProductId("");
-        setXyChangeOffline(false);
+        
         return;
       }
       if (!response.ok || payload?.verified !== true) {
         if (responseCode(payload) === "XY_MACHINE_OFFLINE") {
-          setXyChangeOffline(true);
+          
           throw new Error(tr(
             "XY reports that this machine is offline. No product was changed. If the machine has power, check its internet/SIM connection and retry when XY reconnects. Do not put the replacement product in this lane before XY confirms the change. Do not select 'Machine has no electricity' unless power is actually off.",
             "نظام XY يقول إن الجهاز غير متصل بالشبكة. لم يتغير المنتج. إذا كانت الكهرباء موجودة، تحقق من اتصال الإنترنت أو شريحة البيانات وأعد المحاولة بعد عودة اتصال XY. لا تضع المنتج البديل في هذه الخانة حتى يؤكد XY التغيير، ولا تختَر «لا توجد كهرباء» إلا إذا كانت الكهرباء مقطوعة فعلاً.",
@@ -1071,7 +1064,7 @@ export default function MachineStopPage() {
     } finally {
       setXyChangeSaving(false);
     }
-  }, [activeSmartSwapRequirements, fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId, xyQueuePhysicalConfirmed, xyQueueLaneDisabled, xyQueueActualQty]);
+  }, [activeSmartSwapRequirements, fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
 
   const applyXySlotSwap = useCallback(async () => {
     if (!routeId || !stopId || !xySwapSourceSlotCode || !xySwapTargetSlotCode || !stopData) return;
@@ -1708,8 +1701,8 @@ export default function MachineStopPage() {
           <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
             <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
             <p className="mt-1">{tr(
-              "Your requested changes are saved even if this page closes. Snacky retries after the stop is completed. Keep affected lanes disabled from selling until XY confirms them.",
-              "تم حفظ التغييرات حتى لو غادرت الصفحة. سيعيد سناكي المحاولة بعد إنهاء الموقع. أبقِ الخانات المعنية معطلة عن البيع حتى يؤكدها XY.",
+              "Your selection is saved even if you close the page. Snacky retries automatically when XY reconnects and sets the new product to zero sellable stock. Physically refill only after confirming the right product on the machine.",
+              "اختيارك محفوظ حتى لو أغلقت الصفحة. يحاول سناكي تلقائياً عند عودة اتصال XY، ويجعل مخزون المنتج الجديد القابل للبيع صفراً. عبّئ الخانة بعد التأكد من صحة المنتج في الجهاز.",
             )}</p>
             <div className="mt-2 space-y-1">
               {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
@@ -1871,10 +1864,10 @@ export default function MachineStopPage() {
                                     setXySwapSourceSlotCode(null);
                                     setXySwapTargetSlotCode("");
                                     setXyEditSlotCode(slot.slotCode);
-                                    setXyChangeOffline(false);
-                                    setXyQueuePhysicalConfirmed(false);
-                                    setXyQueueLaneDisabled(false);
-                                    setXyQueueActualQty(0);
+                                    
+                                    
+                                    
+                                    
                                     setXyReplacementProductId("");
                                     setXyChangeError("");
                                     setXyChangeSuccess("");
@@ -2094,10 +2087,10 @@ export default function MachineStopPage() {
               setXyEditSlotCode(null);
               setXyReplacementProductId("");
               setXyChangeError("");
-              setXyChangeOffline(false);
-              setXyQueuePhysicalConfirmed(false);
-              setXyQueueLaneDisabled(false);
-              setXyQueueActualQty(0);
+              
+              
+              
+              
             };
 
             return (
@@ -2198,34 +2191,6 @@ export default function MachineStopPage() {
                         {xyChangeError}
                       </div>
                     ) : null}
-                    {xyChangeOffline ? (
-                      <div className="mt-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">
-                        <h3 className="font-bold text-amber-950">{tr("Save change for when XY reconnects", "احفظ التغيير إلى حين عودة اتصال XY")}</h3>
-                        <p className="leading-6 text-amber-900">{tr(
-                          "For customer safety, only queue this after physically replacing the items AND disabling the lane from selling. If you cannot disable it, leave the old product and do not queue the change.",
-                          "لحماية الزبائن، لا تحفظ هذا الطلب إلا بعد استبدال المنتجات فعلياً وتعطيل بيع الخانة. إذا لم تتمكن من تعطيل البيع، اترك المنتج القديم ولا تحفظ التغيير.",
-                        )}</p>
-                        <label className="flex items-start gap-2">
-                          <input type="checkbox" checked={xyQueuePhysicalConfirmed} onChange={(event) => setXyQueuePhysicalConfirmed(event.target.checked)} />
-                          <span>{tr("I physically replaced the product in this lane.", "استبدلت المنتج داخل هذه الخانة فعلياً.")}</span>
-                        </label>
-                        <label className="flex items-start gap-2">
-                          <input type="checkbox" checked={xyQueueLaneDisabled} onChange={(event) => setXyQueueLaneDisabled(event.target.checked)} />
-                          <span>{tr("I disabled this lane from vending until XY verifies the change.", "عطلت البيع من هذه الخانة إلى أن يؤكد XY التغيير.")}</span>
-                        </label>
-                        <label className="block font-semibold">
-                          {tr("Actual NEW product units now inside this lane", "عدد وحدات المنتج الجديد الموجودة فعلياً في الخانة")}
-                          <input type="number" min={0} max={currentSlot?.capacity ?? 500} step={1} value={xyQueueActualQty}
-                            onChange={(event) => setXyQueueActualQty(Math.max(0, Math.floor(Number(event.target.value) || 0)))}
-                            className="field-input mt-1" />
-                        </label>
-                        <button type="button" className="btn-primary w-full min-h-12"
-                          disabled={xyChangeSaving || !xyQueuePhysicalConfirmed || !xyQueueLaneDisabled || !Number.isSafeInteger(xyQueueActualQty)}
-                          onClick={() => void applyXyProductChange(true)}>
-                          {tr("Save and retry automatically", "احفظ وأعد المحاولة تلقائياً")}
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
 
                   <div className="grid flex-none grid-cols-2 gap-3 border-t border-slate-200 bg-white p-4 sm:px-5">
@@ -2322,8 +2287,8 @@ export default function MachineStopPage() {
                             setXySwapTargetSlotCode("");
                             setXyEditSlotCode(requirement.slotCode);
                             setXyChangeOffline(xyQueued);
-                            setXyQueuePhysicalConfirmed(false);
-                            setXyQueueLaneDisabled(false);
+                            
+                            
                             setXyQueueActualQty((stopData.queuedXyChanges ?? []).find((row) => row.slot_code === requirement.slotCode)?.target_stock_qty ?? laneFill);
                             setXyReplacementProductId(requirement.targetProductId);
                             setXyChangeError("");
