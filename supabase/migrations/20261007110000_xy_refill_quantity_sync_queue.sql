@@ -1,5 +1,7 @@
 begin;
 
+set local lock_timeout = '5s';
+
 -- Direct Snacky OS -> XY refill synchronization.
 -- Keep the existing confirmation table as the durable queue instead of adding
 -- a second competing refill workflow.
