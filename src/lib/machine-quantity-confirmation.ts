@@ -20,6 +20,7 @@ export type MachineQuantitySourceItem = {
   currentQty?: unknown;
   assignedQty?: unknown;
   filledQty?: unknown;
+  hasExactLanePlan?: boolean;
   slotAllocations?: MachineQuantityAllocation[] | null;
   slotQuantities?: MachineQuantitySlotFill[] | null;
 };
