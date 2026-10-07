@@ -524,7 +524,7 @@ async function callPlannerAI(tasks: PlanTask[]) {
     "The candidate list is already filtered by storage, physical fit, and location hard rules.",
     "For an empty lane, do not default to the old SKU just for continuity. Treat the lane as merchandising space and choose the candidate most likely to sell before the next service.",
     "Every empty lane must receive a compatible in-stock candidate when one exists. Repeating the same strong product across multiple lanes is explicitly allowed and is better than preserving weak variety.",
-    "When transitionMode is replace_now, the original product has no warehouse stock and the planner has determined the lane should be changed before it empties. Choose the strongest compatible substitute; the operator will remove the remaining old units and return them to storage before changing the XY slot. Never mix old and new products in one lane.",
+    "When transitionMode is replace_now, Snacky has already determined that the lane should change now because the current SKU cannot be replenished or a compatible SKU has materially stronger verified local sales. Choose the strongest compatible substitute; the operator will remove the remaining old units and return them to storage before changing the XY slot. Never mix old and new products in one lane.",
     "When transitionMode is empty_lane, choose the strongest compatible product using verified transaction sales first: exact-machine sales, then same venue-type sales, then network sales. Use stock-depletion demand, storage coverage and route history as secondary evidence. The previous SKU receives only a small continuity preference.",
     "Respect preferred/avoid location signals. Avoid low-confidence novelty when a proven-fit seller exists.",
     "Give short operational reasons. Do not create routes or reserve stock; this is only a review draft.",
@@ -591,7 +591,7 @@ function fallbackDecision(task: PlanTask): AiDecision | null {
     reason: selected.original
       ? "Kept the current product and limited the quantity to verified unreserved storage."
       : task.transitionMode === "replace_now"
-        ? "The original product has no warehouse stock and this lane is in the transition zone, so use the highest-ranked compatible substitute before the lane runs empty."
+        ? "Smart Route marked this lane for a product change because stock availability or verified local sales favor a stronger compatible SKU; use the highest-ranked substitute and do not mix products."
         : "Used the highest-ranked compatible in-stock substitute for the empty lane.",
     confidence: selected.fitEvidence === "explicit_slot_rule" || selected.fitEvidence === "historically_seen_exact_slot" ? "high" : "medium",
   };
@@ -949,7 +949,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     const currentQty = units(stock.current_qty);
     const capacity = units(stock.capacity) || units(slotByKey.get(`${stock.machine_id}:${stock.slot_code}`)?.capacity);
     const refillNeededQty = Math.max(0, capacity - currentQty);
-    if (refillNeededQty <= 0 || capacity <= 0) continue;
+    if (capacity <= 0) continue;
     if (stock.captured_at && (!latestStockAt || Date.parse(stock.captured_at) > Date.parse(latestStockAt))) latestStockAt = stock.captured_at;
 
     const slot = slotByKey.get(`${stock.machine_id}:${stock.slot_code}`) ?? null;
@@ -970,18 +970,21 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     const expectedDepletionBeforeNextService = Math.max(0, Math.ceil(dailyVelocity * serviceIntervalDays));
     const transitionFloorQty = Math.max(2, Math.ceil(capacity * 0.5));
     const projectedQtyAtNextService = Math.max(0, currentQty - expectedDepletionBeforeNextService);
-    const replaceNow = originalAvailableUnits <= 0
+    const stockoutReplaceNow = originalAvailableUnits <= 0
       && currentQty > 0
       && (currentQty <= transitionFloorQty || projectedQtyAtNextService <= transitionFloorQty);
-    const transitionMode: PlanTask["transitionMode"] = currentQty === 0
-      ? "empty_lane"
-      : replaceNow
-        ? "replace_now"
-        : "none";
-    const allowSubstitution = transitionMode !== "none";
-    const neededQty = replaceNow ? capacity : refillNeededQty;
 
-    if (originalAvailableUnits <= 0 && currentQty > 0 && !replaceNow) {
+    // To make this a merchandising AI rather than a refill calculator, fresh transaction
+    // data may open compatible alternatives for evaluation even when the old SKU exists.
+    // We only ACT on that comparison later when the sales advantage is large enough.
+    const preliminaryAllowSubstitution = currentQty === 0
+      || stockoutReplaceNow
+      || (useTransactionSales && currentQty > 0);
+    const candidateCoverageTarget = stockoutReplaceNow || (useTransactionSales && currentQty > 0)
+      ? capacity
+      : Math.max(1, refillNeededQty);
+
+    if (originalAvailableUnits <= 0 && currentQty > 0 && !stockoutReplaceNow) {
       warnings.push(
         `${product.name} has no verified warehouse stock for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code}, but the lane is still ${currentQty}/${capacity}. Smart Route will switch it before empty once it reaches the ${transitionFloorQty}-unit transition zone or is forecast to cross that zone before the next typical service.`,
       );
@@ -1007,7 +1010,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
         const historicallySeen = fitSeen.has(`${machine.id}:${stock.slot_code}:${candidate.id}`);
 
         if (!original) {
-          if (!allowSubstitution) return null;
+          if (!preliminaryAllowSubstitution) return null;
           if (currentGroup && candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen) return null;
           if (!explicitAllowed && !historicallySeen && candidateFit !== currentFit) return null;
         }
@@ -1068,8 +1071,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       })
       .filter((row): row is Candidate => Boolean(row))
       .sort((a, b) => {
-        const aCoverage = Math.min(1, a.availableUnits / Math.max(1, neededQty));
-        const bCoverage = Math.min(1, b.availableUnits / Math.max(1, neededQty));
+        const aCoverage = Math.min(1, a.availableUnits / Math.max(1, candidateCoverageTarget));
+        const bCoverage = Math.min(1, b.availableUnits / Math.max(1, candidateCoverageTarget));
         const aEffectiveScore = a.score + aCoverage * 20;
         const bEffectiveScore = b.score + bCoverage * 20;
         return bEffectiveScore - aEffectiveScore
@@ -1082,6 +1085,59 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     if (!candidates.length) {
       warnings.push(`No verified in-stock compatible product is available for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} (${product.name}).`);
       continue;
+    }
+
+    const originalCandidate = candidates.find((candidate) => candidate.original) ?? null;
+    const strongestAlternative = candidates.find((candidate) => !candidate.original) ?? null;
+
+    // Data-backed assortment optimization:
+    // - only use fresh real transaction sales
+    // - only re-merchandise a lane that is already at/below the transition floor
+    // - require meaningful exact-machine evidence and a large advantage over the old SKU
+    // - require the candidate score to beat the old SKU despite its continuity bonus
+    const strongerLocalSeller = Boolean(
+      useTransactionSales
+      && currentQty > 0
+      && currentQty <= transitionFloorQty
+      && originalAvailableUnits > 0
+      && originalCandidate
+      && strongestAlternative
+      && strongestAlternative.machineSalesUnits >= 6
+      && (
+        exactMachineSales === 0
+          ? strongestAlternative.machineSalesUnits >= 8
+          : strongestAlternative.machineSalesUnits >= exactMachineSales * 2.5
+      )
+      && strongestAlternative.score >= originalCandidate.score + 10
+    );
+
+    const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller;
+    const transitionMode: PlanTask["transitionMode"] = currentQty === 0
+      ? "empty_lane"
+      : stockoutReplaceNow || mixReplaceNow
+        ? "replace_now"
+        : "none";
+    const allowSubstitution = transitionMode !== "none";
+    const neededQty = transitionMode === "replace_now" ? capacity : refillNeededQty;
+
+    // A completely full lane only becomes a task when it has a valid replace-now reason.
+    if (neededQty <= 0) continue;
+
+    const taskCandidates = mixReplaceNow
+      ? candidates.filter((candidate) => !candidate.original)
+      : allowSubstitution
+        ? candidates
+        : candidates.filter((candidate) => candidate.original);
+
+    if (!taskCandidates.length) {
+      warnings.push(`No executable candidate remains for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} after applying Smart Route substitution rules.`);
+      continue;
+    }
+
+    if (mixReplaceNow && strongestAlternative) {
+      warnings.push(
+        `AI assortment optimization: ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} can change from ${product.name} to ${strongestAlternative.productName}; verified 21-day machine sales are ${exactMachineSales} vs ${strongestAlternative.machineSalesUnits}. The remaining ${currentQty} units must be returned before the slot is changed.`,
+      );
     }
 
     tasks.push({
@@ -1099,12 +1155,12 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       neededQty,
       allowSubstitution,
       transitionMode,
-      returnCurrentQty: replaceNow ? currentQty : 0,
+      returnCurrentQty: transitionMode === "replace_now" ? currentQty : 0,
       dailyVelocity,
       serviceIntervalDays,
       projectedQtyAtNextService,
       transitionFloorQty,
-      candidates,
+      candidates: taskCandidates,
     });
   }
 
