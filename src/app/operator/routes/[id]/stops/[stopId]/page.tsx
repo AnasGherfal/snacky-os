@@ -2286,7 +2286,7 @@ export default function MachineStopPage() {
                             setXySwapSourceSlotCode(null);
                             setXySwapTargetSlotCode("");
                             setXyEditSlotCode(requirement.slotCode);
-                            setXyChangeOffline(xyQueued);
+                            
                             
                             
                             setXyQueueActualQty((stopData.queuedXyChanges ?? []).find((row) => row.slot_code === requirement.slotCode)?.target_stock_qty ?? laneFill);
