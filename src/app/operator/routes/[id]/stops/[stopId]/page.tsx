@@ -134,6 +134,7 @@ interface StopRefillItem {
   reason?: string | null;
   notes?: string | null;
   sourceLabel?: string | null;
+  hasExactLanePlan?: boolean;
   vmsSalePriceLyd?: number | null;
   vmsSlotPrices?: Array<{ slotCode: string; priceLyd: number }>;
 }
@@ -1102,6 +1103,7 @@ export default function MachineStopPage() {
     assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
     filledQty: Number(filledQtys[item.productId] ?? 0),
     slotAllocations: item.slotAllocations ?? [],
+    hasExactLanePlan: item.hasExactLanePlan,
     slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
   })), [filledQtys, laneFilledQtys, stopData]);
   const stopExecutionSummary = useMemo(() => {
