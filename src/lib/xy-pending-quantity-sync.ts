@@ -1,8 +1,11 @@
 import "server-only";
 
-import type { MachineQuantityRow } from "@/lib/machine-quantity-confirmation";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { loadConfirmedXyProductIds, syncMachineQuantityRowsToXy } from "@/lib/xy-refill-quantity-sync";
+import {
+  loadConfirmedXyProductIds,
+  syncMachineQuantityRowsToXy,
+  type XySyncMachineQuantityRow,
+} from "@/lib/xy-refill-quantity-sync";
 
 function relation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -32,7 +35,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
   let failed = 0;
 
   for (const record of data ?? []) {
-    const rows = Array.isArray(record.quantity_rows) ? record.quantity_rows as MachineQuantityRow[] : [];
+    const rows = Array.isArray(record.quantity_rows) ? record.quantity_rows as XySyncMachineQuantityRow[] : [];
     const machine = relation(record.machine as any);
     const vmsMachineId = String(machine?.vms_machine_id ?? "").trim();
     const attemptedAt = new Date().toISOString();
@@ -47,6 +50,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
           sync_attempt_count: nextAttemptCount,
           last_sync_attempt_at: attemptedAt,
           last_sync_error: !vmsMachineId ? "Machine is not linked to an XY machine id." : "Saved refill has no lane quantities to synchronize.",
+          auto_sync_eligible: false,
           updated_at: attemptedAt,
         })
         .eq("id", record.id);
@@ -59,6 +63,19 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
         vmsMachineId,
         rows,
         expectedVmsProductIds: mappings,
+        persistPrepared: async (preparedRows) => {
+          const { error: targetSaveError } = await admin
+            .from("route_stop_quantity_confirmations")
+            .update({
+              quantity_rows: preparedRows,
+              verification_status: "xy_sync_pending",
+              auto_sync_eligible: true,
+              updated_at: attemptedAt,
+            })
+            .eq("id", record.id)
+            .in("verification_status", ["offline_pending", "xy_sync_pending"]);
+          if (targetSaveError) throw targetSaveError;
+        },
       });
 
       if (result.status === "verified") {
@@ -67,6 +84,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
           .from("route_stop_quantity_confirmations")
           .update({
             verification_status: "xy_api_verified",
+            quantity_rows: result.quantityRows ?? rows,
             offline_reason: null,
             sync_attempt_count: nextAttemptCount,
             last_sync_attempt_at: attemptedAt,
@@ -84,6 +102,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
           .from("route_stop_quantity_confirmations")
           .update({
             verification_status: "xy_sync_pending",
+            quantity_rows: result.quantityRows ?? rows,
             sync_attempt_count: nextAttemptCount,
             last_sync_attempt_at: attemptedAt,
             last_sync_error: result.message ?? "XY has not confirmed this refill yet.",
