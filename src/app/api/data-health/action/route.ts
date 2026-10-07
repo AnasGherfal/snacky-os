@@ -3,7 +3,7 @@ import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from '@/lib/auth
 import {hasAnyRole} from '@/lib/authz';
 
 export const dynamic='force-dynamic';
-const actions=new Set(['scan_negative_inventory','cancel_stale_refill','archive_vms_batch','classify_legacy_cash','unclassify_legacy_cash','resolve_inventory_case']);
+const actions=new Set(['scan_negative_inventory','cancel_stale_refill','archive_vms_batch','classify_legacy_cash','unclassify_legacy_cash','resolve_inventory_case','bulk_cancel_stale_refills','bulk_archive_vms_batches']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const json=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 
