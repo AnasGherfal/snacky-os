@@ -273,6 +273,14 @@ interface StopData {
   manualSales?: NormalizedRouteManualSale[];
   manualSalesLoadError?: boolean;
   adjustments?: InventoryAdjustmentRow[];
+  queuedXyChanges?: Array<{
+    id: string;
+    slot_code: string;
+    target_product_id: string;
+    target_stock_qty: number;
+    status: "pending" | "verified" | "conflict" | "cancelled";
+    last_error: string | null;
+  }>;
   machineIssues?: MachineIssueSummary[];
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
@@ -891,7 +899,12 @@ export default function MachineStopPage() {
   const unresolvedSmartReturnRequirements = activeSmartSwapRequirements.filter((requirement) => !smartReturnReadyFor(requirement));
   const unresolvedSmartXyRequirements = activeSmartSwapRequirements.filter((requirement) => {
     const liveSlot = (stopData?.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
-    return liveSlot?.productId !== requirement.targetProductId;
+    const queuedSafeChange = (stopData?.queuedXyChanges ?? []).some((row) => (
+      row.slot_code === requirement.slotCode
+      && row.target_product_id === requirement.targetProductId
+      && ["pending", "verified"].includes(row.status)
+    ));
+    return liveSlot?.productId !== requirement.targetProductId && !queuedSafeChange;
   });
   const machineStorageStockRows = stopData?.machineStorageStock ?? [];
   const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
@@ -985,6 +998,20 @@ export default function MachineStopPage() {
       });
       const payload = parsed.payload as Record<string, unknown> | null;
       if (response.ok && payload?.queued === true) {
+        setStopData((current) => current ? {
+          ...current,
+          queuedXyChanges: [
+            {
+              id: String(payload.queueId ?? `${xyEditSlotCode}:${xyReplacementProductId}`),
+              slot_code: xyEditSlotCode,
+              target_product_id: xyReplacementProductId,
+              target_stock_qty: xyQueueActualQty,
+              status: "pending" as const,
+              last_error: null,
+            },
+            ...(current.queuedXyChanges ?? []).filter((row) => row.slot_code !== xyEditSlotCode),
+          ],
+        } : current);
         setXyChangeSuccess(tr(
           "Change saved. Snacky will retry after this stop is completed and XY reconnects. Keep this lane disabled from selling until verified.",
           "تم حفظ التغيير. سيعيد سناكي المحاولة بعد إنهاء الموقع وعودة اتصال XY. أبقِ هذه الخانة معطلة عن البيع حتى يتم التحقق.",
@@ -1651,6 +1678,23 @@ export default function MachineStopPage() {
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         <RouteStopQuickActions />
+
+        {(stopData.queuedXyChanges ?? []).some((change) => change.status === "pending" || change.status === "conflict") ? (
+          <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
+            <p className="mt-1">{tr(
+              "Your requested changes are saved even if this page closes. Snacky retries after the stop is completed. Keep affected lanes disabled from selling until XY confirms them.",
+              "تم حفظ التغييرات حتى لو غادرت الصفحة. سيعيد سناكي المحاولة بعد إنهاء الموقع. أبقِ الخانات المعنية معطلة عن البيع حتى يؤكدها XY.",
+            )}</p>
+            <div className="mt-2 space-y-1">
+              {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
+                <div key={change.id} className="rounded-lg bg-white px-3 py-2">
+                  {tr("Lane", "الخانة")} {change.slot_code} · {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Automatic retry pending", "بانتظار المحاولة التلقائية")}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {stopData.machineIssues?.length ? (
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 md:p-5">
