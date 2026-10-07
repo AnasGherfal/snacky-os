@@ -30,7 +30,7 @@ export async function POST(
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
   }
 
-  let body: { slotCode?: unknown; productId?: unknown; smartRouteSwap?: unknown };
+  let body: { slotCode?: unknown; productId?: unknown; smartRouteSwap?: unknown; queueOnOffline?: unknown; physicalChangeConfirmed?: unknown; laneDisabledConfirmed?: unknown; actualSlotQty?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -40,6 +40,19 @@ export async function POST(
   const slotCode = String(body.slotCode ?? "").trim();
   const productId = String(body.productId ?? "").trim();
   const smartRouteSwapRequested = body.smartRouteSwap === true;
+  const queueOnOffline = body.queueOnOffline === true;
+  const actualSlotQty = Number(body.actualSlotQty);
+  if (queueOnOffline && (
+    body.physicalChangeConfirmed !== true
+    || body.laneDisabledConfirmed !== true
+    || !Number.isSafeInteger(actualSlotQty)
+    || actualSlotQty < 0
+  )) {
+    return NextResponse.json({
+      success: false, code: "PHYSICAL_CONFIRMATION_REQUIRED",
+      error: "Confirm the physical replacement, that the lane is disabled from selling, and the actual number of new items inside the lane.",
+    }, { status: 400 });
+  }
   if (!slotCode || !isUuid(productId)) {
     return NextResponse.json({ success: false, error: "Choose a valid slot and product." }, { status: 400 });
   }
@@ -176,7 +189,32 @@ export async function POST(
       error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
     }, { status: 409 });
   }
-  const targetStockQty = smartRouteSwap ? 0 : Number(currentStockQty);
+  const targetStockQty = queueOnOffline ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
+  if (queueOnOffline && (targetStockQty > 500 || (beforeSlot.capacity !== null && targetStockQty > beforeSlot.capacity))) {
+    return NextResponse.json({ success: false, code: "XY_CAPACITY_EXCEEDED", error: "Actual lane stock exceeds the XY lane capacity." }, { status: 400 });
+  }
+
+  // An existing pending operation wins. Never allow two remote writers to race
+  // over the same physical lane when the machine reconnects.
+  const { data: pendingLane, error: pendingLaneError } = await admin.from("xy_pending_slot_changes")
+    .select("id,route_id,route_stop_id,target_product_id,target_stock_qty,status")
+    .eq("machine_id", machine.id).eq("slot_code", slotCode).eq("status", "pending")
+    .maybeSingle();
+  if (pendingLaneError) {
+    return NextResponse.json({ success: false, error: "Could not verify queued XY lane changes." }, { status: 500 });
+  }
+  if (pendingLane) {
+    if (pendingLane.route_id === routeId && pendingLane.route_stop_id === stopId && pendingLane.target_product_id === productId) {
+      return NextResponse.json({
+        success: true, verified: false, queued: true, queueId: pendingLane.id,
+        error: null, message: "Your XY product change is already saved. Snacky will retry it after this stop is completed and XY reconnects.",
+      }, { status: 202 });
+    }
+    return NextResponse.json({
+      success: false, code: "XY_LANE_ALREADY_QUEUED",
+      error: "This XY lane already has a different pending change. An admin must resolve it before another change is allowed.",
+    }, { status: 409 });
+  }
 
   const targetVmsProductId = String(mapping.vms_product_id);
   const machinePrices = Array.from(new Set(
@@ -256,6 +294,41 @@ export async function POST(
     });
 
     const xyMachineOffline = /设备不在线|device\s*(?:is\s*)?offline|machine\s*(?:is\s*)?offline|not\s+online/i.test(String(write.message ?? ""));
+    if (xyMachineOffline && queueOnOffline) {
+      if (currentStockQty === null || !beforeSlot.vmsProductId) {
+        return NextResponse.json({
+          success: false, code: "XY_QUEUE_REQUIRES_BASELINE",
+          error: "XY did not provide a safe original product/quantity baseline for this lane. Save the change for admin review.",
+        }, { status: 409 });
+      }
+      const { data: queued, error: queueError } = await admin.from("xy_pending_slot_changes").insert({
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: machine.id,
+        vms_machine_id: String(machine.vms_machine_id),
+        slot_code: slotCode,
+        previous_vms_product_id: beforeSlot.vmsProductId,
+        previous_stock_qty: Number(currentStockQty),
+        target_product_id: product.id,
+        target_vms_product_id: targetVmsProductId,
+        target_price_lyd: priceLyd,
+        target_stock_qty: actualSlotQty,
+        physical_change_confirmed: true,
+        lane_disabled_confirmed: true,
+        smart_route_swap: Boolean(smartRouteSwap),
+        created_by_user_id: profile.id,
+      }).select("id").single();
+      if (queueError || !queued) {
+        return NextResponse.json({
+          success: false, code: "XY_QUEUE_SAVE_FAILED",
+          error: "Could not safely save the change for automatic retry. The machine was not changed.",
+        }, { status: 409 });
+      }
+      return NextResponse.json({
+        success: true, verified: false, queued: true, queueId: queued.id,
+        message: "Saved. After this stop is completed, Snacky retries when XY reconnects. Keep the lane disabled from vending until an admin sees XY verified.",
+      }, { status: 202 });
+    }
     return NextResponse.json({
       success: false,
       verified: false,
