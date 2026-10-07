@@ -197,4 +197,7 @@ test("legacy product totals cannot be written into catalogue-guessed XY lanes", 
   assert.match(quantityCard, /missingOriginalLanePlan/);
   assert.match(quantityCard, /!missingOriginalLanePlan/);
   assert.match(quantityCard, /Upload current XY inventory screenshot/);
+  assert.match(operatorStop, /item\.hasExactLanePlan === false/);
+  assert.match(operatorStop, /if \(item\.hasExactLanePlan === false\) return undefined/);
+  assert.match(operatorStop, /This older route lists a product total, not exact machine lanes/);
 });
