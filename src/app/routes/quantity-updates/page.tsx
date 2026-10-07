@@ -22,6 +22,7 @@ type QuantityUpdateRecord = {
   evidence_files: unknown;
   offline_reason: string | null;
   submitted_at: string | null;
+  auto_sync_eligible?: boolean | null;
   machine?: { id: string; name: string; machine_code: string | null; location?: { name?: string | null } | Array<{ name?: string | null }> | null } | Array<{ id: string; name: string; machine_code: string | null; location?: { name?: string | null } | Array<{ name?: string | null }> | null }> | null;
   route?: { id: string; route_date: string | null } | Array<{ id: string; route_date: string | null }> | null;
   operator?: { id: string; full_name: string | null } | Array<{ id: string; full_name: string | null }> | null;
@@ -47,7 +48,7 @@ export default async function MachineQuantityUpdatesPage() {
 
   const { data, error } = await supabase
     .from("route_stop_quantity_confirmations")
-    .select("id, route_id, route_stop_id, machine_id, operator_id, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, resolved_at, machine:machines(id, name, machine_code, location:locations(name)), route:routes(id, route_date), operator:team_members(id, full_name)")
+    .select("id, route_id, route_stop_id, machine_id, operator_id, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, resolved_at, auto_sync_eligible, machine:machines(id, name, machine_code, location:locations(name)), route:routes(id, route_date), operator:team_members(id, full_name)")
     .in("verification_status", ["offline_pending", "xy_sync_pending", "xy_api_verified", "xy_screenshot_saved", "owner_completed"])
     .order("submitted_at", { ascending: false })
     .limit(100);
@@ -89,6 +90,7 @@ export default async function MachineQuantityUpdatesPage() {
                   routeDate={route?.route_date ?? null}
                   operatorName={operator?.full_name ?? null}
                   offlineReason={record.offline_reason ?? null}
+                  autoSyncEligible={record.auto_sync_eligible === true}
                   rows={Array.isArray(record.quantity_rows) ? record.quantity_rows as MachineQuantityRow[] : []}
                 />
               );
