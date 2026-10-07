@@ -243,6 +243,7 @@ export async function POST(
         vms_machine_id: machine.vms_machine_id,
         selected_product_id: product.id,
         selected_vms_product_id: targetVmsProductId,
+        slot_code: slotCode,
         price_source: machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product",
         xy_http_status: write.httpStatus,
         xy_code: write.code,
