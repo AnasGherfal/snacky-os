@@ -41,7 +41,7 @@ export async function retryPendingXySlotChanges() {
     .eq("status", "pending")
     .lte("next_attempt_at", new Date().toISOString())
     .order("created_at", { ascending: true })
-    .limit(8);
+    .limit(2);
   if (error) throw error;
 
   const report = { checked: 0, verified: 0, offline: 0, conflicts: 0, waiting: 0, errors: 0 };
