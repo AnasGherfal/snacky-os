@@ -125,6 +125,8 @@ test("Smart Route returns remain in operator custody until normal route finaliza
   assert.match(returnFunction, /'operator_bag'::public\.inventory_entity_type/);
   assert.match(returnFunction, /'returned_from_machine'::public\.movement_reason/);
   assert.match(returnFunction, /storage_movement_id is null/);
+  assert.match(returnFunction, /operator_route_custody_leases/);
+  assert.match(returnFunction, /Confirm pickup before recording a Smart Route return/);
   assert.doesNotMatch(
     returnFunction.slice(0, returnFunction.indexOf("revoke all on function")),
     /'operator_bag_to_storage'::public\.movement_reason/,
