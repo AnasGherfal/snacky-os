@@ -19,6 +19,7 @@ type PendingChange = {
   smart_route_swap: boolean;
   physical_change_confirmed: boolean;
   lane_disabled_confirmed: boolean;
+  zero_stock_relabel: boolean;
   status: string;
   created_at: string;
   attempt_count: number;
@@ -37,7 +38,7 @@ export async function retryPendingXySlotChanges() {
   if (!db) throw new Error("Protected XY queue database is unavailable.");
 
   const { data: due, error } = await db.from("xy_pending_slot_changes")
-    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,previous_vms_product_id,previous_stock_qty,target_product_id,target_vms_product_id,target_price_lyd,target_stock_qty,smart_route_swap,physical_change_confirmed,lane_disabled_confirmed,status,created_at,attempt_count")
+    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,previous_vms_product_id,previous_stock_qty,target_product_id,target_vms_product_id,target_price_lyd,target_stock_qty,smart_route_swap,physical_change_confirmed,lane_disabled_confirmed,zero_stock_relabel,status,created_at,attempt_count")
     .eq("status", "pending")
     .lte("next_attempt_at", new Date().toISOString())
     .order("created_at", { ascending: true })
@@ -71,13 +72,23 @@ export async function retryPendingXySlotChanges() {
       const { data: stop, error: stopError } = await db.from("route_stops")
         .select("status, route_id, machine_id").eq("id", item.route_stop_id).maybeSingle();
       if (stopError || !stop) throw stopError ?? new Error("Route stop missing.");
+      const safeZeroStockRelabel = item.zero_stock_relabel === true
+        && item.target_stock_qty === 0
+        && item.smart_route_swap === false
+        && item.physical_change_confirmed === false
+        && item.lane_disabled_confirmed === false;
       if (stop.route_id !== item.route_id || stop.machine_id !== item.machine_id
-        || !item.physical_change_confirmed || !item.lane_disabled_confirmed) {
+        || (!safeZeroStockRelabel && (!item.physical_change_confirmed || !item.lane_disabled_confirmed))) {
         await setState("conflict", "Queue ownership or physical safety confirmation changed.");
         report.conflicts++;
         continue;
       }
-      if (stop.status !== "completed") {
+      if (["skipped", "canceled", "cancelled"].includes(String(stop.status))) {
+        await setState("conflict", "Stop was cancelled or skipped. Admin review required.");
+        report.conflicts++;
+        continue;
+      }
+      if (!safeZeroStockRelabel && stop.status !== "completed") {
         if (["skipped", "canceled", "cancelled"].includes(String(stop.status))) {
           await setState("conflict", "Stop was not completed. Manual review required.");
           report.conflicts++;
@@ -86,7 +97,7 @@ export async function retryPendingXySlotChanges() {
         }
         continue;
       }
-      if (now.getTime() - Date.parse(item.created_at) > 48 * 3_600_000) {
+      if (!safeZeroStockRelabel && now.getTime() - Date.parse(item.created_at) > 48 * 3_600_000) {
         await setState("conflict", "Queued XY change is older than 48 hours; manual verification required.");
         report.conflicts++;
         continue;
@@ -112,8 +123,10 @@ export async function retryPendingXySlotChanges() {
         continue;
       }
       if (before.vmsProductId !== item.previous_vms_product_id
-        || before.currentQty !== item.previous_stock_qty) {
-        await setState("conflict", "XY lane changed since queueing; manual review required.");
+        || (safeZeroStockRelabel
+            ? before.currentQty > item.previous_stock_qty
+            : before.currentQty !== item.previous_stock_qty)) {
+        await setState("conflict", "XY product or stock increased since queueing; manual review required.");
         report.conflicts++;
         continue;
       }
