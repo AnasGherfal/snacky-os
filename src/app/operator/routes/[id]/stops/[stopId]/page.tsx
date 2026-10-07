@@ -645,6 +645,9 @@ function distributeProductFillToLanes(item: StopRefillItem, totalQuantity: numbe
 }
 
 function slotQuantitiesForItem(item: StopRefillItem, laneFilledQtys: Record<string, number>) {
+  // A catalogue fallback is not an operator-confirmed lane assignment.
+  // Keep historical product-total routes at product level, never assert exact fills.
+  if (item.hasExactLanePlan === false) return undefined;
   const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
   if (!allocations.length) return undefined;
   return allocations.map((allocation) => ({
@@ -2233,7 +2236,9 @@ export default function MachineStopPage() {
                 const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
                 const maxQty = remainingBagQty(item.productId, actualQty);
-                const laneAllocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+                const laneAllocations = item.hasExactLanePlan === false
+                  ? []
+                  : Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
                 return (
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -2282,6 +2287,14 @@ export default function MachineStopPage() {
                       <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
                       <Metric label={tr("Difference", "الفرق")} value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
+                    {item.hasExactLanePlan === false ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
+                        {tr(
+                          "This older route lists a product total, not exact machine lanes. Record the actual product total here; do not treat the displayed catalogue lane as the destination for all units.",
+                          "هذه جولة قديمة تحتوي على إجمالي المنتج وليس توزيعاً دقيقاً للخانات. سجّل الكمية الفعلية الإجمالية هنا، ولا تعتبر خانة الكتالوج المعروضة وجهة لجميع الوحدات.",
+                        )}
+                      </div>
+                    ) : null}
                     {laneAllocations.length ? (
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 md:p-4">
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
