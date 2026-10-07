@@ -13,6 +13,7 @@ export function PendingMachineQuantityUpdateCard({
   routeDate,
   operatorName,
   offlineReason,
+  verificationStatus,
   autoSyncEligible,
   rows,
 }: {
@@ -24,6 +25,7 @@ export function PendingMachineQuantityUpdateCard({
   routeDate: string | null;
   operatorName: string | null;
   offlineReason: string | null;
+  verificationStatus: string;
   autoSyncEligible: boolean;
   rows: MachineQuantityRow[];
 }) {
@@ -34,6 +36,8 @@ export function PendingMachineQuantityUpdateCard({
   const [resolved, setResolved] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const legacyPending = verificationStatus === "offline_pending" && !autoSyncEligible;
+  const setupReviewPending = verificationStatus === "xy_sync_pending" && !autoSyncEligible;
 
   async function retryNow() {
     setSaving(true);
@@ -83,7 +87,11 @@ export function PendingMachineQuantityUpdateCard({
           <p className="text-xs text-slate-600">{machineCode ?? "-"} · {routeDate ?? "-"}{operatorName ? ` · ${operatorName}` : ""}</p>
         </div>
         <span className="self-start rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white">
-          {autoSyncEligible ? tr("Waiting for XY", "بانتظار XY") : tr("Legacy review", "مراجعة سجل قديم")}
+          {legacyPending
+            ? tr("Legacy review", "مراجعة سجل قديم")
+            : setupReviewPending
+              ? tr("Needs review", "يحتاج مراجعة")
+              : tr("Waiting for XY", "بانتظار XY")}
         </span>
       </div>
 
@@ -103,24 +111,37 @@ export function PendingMachineQuantityUpdateCard({
 
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
         <div className="text-sm font-semibold text-slate-950">
-          {autoSyncEligible ? tr("Automatic XY retry", "إعادة محاولة XY تلقائياً") : tr("Legacy power-off record", "سجل قديم لانقطاع الكهرباء")}
+          {legacyPending
+            ? tr("Legacy power-off record", "سجل قديم لانقطاع الكهرباء")
+            : setupReviewPending
+              ? tr("XY setup needs review", "إعداد XY يحتاج مراجعة")
+              : tr("Automatic XY retry", "إعادة محاولة XY تلقائياً")}
         </div>
         <p className="mt-1 text-xs leading-5 text-slate-600">
-          {autoSyncEligible
+          {legacyPending
             ? tr(
-                "Snacky OS keeps these exact quantities and retries them during the XY sync. No machine-settings entry or screenshot is required.",
-                "يحتفظ Snacky OS بهذه الكميات الدقيقة ويعيد إرسالها أثناء مزامنة XY. لا يلزم الدخول إلى إعدادات الجهاز أو رفع صورة شاشة.",
-              )
-            : tr(
                 "This refill was saved before automatic XY sync existed. Snacky will not push its old quantity into the current machine automatically.",
                 "تم حفظ هذه التعبئة قبل وجود المزامنة التلقائية مع XY. لن يرسل سناكي كميتها القديمة إلى الجهاز الحالي تلقائياً.",
-              )}
+              )
+            : setupReviewPending
+              ? tr(
+                  "Automatic retry is paused because the lane, product mapping, or XY price needs review. Fix the setup, then retry this saved refill.",
+                  "تم إيقاف إعادة المحاولة التلقائية لأن الخانة أو ربط المنتج أو سعر XY يحتاج مراجعة. أصلح الإعداد ثم أعد محاولة هذه التعبئة المحفوظة.",
+                )
+              : tr(
+                  "Snacky OS keeps these exact quantities and retries them during the XY sync. No machine-settings entry or screenshot is required.",
+                  "يحتفظ Snacky OS بهذه الكميات الدقيقة ويعيد إرسالها أثناء مزامنة XY. لا يلزم الدخول إلى إعدادات الجهاز أو رفع صورة شاشة.",
+                )}
         </p>
         {message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{message}</div> : null}
         {error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
-        {autoSyncEligible ? (
+        {!legacyPending ? (
           <button type="button" onClick={() => void retryNow()} disabled={saving} className="btn-primary mt-3 w-full disabled:opacity-50">
-            {saving ? tr("Checking XY...", "جارٍ التحقق من XY...") : tr("Retry XY now", "إعادة محاولة XY الآن")}
+            {saving
+              ? tr("Checking XY...", "جارٍ التحقق من XY...")
+              : setupReviewPending
+                ? tr("Retry after fixing setup", "إعادة المحاولة بعد إصلاح الإعداد")
+                : tr("Retry XY now", "إعادة محاولة XY الآن")}
           </button>
         ) : null}
       </div>
