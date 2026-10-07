@@ -1184,6 +1184,123 @@ export async function POST(
       );
     }
 
+    const protectedClient = getSupabaseAdminClient();
+    if (!protectedClient) {
+      statusCode = 500;
+      return NextResponse.json(
+        { success: false, code: "SMART_ROUTE_GUARD_UNAVAILABLE", error: "Protected Smart Route validation is unavailable." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    const { data: smartRows, error: smartRowsError } = await protectedClient
+      .from("route_stop_items")
+      .select("product_id, source, slot_allocations")
+      .eq("route_stop_id", stopId)
+      .eq("source", "smart_ai_plan");
+    if (smartRowsError) {
+      statusCode = 500;
+      return NextResponse.json(
+        { success: false, code: "SMART_ROUTE_PLAN_CHECK_FAILED", error: "Could not verify the Smart Route lane plan." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    const smartSwapRequirements = (smartRows ?? []).flatMap((row: any) => {
+      const targetProductId = String(row.product_id ?? "");
+      const allocations = Array.isArray(row.slot_allocations) ? row.slot_allocations : [];
+      return allocations
+        .filter((allocation: any) => (
+          allocation?.substituted === true
+          && String(allocation?.transition_mode ?? "") === "replace_now"
+          && String(allocation?.from_product_id ?? "").trim()
+          && Number(allocation?.return_current_qty ?? 0) > 0
+          && String(allocation?.slot_code ?? "").trim()
+        ))
+        .map((allocation: any) => ({
+          targetProductId,
+          machineSlotId: String(allocation.machine_slot_id ?? "").trim() || null,
+          slotCode: String(allocation.slot_code ?? "").trim(),
+          fromProductId: String(allocation.from_product_id ?? "").trim(),
+          returnQty: Math.max(0, Math.floor(Number(allocation.return_current_qty ?? 0))),
+        }));
+    });
+
+    if (smartSwapRequirements.length) {
+      const [{ data: smartReturns, error: smartReturnsError }, { data: xyEvents, error: xyEventsError }] = await Promise.all([
+        protectedClient
+          .from("inventory_adjustments")
+          .select("product_id, quantity, reason, notes, status")
+          .eq("route_stop_id", stopId)
+          .eq("adjustment_type", "returned_from_machine")
+          .eq("reason", "Product replaced")
+          .eq("status", "confirmed"),
+        protectedClient
+          .from("system_activity_logs")
+          .select("action, metadata, created_at")
+          .eq("action", "xy_slot_product_change")
+          .contains("metadata", { route_id: routeId, route_stop_id: stopId })
+          .order("created_at", { ascending: true }),
+      ]);
+
+      if (smartReturnsError || xyEventsError) {
+        statusCode = 500;
+        return NextResponse.json(
+          { success: false, code: "SMART_ROUTE_EXECUTION_CHECK_FAILED", error: "Could not verify Smart Route return/XY evidence." },
+          { status: statusCode, headers: jsonHeaders() },
+        );
+      }
+
+      for (const requirement of smartSwapRequirements) {
+        const targetLine = filledItems.find((item: any) => String(item?.productId ?? "") === requirement.targetProductId);
+        const laneActual = (Array.isArray((targetLine as any)?.slotQuantities) ? (targetLine as any).slotQuantities : [])
+          .find((slot: any) => (
+            (requirement.machineSlotId && String(slot?.machineSlotId ?? "") === requirement.machineSlotId)
+            || String(slot?.slotCode ?? "") === requirement.slotCode
+          ));
+        const actualQty = Math.max(0, Math.floor(Number(laneActual?.quantity ?? 0)));
+        if (actualQty <= 0) continue;
+
+        const returnedQty = (smartReturns ?? [])
+          .filter((row: any) => (
+            String(row.product_id ?? "") === requirement.fromProductId
+            && String(row.notes ?? "").startsWith("Smart Route product swap")
+            && String(row.notes ?? "").includes(`lane ${requirement.slotCode}`)
+          ))
+          .reduce((sum: number, row: any) => sum + Math.max(0, Number(row.quantity ?? 0)), 0);
+
+        if (returnedQty < requirement.returnQty) {
+          statusCode = 409;
+          return NextResponse.json(
+            {
+              success: false,
+              code: "SMART_ROUTE_RETURN_REQUIRED",
+              error: `Lane ${requirement.slotCode} cannot be completed until the ${requirement.returnQty} old units are recorded as returned.`,
+            },
+            { status: statusCode, headers: jsonHeaders() },
+          );
+        }
+
+        const xyVerified = (xyEvents ?? []).some((event: any) => (
+          String(event?.metadata?.slot_code ?? "") === requirement.slotCode
+          && String(event?.metadata?.selected_product_id ?? "") === requirement.targetProductId
+          && event?.metadata?.smart_route_swap === true
+        ));
+
+        if (!xyVerified) {
+          statusCode = 409;
+          return NextResponse.json(
+            {
+              success: false,
+              code: "SMART_ROUTE_XY_CHANGE_REQUIRED",
+              error: `Lane ${requirement.slotCode} cannot be completed until the Smart Route product change is verified in XY.`,
+            },
+            { status: statusCode, headers: jsonHeaders() },
+          );
+        }
+      }
+    }
+
     const result = await completeStop({
       stopId,
       routeId,
