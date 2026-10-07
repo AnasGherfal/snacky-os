@@ -973,6 +973,12 @@ export default function MachineStopPage() {
       });
       const payload = parsed.payload as Record<string, unknown> | null;
       if (!response.ok || payload?.verified !== true) {
+        if (responseCode(payload) === "XY_MACHINE_OFFLINE") {
+          throw new Error(tr(
+            "XY reports that this machine is offline. No product was changed. If the machine has power, check its internet/SIM connection and retry when XY reconnects. Do not put the replacement product in this lane before XY confirms the change. Do not select 'Machine has no electricity' unless power is actually off.",
+            "نظام XY يقول إن الجهاز غير متصل بالشبكة. لم يتغير المنتج. إذا كانت الكهرباء موجودة، تحقق من اتصال الإنترنت أو شريحة البيانات وأعد المحاولة بعد عودة اتصال XY. لا تضع المنتج البديل في هذه الخانة حتى يؤكد XY التغيير، ولا تختَر «لا توجد كهرباء» إلا إذا كانت الكهرباء مقطوعة فعلاً.",
+          ));
+        }
         throw new Error(responseMessage(payload) || tr("XY did not verify this product change.", "لم يؤكد XY تغيير المنتج."));
       }
 
