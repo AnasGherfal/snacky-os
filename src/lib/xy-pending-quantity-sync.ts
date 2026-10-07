@@ -21,7 +21,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
 
   const { data, error } = await admin
     .from("route_stop_quantity_confirmations")
-    .select("id, route_id, route_stop_id, machine_id, quantity_rows, verification_status, sync_attempt_count, machine:machines(id, name, machine_code, vms_machine_id)")
+    .select("id, route_id, route_stop_id, machine_id, quantity_rows, verification_status, sync_attempt_count, updated_at, machine:machines(id, name, machine_code, vms_machine_id)")
     .in("verification_status", ["offline_pending", "xy_sync_pending"])
     .eq("auto_sync_eligible", true)
     .order("last_sync_attempt_at", { ascending: true, nullsFirst: true })
@@ -64,7 +64,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
         rows,
         expectedVmsProductIds: mappings,
         persistPrepared: async (preparedRows) => {
-          const { error: targetSaveError } = await admin
+          const { data: claimed, error: targetSaveError } = await admin
             .from("route_stop_quantity_confirmations")
             .update({
               quantity_rows: preparedRows,
@@ -73,8 +73,26 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
               updated_at: attemptedAt,
             })
             .eq("id", record.id)
-            .in("verification_status", ["offline_pending", "xy_sync_pending"]);
+            .eq("updated_at", record.updated_at)
+            .in("verification_status", ["offline_pending", "xy_sync_pending"])
+            .select("quantity_rows")
+            .maybeSingle();
           if (targetSaveError) throw targetSaveError;
+          if (claimed?.quantity_rows && Array.isArray(claimed.quantity_rows)) {
+            return claimed.quantity_rows as XySyncMachineQuantityRow[];
+          }
+
+          const { data: current, error: currentError } = await admin
+            .from("route_stop_quantity_confirmations")
+            .select("quantity_rows")
+            .eq("id", record.id)
+            .single();
+          if (currentError) throw currentError;
+          const canonicalRows = Array.isArray(current.quantity_rows)
+            ? current.quantity_rows as XySyncMachineQuantityRow[]
+            : [];
+          if (!canonicalRows.length) throw new Error("The saved refill target changed during XY synchronization.");
+          return canonicalRows;
         },
       });
 
