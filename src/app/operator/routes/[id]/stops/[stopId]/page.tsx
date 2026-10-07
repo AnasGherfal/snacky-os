@@ -116,8 +116,15 @@ interface StopRefillItem {
     machine_slot_id?: string | null;
     slot_code?: string | null;
     current_qty?: unknown;
+    observed_current_qty?: unknown;
+    target_qty?: unknown;
     final_take_qty?: unknown;
     recommended_take_qty?: unknown;
+    transition_mode?: "none" | "empty_lane" | "replace_now";
+    substituted?: boolean;
+    from_product_id?: string | null;
+    from_product_name?: string | null;
+    return_current_qty?: unknown;
   }>;
   assignedQty?: number;
   parQty: number;
@@ -291,6 +298,7 @@ interface MissingProductReport {
 
 type StopDraft = {
   filledQtys: Record<string, number>;
+  laneFilledQtys: Record<string, number>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -594,6 +602,46 @@ async function prepareProofPhoto(file: File) {
   return new File([bestBlob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
 }
 
+function laneFillKey(productId: string, allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const laneIdentity = String(allocation.machine_slot_id ?? "").trim()
+    || `slot:${String(allocation.slot_code ?? "VMS").trim() || "VMS"}`;
+  return `${productId}:${laneIdentity}`;
+}
+
+function plannedLaneAddition(allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const value = Number(allocation.final_take_qty ?? allocation.recommended_take_qty ?? 0);
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function laneStartingQty(allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const value = Number(allocation.current_qty ?? 0);
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function distributeProductFillToLanes(item: StopRefillItem, totalQuantity: number) {
+  const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+  const result: Record<string, number> = {};
+  let remaining = Math.max(0, Math.floor(Number(totalQuantity) || 0));
+  allocations.forEach((allocation, index) => {
+    const planned = plannedLaneAddition(allocation);
+    const isLast = index === allocations.length - 1;
+    const quantity = isLast ? remaining : Math.min(remaining, planned);
+    result[laneFillKey(item.productId, allocation)] = Math.max(0, quantity);
+    remaining = Math.max(0, remaining - quantity);
+  });
+  return result;
+}
+
+function slotQuantitiesForItem(item: StopRefillItem, laneFilledQtys: Record<string, number>) {
+  const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+  if (!allocations.length) return undefined;
+  return allocations.map((allocation) => ({
+    machineSlotId: String(allocation.machine_slot_id ?? "").trim() || null,
+    slotCode: String(allocation.slot_code ?? "").trim() || null,
+    quantity: Math.max(0, Math.floor(Number(laneFilledQtys[laneFillKey(item.productId, allocation)] ?? 0))),
+  }));
+}
+
 function comparableStopDraft(draft: StopDraft) {
   return JSON.stringify({
     ...draft,
@@ -634,6 +682,7 @@ export default function MachineStopPage() {
   const [issuePriority, setIssuePriority] = useState<"critical" | "high" | "normal" | "low">("normal");
   const [issueDescription, setIssueDescription] = useState("");
   const [filledQtys, setFilledQtys] = useState<Record<string, number>>({});
+  const [laneFilledQtys, setLaneFilledQtys] = useState<Record<string, number>>({});
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -706,6 +755,7 @@ export default function MachineStopPage() {
   const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
   const stopDraft = useMemo<StopDraft>(() => ({
     filledQtys,
+    laneFilledQtys,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -722,6 +772,7 @@ export default function MachineStopPage() {
     cleaningDone,
     extraProducts,
     filledQtys,
+    laneFilledQtys,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -742,6 +793,7 @@ export default function MachineStopPage() {
     shouldSave: shouldSaveStopDraft,
     onRestore: (draft) => {
       setFilledQtys(draft.filledQtys ?? {});
+      setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -963,7 +1015,8 @@ export default function MachineStopPage() {
     assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
     filledQty: Number(filledQtys[item.productId] ?? 0),
     slotAllocations: item.slotAllocations ?? [],
-  })), [filledQtys, stopData]);
+    slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
+  })), [filledQtys, laneFilledQtys, stopData]);
   const stopExecutionSummary = useMemo(() => {
     if (!stopData) {
     return {
@@ -1054,16 +1107,20 @@ export default function MachineStopPage() {
           }).catch((err) => console.warn("[operator:stop] Could not mark stop in progress", err));
         }
         const initialQtys: Record<string, number> = {};
+        const initialLaneQtys: Record<string, number> = {};
         const initialNotes: Record<string, string> = {};
         const initialUnavailable: Record<string, boolean> = {};
         stopPayload.refillItems?.forEach((item: StopRefillItem) => {
           const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
           const hasSavedQty = item.filledQty !== null && item.filledQty !== undefined;
-          initialQtys[item.productId] = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
+          const initialTotal = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
+          initialQtys[item.productId] = initialTotal;
+          Object.assign(initialLaneQtys, distributeProductFillToLanes(item, initialTotal));
           if (item.notes) initialNotes[item.productId] = item.notes;
           if (hasSavedQty && Number(item.filledQty ?? 0) === 0 && assignedQty > 0) initialUnavailable[item.productId] = true;
         });
         setFilledQtys(initialQtys);
+        setLaneFilledQtys(initialLaneQtys);
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1072,6 +1129,7 @@ export default function MachineStopPage() {
         setFinalPhotoName(initialFinalPhotoName);
         initialStopDraftRef.current = comparableStopDraft({
           filledQtys: initialQtys,
+          laneFilledQtys: initialLaneQtys,
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1116,8 +1174,34 @@ export default function MachineStopPage() {
   const setAssignedQty = (item: StopRefillItem, quantity: number) => {
     const current = filledQtys[item.productId] ?? 0;
     const max = remainingBagQty(item.productId, current);
-    setFilledQtys((prev) => ({ ...prev, [item.productId]: Math.max(0, Math.min(max, quantity)) }));
+    const nextQuantity = Math.max(0, Math.min(max, quantity));
+    setFilledQtys((prev) => ({ ...prev, [item.productId]: nextQuantity }));
+    setLaneFilledQtys((prev) => ({ ...prev, ...distributeProductFillToLanes(item, nextQuantity) }));
     if (quantity > max) setError("Actual filled quantity cannot exceed what is available in the operator bag.");
+  };
+
+  const setLaneFilledQty = (
+    item: StopRefillItem,
+    allocation: NonNullable<StopRefillItem["slotAllocations"]>[number],
+    quantity: number,
+  ) => {
+    const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+    const key = laneFillKey(item.productId, allocation);
+    const currentProductTotal = Number(filledQtys[item.productId] ?? 0);
+    const maximumProductTotal = remainingBagQty(item.productId, currentProductTotal);
+    const otherLaneTotal = allocations.reduce((sum, row) => {
+      const rowKey = laneFillKey(item.productId, row);
+      return rowKey === key ? sum : sum + Math.max(0, Number(laneFilledQtys[rowKey] ?? 0));
+    }, 0);
+    const plannedMaximum = plannedLaneAddition(allocation);
+    const laneMaximum = Math.max(0, Math.min(plannedMaximum || maximumProductTotal, maximumProductTotal - otherLaneTotal));
+    const nextLaneQty = Math.max(0, Math.min(laneMaximum, Math.floor(Number(quantity) || 0)));
+    const nextTotal = otherLaneTotal + nextLaneQty;
+    setLaneFilledQtys((prev) => ({ ...prev, [key]: nextLaneQty }));
+    setFilledQtys((prev) => ({ ...prev, [item.productId]: nextTotal }));
+    if (quantity > laneMaximum) {
+      setError("Lane quantity cannot exceed its planned capacity or what is available in the operator bag.");
+    }
   };
 
   const addExtraProduct = () => {
@@ -1226,6 +1310,7 @@ export default function MachineStopPage() {
           reason: unavailableProducts[item.productId] ? "Product not in operator bag" : undefined,
           notes: lineNotes[item.productId] || undefined,
           unavailable: Boolean(unavailableProducts[item.productId]),
+          slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
         })),
         extraItems: extraProducts
           .filter((item) => item.productId && item.quantity > 0)
