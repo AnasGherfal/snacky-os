@@ -1,4 +1,3 @@
-
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,15 +7,25 @@ const setup=fs.readFileSync('src/app/machines/setup/page.tsx','utf8');
 const sidebar=fs.readFileSync('src/components/Sidebar.tsx','utf8');
 const machines=fs.readFileSync('src/app/machines/page.tsx','utf8');
 
-test('owner data health separates current operational exceptions from legacy cleanup',()=>{
-  for(const label of ['Machines missing site','Active sites missing distance','Negative stock balances','Stale refill orders (>48h)','Cash actions 3–30 days old','Recent VMS failures / partial'])assert.ok(health.includes(label));
-  assert.match(health,/Legacy: older than 30 days/);
-  assert.match(health,/Old draft \/ preview batches/);
-  assert.match(health,/current_inventory_by_location/);
-  assert.match(health,/quantity_on_hand/);
-  assert.match(health,/hasAnyRole\(profile, \["owner", "admin"\]\)/);
-  assert.doesNotMatch(health,/\["owner", "admin", "supervisor"\]/);
-  assert.match(health,/\.in\("status", \["draft","assigned","picked"\]\)/);
+test('owner data health separates current operational exceptions from safe cleanup queues',()=>{
+  for(const label of [
+    'Machines missing site',
+    'Active sites missing distance',
+    'Negative stock balances',
+    'Safe stale refill cancellations',
+    'Cash actions 3–30 days old',
+    'Recent VMS failures / partial',
+  ]) assert.ok(health.includes(label));
+
+  assert.match(health,/snacky_data_health_workspace_v1/);
+  assert.match(health,/Legacy unclassified/);
+  assert.match(health,/Legacy classified/);
+  assert.match(health,/Safe archive candidates/);
+  assert.match(health,/picked orders remain review-only because physical custody may already exist/);
+  assert.match(health,/bulk_cancel_stale_refills/);
+  assert.match(health,/bulk_archive_vms_batches/);
+  assert.match(health,/hasAnyRole\(profile,\["owner","admin"\]\)/);
+  assert.doesNotMatch(health,/\["owner","admin","supervisor"\]/);
 });
 
 test('machine setup assigns a real site and stores distance on the location',()=>{
