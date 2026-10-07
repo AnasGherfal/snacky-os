@@ -54,7 +54,6 @@ export function MachineQuantityConfirmationCard({
   const [offlineNote, setOfflineNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const attemptedAutoSaveKey = useRef<string | null>(null);
   const matchProductTotals = (previous: MachineQuantityRow[], current: MachineQuantityRow[]) => {
     const totals = (values: MachineQuantityRow[]) => {
       const sums = new Map<string, number>();
@@ -107,25 +106,8 @@ export function MachineQuantityConfirmationCard({
     onStateChangeRef.current?.({ installed, ready });
   }, [installed, ready]);
 
-  // Actual product/lane quantities are saved automatically. Screenshot evidence
-  // and power-off explanations are optional; they must not block a normal stop.
-  useEffect(() => {
-    if (!loaded || !installed || completed || ready || saving || rows.length === 0
-      || attemptedAutoSaveKey.current === currentKey) return;
-    const timer = window.setTimeout(() => {
-      attemptedAutoSaveKey.current = currentKey;
-      setSaving(true);
-      setError("");
-      void saveMode("sync_pending")
-        .catch((cause) => setError(cause instanceof Error ? cause.message : tr(
-          "Could not save the actual quantities yet. Tap Save for later to retry.",
-          "تعذر حفظ الكميات الفعلية. اضغط حفظ للمزامنة لاحقاً لإعادة المحاولة.",
-        )))
-        .finally(() => setSaving(false));
-    }, 850);
-    return () => window.clearTimeout(timer);
-  }, [loaded, installed, completed, ready, saving, rows.length, currentKey]);
-
+  // The operator's quantities become a completed refill only after pressing
+  // Complete Stop. Optional evidence can be captured here beforehand.
   function filledItemsPayload() {
     return items.map((item) => ({ productId: item.productId, quantity: item.filledQty, slotQuantities: item.slotQuantities }));
   }
@@ -250,7 +232,7 @@ export function MachineQuantityConfirmationCard({
           <p className="mt-1 text-sm leading-6 text-slate-700">{tr("After physically filling the machine, Snacky writes the confirmed lane quantities into XY and reads them back to verify the result. Screenshots remain available as a fallback.", "بعد تعبئة الجهاز فعلياً، يرسل سناكي كميات الخانات المؤكدة إلى XY ثم يقرأها من جديد للتحقق. تبقى صور الشاشة خياراً احتياطياً.")}</p>
         </div>
         <span className={ownerPending ? "shrink-0 rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white" : ready ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
-          {ownerPending ? tr("Sync pending", "مزامنة معلقة") : ready ? tr("Saved", "تم الحفظ") : tr("Saving quantities", "حفظ الكميات")}
+          {ownerPending ? tr("Sync pending", "مزامنة معلقة") : ready ? tr("Saved", "تم الحفظ") : tr("Saved on completion", "يُحفظ عند الإنهاء")}
         </span>
       </div>
 
@@ -307,7 +289,6 @@ export function MachineQuantityConfirmationCard({
 
       {loaded && installed && !completed && !ready && !saving ? (
         <button type="button" className="btn-secondary mt-3 w-full" onClick={() => {
-          attemptedAutoSaveKey.current = null;
           setSaving(true);
           setError("");
           void saveMode("sync_pending")
