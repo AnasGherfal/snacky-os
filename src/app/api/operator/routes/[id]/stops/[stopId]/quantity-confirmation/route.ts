@@ -94,7 +94,22 @@ async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdm
     .select("id, product_id, slot_code")
     .eq("machine_id", machineId);
   if (machineSlotsError) throw machineSlotsError;
-  return enrichMachineQuantityPlanRows(planRows, machineSlots ?? []);
+  // Keep original lane provenance BEFORE catalogue enrichment. A product-level
+  // admin assignment must never become an "exact" XY lane just because we know
+  // one catalogue lane that happens to carry the same product.
+  const withLaneProvenance = planRows.map((plan) => {
+    const allocations = Array.isArray(plan.slot_allocations) ? plan.slot_allocations : [];
+    const hasExactAllocatedLanes = allocations.length > 0 && allocations.every((value) => {
+      const allocation = value as { slot_code?: unknown; machine_slot_id?: unknown };
+      return Boolean(clean(allocation?.slot_code) && clean(allocation?.machine_slot_id));
+    });
+    const hasExactSingleLane = Boolean(
+      clean(plan.slot_code) && clean(plan.machine_slot_id)
+      && !clean(plan.slot_code).includes(",")
+    );
+    return { ...plan, original_exact_lane: hasExactAllocatedLanes || hasExactSingleLane };
+  });
+  return enrichMachineQuantityPlanRows(withLaneProvenance, machineSlots ?? []);
 }
 
 const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at";
@@ -246,6 +261,18 @@ export async function POST(
     const confirmationKey = machineQuantityConfirmationKey(rows);
 
     if(mode==="xy_api"){
+      const missingOriginalAssignments = planRows.filter((plan: MachineQuantityPlanRow & { original_exact_lane?: boolean }) => (
+        plan.original_exact_lane !== true
+        && (payload.filledItems as MachineQuantityFilledItem[]).some((item) => (
+          clean(item.productId) === clean(plan.product_id) && Number(item.quantity ?? 0) > 0
+        ))
+      ));
+      if (missingOriginalAssignments.length) {
+        return NextResponse.json({
+          success: false, installed: true, code: "XY_LANE_ASSIGNMENT_REQUIRED",
+          error: "This route was created with product totals but without exact XY lane assignments. Snacky cannot safely write those totals into guessed lanes. Update the real machine lanes and upload current XY inventory screenshots as evidence.",
+        }, { status: 409 });
+      }
       const machineRelation=Array.isArray(context.stop.machine)?context.stop.machine[0]:context.stop.machine;
       const vmsMachineId=clean(machineRelation?.vms_machine_id);
       if(!vmsMachineId){
