@@ -129,3 +129,24 @@ test("large route AI reasoning is batched and each failed batch falls back safel
   assert.match(planner, /tasks\.slice\(offset, offset \+ AI_TASK_BATCH_SIZE\)/);
   assert.match(planner, /batch\.map\(fallbackDecision\)/);
 });
+
+
+test("empty lanes are merchandised by AI instead of blindly restoring the old SKU", () => {
+  assert.match(planner, /emptyLane \? 12 : 55/);
+  assert.match(planner, /Every empty lane must receive a compatible in-stock candidate/);
+  assert.match(planner, /Repeating the same strong product across multiple lanes is explicitly allowed/);
+  assert.match(planner, /aCoverage \* 20/);
+  assert.match(form, /No-empty-lane policy: AI may repeat strong sellers across lanes/);
+});
+
+test("route-wide allocation retries another compatible product instead of dropping a lane", () => {
+  assert.match(planner, /Smart Route tried the next-best compatible product instead/);
+  assert.match(planner, /HARD NO-EMPTY-LANE EXCEPTION/);
+  assert.match(planner, /task\.candidates\.find\(\(row\) => \{/);
+  assert.match(planner, /priority = \{ empty_lane: 3, replace_now: 2, none: 1 \}/);
+});
+
+test("historical exact-slot evidence can override imperfect inferred fit labels", () => {
+  assert.match(planner, /candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen/);
+  assert.match(planner, /!explicitAllowed && !historicallySeen && candidateFit !== currentFit/);
+});
