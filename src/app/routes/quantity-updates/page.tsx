@@ -90,6 +90,7 @@ export default async function MachineQuantityUpdatesPage() {
                   routeDate={route?.route_date ?? null}
                   operatorName={operator?.full_name ?? null}
                   offlineReason={record.offline_reason ?? null}
+                  verificationStatus={record.verification_status}
                   autoSyncEligible={record.auto_sync_eligible === true}
                   rows={Array.isArray(record.quantity_rows) ? record.quantity_rows as MachineQuantityRow[] : []}
                 />
