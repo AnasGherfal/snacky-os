@@ -49,6 +49,7 @@ export type MachineQuantityFilledItem = {
 
 export const MACHINE_QUANTITY_READY_STATUSES = [
   "xy_api_verified",
+  "xy_sync_pending",
   "xy_screenshot_saved",
   "offline_pending",
   "owner_completed",
