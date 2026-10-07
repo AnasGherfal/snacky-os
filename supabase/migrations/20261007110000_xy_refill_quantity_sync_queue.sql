@@ -7,7 +7,8 @@ begin;
 alter table public.route_stop_quantity_confirmations
   add column if not exists sync_attempt_count integer not null default 0,
   add column if not exists last_sync_attempt_at timestamptz,
-  add column if not exists last_sync_error text;
+  add column if not exists last_sync_error text,
+  add column if not exists auto_sync_eligible boolean not null default false;
 
 alter table public.route_stop_quantity_confirmations
   drop constraint if exists route_stop_quantity_confirmations_status_valid;
@@ -36,7 +37,8 @@ alter table public.route_stop_quantity_confirmations
 
 create index if not exists idx_route_stop_quantity_confirmations_xy_sync_pending
   on public.route_stop_quantity_confirmations(last_sync_attempt_at asc nulls first, submitted_at asc)
-  where verification_status in ('offline_pending', 'xy_sync_pending');
+  where auto_sync_eligible = true
+    and verification_status in ('offline_pending', 'xy_sync_pending');
 
 select pg_notify('pgrst', 'reload schema');
 
