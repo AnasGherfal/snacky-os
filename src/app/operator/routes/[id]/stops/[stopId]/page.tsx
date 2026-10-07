@@ -1994,6 +1994,7 @@ export default function MachineStopPage() {
                 const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
                 const maxQty = remainingBagQty(item.productId, actualQty);
+                const laneAllocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
                 return (
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -2042,8 +2043,44 @@ export default function MachineStopPage() {
                       <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
                       <Metric label={tr("Difference", "الفرق")} value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[220px_1fr]">
-                      <label className="block">
+                    {laneAllocations.length ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 md:p-4">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{tr("Actual quantity by lane", "الكمية الفعلية لكل خانة")}</div>
+                            <div className="text-xs text-slate-500">{tr("Record what you physically put into each lane. Snacky totals these automatically.", "سجّل ما وضعته فعلياً في كل خانة. سناكي يجمع الإجمالي تلقائياً.")}</div>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900">
+                            {tr("Total filled", "إجمالي التعبئة")}: {actualQty}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {laneAllocations.map((allocation, laneIndex) => {
+                            const key = laneFillKey(item.productId, allocation);
+                            const planned = plannedLaneAddition(allocation);
+                            const before = laneStartingQty(allocation);
+                            const laneActual = Math.max(0, Number(laneFilledQtys[key] ?? 0));
+                            return (
+                              <div key={key || laneIndex} className="rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <div className="font-bold text-slate-900">{tr("Lane", "الخانة")} {String(allocation.slot_code ?? item.slotCode ?? "VMS")}</div>
+                                  <div className="text-xs text-slate-500">{before} + {laneActual} = <strong className="text-slate-900">{before + laneActual}</strong></div>
+                                </div>
+                                <div className="mb-2 text-xs text-slate-500">{tr("Planned add", "الإضافة المخططة")}: {planned}</div>
+                                <QuantityStepper
+                                  value={laneActual}
+                                  max={planned || maxQty}
+                                  onChange={(quantity) => setLaneFilledQty(item, allocation, quantity)}
+                                  disabled={unavailableProducts[item.productId]}
+                                  inputLabel={`${item.productName} lane ${String(allocation.slot_code ?? "")} actual filled quantity`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="block max-w-[220px]">
                         <span className="mb-1 block text-sm font-medium text-slate-800">{t("Filled quantity")}</span>
                         <QuantityStepper
                           value={actualQty}
@@ -2053,16 +2090,16 @@ export default function MachineStopPage() {
                           inputLabel={`${item.productName} actual filled quantity`}
                         />
                       </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes for change")}</span>
-                        <input
-                          value={lineNotes[item.productId] ?? ""}
-                          onChange={(event) => setLineNotes((prev) => ({ ...prev, [item.productId]: event.target.value }))}
-                          className="field-input"
-                          placeholder={t("Explain shortage, overfill, or condition")}
-                        />
-                      </label>
-                    </div>
+                    )}
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes for change")}</span>
+                      <input
+                        value={lineNotes[item.productId] ?? ""}
+                        onChange={(event) => setLineNotes((prev) => ({ ...prev, [item.productId]: event.target.value }))}
+                        className="field-input"
+                        placeholder={t("Explain shortage, overfill, or condition")}
+                      />
+                    </label>
                     <label className="flex items-center gap-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
@@ -2070,7 +2107,16 @@ export default function MachineStopPage() {
                         onChange={(event) => {
                           const checked = event.target.checked;
                           setUnavailableProducts((prev) => ({ ...prev, [item.productId]: checked }));
-                          if (checked) setFilledQtys((prev) => ({ ...prev, [item.productId]: 0 }));
+                          if (checked) {
+                            setFilledQtys((prev) => ({ ...prev, [item.productId]: 0 }));
+                            setLaneFilledQtys((prev) => {
+                              const next = { ...prev };
+                              laneAllocations.forEach((allocation) => {
+                                next[laneFillKey(item.productId, allocation)] = 0;
+                              });
+                              return next;
+                            });
+                          }
                         }}
                       />
                       {t("Mark assigned product as unavailable")}
