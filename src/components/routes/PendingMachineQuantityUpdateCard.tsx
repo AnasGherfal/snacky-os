@@ -13,6 +13,7 @@ export function PendingMachineQuantityUpdateCard({
   routeDate,
   operatorName,
   offlineReason,
+  autoSyncEligible,
   rows,
 }: {
   routeId: string;
@@ -23,6 +24,7 @@ export function PendingMachineQuantityUpdateCard({
   routeDate: string | null;
   operatorName: string | null;
   offlineReason: string | null;
+  autoSyncEligible: boolean;
   rows: MachineQuantityRow[];
 }) {
   const router = useRouter();
@@ -81,7 +83,7 @@ export function PendingMachineQuantityUpdateCard({
           <p className="text-xs text-slate-600">{machineCode ?? "-"} · {routeDate ?? "-"}{operatorName ? ` · ${operatorName}` : ""}</p>
         </div>
         <span className="self-start rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white">
-          {tr("Waiting for XY", "بانتظار XY")}
+          {autoSyncEligible ? tr("Waiting for XY", "بانتظار XY") : tr("Legacy review", "مراجعة سجل قديم")}
         </span>
       </div>
 
@@ -100,18 +102,27 @@ export function PendingMachineQuantityUpdateCard({
       </div>
 
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-semibold text-slate-950">{tr("Automatic XY retry", "إعادة محاولة XY تلقائياً")}</div>
+        <div className="text-sm font-semibold text-slate-950">
+          {autoSyncEligible ? tr("Automatic XY retry", "إعادة محاولة XY تلقائياً") : tr("Legacy power-off record", "سجل قديم لانقطاع الكهرباء")}
+        </div>
         <p className="mt-1 text-xs leading-5 text-slate-600">
-          {tr(
-            "Snacky OS keeps these exact quantities and retries them during the XY sync. No machine-settings entry or screenshot is required.",
-            "يحتفظ Snacky OS بهذه الكميات الدقيقة ويعيد إرسالها أثناء مزامنة XY. لا يلزم الدخول إلى إعدادات الجهاز أو رفع صورة شاشة.",
-          )}
+          {autoSyncEligible
+            ? tr(
+                "Snacky OS keeps these exact quantities and retries them during the XY sync. No machine-settings entry or screenshot is required.",
+                "يحتفظ Snacky OS بهذه الكميات الدقيقة ويعيد إرسالها أثناء مزامنة XY. لا يلزم الدخول إلى إعدادات الجهاز أو رفع صورة شاشة.",
+              )
+            : tr(
+                "This refill was saved before automatic XY sync existed. Snacky will not push its old quantity into the current machine automatically.",
+                "تم حفظ هذه التعبئة قبل وجود المزامنة التلقائية مع XY. لن يرسل سناكي كميتها القديمة إلى الجهاز الحالي تلقائياً.",
+              )}
         </p>
         {message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{message}</div> : null}
         {error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
-        <button type="button" onClick={() => void retryNow()} disabled={saving} className="btn-primary mt-3 w-full disabled:opacity-50">
-          {saving ? tr("Checking XY...", "جارٍ التحقق من XY...") : tr("Retry XY now", "إعادة محاولة XY الآن")}
-        </button>
+        {autoSyncEligible ? (
+          <button type="button" onClick={() => void retryNow()} disabled={saving} className="btn-primary mt-3 w-full disabled:opacity-50">
+            {saving ? tr("Checking XY...", "جارٍ التحقق من XY...") : tr("Retry XY now", "إعادة محاولة XY الآن")}
+          </button>
+        ) : null}
       </div>
     </article>
   );
