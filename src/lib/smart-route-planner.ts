@@ -425,6 +425,7 @@ function salesMaps(rows: SalesSignalRow[]) {
 
 function candidateScore({
   original,
+  emptyLane,
   historicallySeen,
   explicitAllowed,
   locationRule,
@@ -439,6 +440,7 @@ function candidateScore({
   sameBrand,
 }: {
   original: boolean;
+  emptyLane: boolean;
   historicallySeen: boolean;
   explicitAllowed: boolean;
   locationRule: LocationRuleRow | null;
@@ -452,7 +454,10 @@ function candidateScore({
   salesTransactions: number;
   sameBrand: boolean;
 }) {
-  let score = original ? 70 : 0;
+  // Continuity matters for a partially stocked lane, but an EMPTY lane is merchandising
+  // space that should go to the strongest proven seller rather than blindly restoring
+  // the previous SKU.
+  let score = original ? (emptyLane ? 12 : 55) : 0;
   if (historicallySeen) score += 24;
   if (explicitAllowed) score += 30;
   if (sameBrand) score += 8;
@@ -515,9 +520,10 @@ async function callPlannerAI(tasks: PlanTask[]) {
     "Choose exactly one candidate product for each refill task when at least one candidate is useful.",
     "Never invent a product ID and never exceed neededQty or candidate availableUnits.",
     "The candidate list is already filtered by storage, physical fit, and location hard rules.",
-    "Prefer keeping the original product when it is sufficiently available and has reasonable local demand.",
+    "For an empty lane, do not default to the old SKU just for continuity. Treat the lane as merchandising space and choose the candidate most likely to sell before the next service.",
+    "Every empty lane must receive a compatible in-stock candidate when one exists. Repeating the same strong product across multiple lanes is explicitly allowed and is better than preserving weak variety.",
     "When transitionMode is replace_now, the original product has no warehouse stock and the planner has determined the lane should be changed before it empties. Choose the strongest compatible substitute; the operator will remove the remaining old units and return them to storage before changing the XY slot. Never mix old and new products in one lane.",
-    "When transitionMode is empty_lane, choose a compatible substitute only when it is stronger than keeping the original. Prefer verified transaction sales: exact-machine sales first, then same venue-type sales, then network sales. Use stock-depletion demand and route history as secondary evidence.",
+    "When transitionMode is empty_lane, choose the strongest compatible product using verified transaction sales first: exact-machine sales, then same venue-type sales, then network sales. Use stock-depletion demand, storage coverage and route history as secondary evidence. The previous SKU receives only a small continuity preference.",
     "Respect preferred/avoid location signals. Avoid low-confidence novelty when a proven-fit seller exists.",
     "Give short operational reasons. Do not create routes or reserve stock; this is only a review draft.",
     JSON.stringify({ tasks: compactTasks }),
@@ -607,13 +613,48 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
       ? task.candidates.find((row) => row.productId === String(decision?.selectedProductId ?? ""))
       : null;
 
-    if (!candidate) {
-      if (proposedDecision) warnings.push(`Ignored invalid AI product choice for ${task.machineName} slot ${task.slotCode}.`);
-      decision = fallbackDecision(task) ?? undefined;
-      candidate = decision ? task.candidates.find((row) => row.productId === decision?.selectedProductId) ?? null : null;
+    if (proposedDecision && !candidate) {
+      warnings.push(`Ignored invalid AI product choice for ${task.machineName} slot ${task.slotCode}.`);
     }
+
+    if (candidate && (remaining.get(candidate.productId) ?? 0) <= 0) {
+      warnings.push(
+        `${candidate.productName} was exhausted by higher-priority route allocations before ${task.machineName} slot ${task.slotCode}; Smart Route tried the next-best compatible product instead.`,
+      );
+      candidate = null;
+      decision = undefined;
+    }
+
+    if (!candidate) {
+      candidate = task.candidates.find((row) => {
+        if (!row.original && !task.allowSubstitution) return false;
+        return Math.max(0, remaining.get(row.productId) ?? 0) > 0;
+      }) ?? null;
+
+      if (candidate) {
+        const deterministic = fallbackDecision({
+          ...task,
+          candidates: [candidate, ...task.candidates.filter((row) => row.productId !== candidate?.productId)],
+        });
+        decision = deterministic
+          ? {
+              ...deterministic,
+              selectedProductId: candidate.productId,
+              reason: proposedDecision
+                ? "The AI-selected SKU was unavailable after route-wide allocation, so Snacky used the next highest-ranked compatible in-stock product to keep the lane covered."
+                : deterministic.reason,
+            }
+          : undefined;
+      }
+    }
+
     if (!decision || !candidate) {
-      warnings.push(`No compatible in-stock product is available for ${task.machineName} slot ${task.slotCode} (${task.currentProductName}).`);
+      const policy = task.transitionMode === "empty_lane"
+        ? "HARD NO-EMPTY-LANE EXCEPTION"
+        : "Coverage exception";
+      warnings.push(
+        `${policy}: no compatible in-stock product is available for ${task.machineName} slot ${task.slotCode} (${task.currentProductName}).`,
+      );
       continue;
     }
 
@@ -621,7 +662,9 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
     const requested = units(decision.quantity);
     const quantity = Math.min(task.neededQty, requested || task.neededQty, available);
     if (quantity <= 0) {
-      warnings.push(`${candidate.productName} became unavailable after allocating other stops; skipped ${task.machineName} slot ${task.slotCode}.`);
+      warnings.push(
+        `HARD NO-EMPTY-LANE EXCEPTION: all compatible candidates were exhausted before ${task.machineName} slot ${task.slotCode} could be covered.`,
+      );
       continue;
     }
     if (quantity < requested) {
@@ -631,7 +674,7 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
     const substituted = candidate.productId !== task.currentProductId;
     if (substituted && !task.allowSubstitution) {
       warnings.push(`Blocked substitution in non-empty ${task.machineName} slot ${task.slotCode}; kept the existing product unchanged.`);
-      const original = task.candidates.find((row) => row.original);
+      const original = task.candidates.find((row) => row.original && Math.max(0, remaining.get(row.productId) ?? 0) > 0);
       if (!original) continue;
       const originalAvailable = Math.max(0, remaining.get(original.productId) ?? 0);
       const originalQty = Math.min(task.neededQty, originalAvailable);
@@ -942,8 +985,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
         if (!original) {
           if (!allowSubstitution) return null;
-          if (currentGroup && candidateGroup !== currentGroup && !explicitAllowed) return null;
-          if (!explicitAllowed && candidateFit !== currentFit) return null;
+          if (currentGroup && candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen) return null;
+          if (!explicitAllowed && !historicallySeen && candidateFit !== currentFit) return null;
         }
 
         const rule = locationRuleFor(locationRules, machine.id, locationId, locationType, candidate.id);
@@ -972,6 +1015,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
           availableUnits: available,
           score: candidateScore({
             original,
+            emptyLane: currentQty === 0,
             historicallySeen,
             explicitAllowed,
             locationRule: rule,
@@ -1001,10 +1045,14 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       })
       .filter((row): row is Candidate => Boolean(row))
       .sort((a, b) => {
-        if (a.original !== b.original && (availableByProduct.get(product.id) ?? 0) >= Math.min(neededQty, Math.ceil(capacity * 0.5))) {
-          return a.original ? -1 : 1;
-        }
-        return b.score - a.score || b.availableUnits - a.availableUnits || a.productName.localeCompare(b.productName);
+        const aCoverage = Math.min(1, a.availableUnits / Math.max(1, neededQty));
+        const bCoverage = Math.min(1, b.availableUnits / Math.max(1, neededQty));
+        const aEffectiveScore = a.score + aCoverage * 20;
+        const bEffectiveScore = b.score + bCoverage * 20;
+        return bEffectiveScore - aEffectiveScore
+          || b.score - a.score
+          || b.availableUnits - a.availableUnits
+          || a.productName.localeCompare(b.productName);
       })
       .slice(0, 10);
 
@@ -1036,6 +1084,22 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       candidates,
     });
   }
+
+  // Route-wide scarce-stock allocation is deterministic after AI reasoning. Put truly empty
+  // lanes first so available substitutes cover sellable space before topping up lanes that
+  // already contain product. Within the same urgency class, prioritize stronger local demand.
+  tasks.sort((a, b) => {
+    const priority = { empty_lane: 3, replace_now: 2, none: 1 } as const;
+    const urgency = priority[b.transitionMode] - priority[a.transitionMode];
+    if (urgency !== 0) return urgency;
+    const aBest = a.candidates[0];
+    const bBest = b.candidates[0];
+    return (bBest?.machineSalesUnits ?? 0) - (aBest?.machineSalesUnits ?? 0)
+      || (bBest?.machineDemandUnits ?? 0) - (aBest?.machineDemandUnits ?? 0)
+      || b.dailyVelocity - a.dailyVelocity
+      || a.machineName.localeCompare(b.machineName)
+      || a.slotCode.localeCompare(b.slotCode, undefined, { numeric: true });
+  });
 
   if (!tasks.length) {
     const generatedAt = new Date().toISOString();
