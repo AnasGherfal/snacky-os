@@ -2293,7 +2293,7 @@ export default function MachineStopPage() {
                             
                             
                             
-                            setXyQueueActualQty((stopData.queuedXyChanges ?? []).find((row) => row.slot_code === requirement.slotCode)?.target_stock_qty ?? laneFill);
+
                             setXyReplacementProductId(requirement.targetProductId);
                             setXyChangeError("");
                             setXyChangeSuccess("");
