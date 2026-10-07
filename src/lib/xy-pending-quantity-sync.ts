@@ -20,6 +20,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
     .from("route_stop_quantity_confirmations")
     .select("id, route_id, route_stop_id, machine_id, quantity_rows, verification_status, sync_attempt_count, machine:machines(id, name, machine_code, vms_machine_id)")
     .in("verification_status", ["offline_pending", "xy_sync_pending"])
+    .eq("auto_sync_eligible", true)
     .order("last_sync_attempt_at", { ascending: true, nullsFirst: true })
     .order("submitted_at", { ascending: true })
     .limit(Math.max(1, Math.min(100, limit)));
@@ -70,6 +71,7 @@ export async function retryPendingXyQuantitySyncs(limit = 20) {
             sync_attempt_count: nextAttemptCount,
             last_sync_attempt_at: attemptedAt,
             last_sync_error: null,
+            auto_sync_eligible: false,
             resolved_at: attemptedAt,
             updated_at: attemptedAt,
           })
