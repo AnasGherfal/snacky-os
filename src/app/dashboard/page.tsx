@@ -902,8 +902,8 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       key: "machine-quantity-updates",
       title: localize("XY quantity updates waiting", "تحديثات كميات XY بانتظار المزامنة"),
       detail: localize(
-        `${data.pendingMachineQuantityUpdateCount} saved refill${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} are waiting for XY confirmation. Snacky retries them automatically.`,
-        `${data.pendingMachineQuantityUpdateCount} من التعبئات المحفوظة بانتظار تأكيد XY، ويعيد سناكي المحاولة تلقائياً.`,
+        `${data.pendingMachineQuantityUpdateCount} machine quantity update${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} need attention. New eligible refills retry automatically; legacy records stay manual.`,
+        `${data.pendingMachineQuantityUpdateCount} من تحديثات كميات الأجهزة تحتاج متابعة. التعبئات الجديدة المؤهلة يعيد سناكي محاولتها تلقائياً، أما السجلات القديمة فتبقى يدوية.`,
       ),
       href: "/routes/quantity-updates",
       cta: localize("Open quantity updates", "فتح تحديثات الكميات"),
