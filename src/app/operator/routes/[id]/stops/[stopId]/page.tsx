@@ -1846,6 +1846,10 @@ export default function MachineStopPage() {
                                     setXySwapSourceSlotCode(null);
                                     setXySwapTargetSlotCode("");
                                     setXyEditSlotCode(slot.slotCode);
+                                    setXyChangeOffline(false);
+                                    setXyQueuePhysicalConfirmed(false);
+                                    setXyQueueLaneDisabled(false);
+                                    setXyQueueActualQty(0);
                                     setXyReplacementProductId("");
                                     setXyChangeError("");
                                     setXyChangeSuccess("");
@@ -2065,6 +2069,10 @@ export default function MachineStopPage() {
               setXyEditSlotCode(null);
               setXyReplacementProductId("");
               setXyChangeError("");
+              setXyChangeOffline(false);
+              setXyQueuePhysicalConfirmed(false);
+              setXyQueueLaneDisabled(false);
+              setXyQueueActualQty(0);
             };
 
             return (
@@ -2283,6 +2291,10 @@ export default function MachineStopPage() {
                             setXySwapSourceSlotCode(null);
                             setXySwapTargetSlotCode("");
                             setXyEditSlotCode(requirement.slotCode);
+                            setXyChangeOffline(false);
+                            setXyQueuePhysicalConfirmed(false);
+                            setXyQueueLaneDisabled(false);
+                            setXyQueueActualQty(0);
                             setXyReplacementProductId(requirement.targetProductId);
                             setXyChangeError("");
                             setXyChangeSuccess("");
