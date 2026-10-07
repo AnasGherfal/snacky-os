@@ -2214,7 +2214,7 @@ export default function MachineStopPage() {
                     >
                       {xyChangeSaving
                         ? tr("Updating...", "جاري التحديث...")
-                        : tr("Apply & verify", "تطبيق وتحقق")}
+                        : tr("Save product change", "حفظ تغيير المنتج")}
                     </button>
                   </div>
                 </div>
