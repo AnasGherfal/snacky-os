@@ -255,18 +255,21 @@ export async function POST(
       summary: `XY rejected slot ${slotCode} product change before machine verification`,
     });
 
+    const xyMachineOffline = /设备不在线|device\s*(?:is\s*)?offline|machine\s*(?:is\s*)?offline|not\s+online/i.test(String(write.message ?? ""));
     return NextResponse.json({
       success: false,
       verified: false,
       writeAccepted: false,
       xyCode: write.code,
       xyMessage: write.message,
-      code: "XY_WRITE_REJECTED",
-      error: write.message
-        ? `XY rejected this change: ${write.message} No machine change was made.`
-        : "XY rejected this change before it reached the machine. No machine change was made.",
+      code: xyMachineOffline ? "XY_MACHINE_OFFLINE" : "XY_WRITE_REJECTED",
+      error: xyMachineOffline
+        ? "XY says this machine is offline. No product change was made. Check machine power and internet/SIM connection. If powered on, do not mark it as having no electricity. Retry after XY reconnects. Do not load the replacement product until XY verifies the lane change."
+        : write.message
+          ? `XY rejected this change: ${write.message} No machine change was made.`
+          : "XY rejected this change before it reached the machine. No machine change was made.",
       slot: beforeSlot,
-    }, { status: 502 });
+    }, { status: xyMachineOffline ? 503 : 502 });
   }
 
   const verification = await verifyXySlot({
