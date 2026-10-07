@@ -13,6 +13,9 @@ const rulesPage = fs.readFileSync(path.join(repoRoot, "src/app/settings/smart-ro
 const operatorStop = fs.readFileSync(path.join(repoRoot, "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004061000_smart_route_planner.sql"), "utf8");
 const contextMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261004062500_smart_route_machine_context.sql"), "utf8");
+const operatorPickList = fs.readFileSync(path.join(repoRoot, "src/app/operator/routes/[id]/pick-list/page.tsx"), "utf8");
+const operatorSmartApi = fs.readFileSync(path.join(repoRoot, "src/app/api/operator/routes/[id]/smart-plan/route.ts"), "utf8");
+const applyMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261007105000_apply_smart_route_plan.sql"), "utf8");
 
 test("smart planner is draft-only and refreshes XY before reasoning", () => {
   assert.match(planner, /import "server-only"/);
@@ -36,8 +39,8 @@ test("substitutions use a transition zone before an unavailable product reaches 
   assert.match(planner, /projectedQtyAtNextService/);
   assert.match(planner, /originalAvailableUnits <= 0/);
   assert.match(planner, /transitionMode !== "none"/);
-  assert.match(planner, /replaceNow \? capacity : refillNeededQty/);
-  assert.match(planner, /if \(!allowSubstitution\) return null/);
+  assert.match(planner, /transitionMode === "replace_now" \? capacity : refillNeededQty/);
+  assert.match(planner, /if \(!preliminaryAllowSubstitution\) return null/);
   assert.match(planner, /candidateFit !== currentFit/);
   assert.match(planner, /explicitlyAllowedIds/);
   assert.match(planner, /historically_seen_exact_slot/);
@@ -56,7 +59,8 @@ test("planned product changes return old stock before XY replacement and never m
 test("AI can choose only backend-provided candidates and invalid choices fall back safely", () => {
   assert.match(planner, /Never invent a product ID/);
   assert.match(planner, /task\.candidates\.find\(\(row\) => row\.productId === String\(decision\?\.selectedProductId/);
-  assert.match(planner, /fallbackDecision\(task\)/);
+  assert.match(planner, /fallbackDecision\(\{/);
+  assert.match(planner, /next highest-ranked compatible in-stock product/);
   assert.match(planner, /plannerMode: "ai" \| "deterministic_fallback"/);
 });
 
@@ -128,4 +132,94 @@ test("large route AI reasoning is batched and each failed batch falls back safel
   assert.match(planner, /AI_TASK_BATCH_SIZE = 40/);
   assert.match(planner, /tasks\.slice\(offset, offset \+ AI_TASK_BATCH_SIZE\)/);
   assert.match(planner, /batch\.map\(fallbackDecision\)/);
+});
+
+
+test("empty lanes are merchandised by AI instead of blindly restoring the old SKU", () => {
+  assert.match(planner, /emptyLane \? 12 : 55/);
+  assert.match(planner, /Every empty lane must receive a compatible in-stock candidate/);
+  assert.match(planner, /Repeating the same strong product across multiple lanes is explicitly allowed/);
+  assert.match(planner, /aCoverage \* 20/);
+  assert.match(form, /No-empty-lane policy: AI may repeat strong sellers across lanes/);
+});
+
+test("route-wide allocation retries another compatible product instead of dropping a lane", () => {
+  assert.match(planner, /Smart Route tried the next-best compatible product instead/);
+  assert.match(planner, /HARD NO-EMPTY-LANE EXCEPTION/);
+  assert.match(planner, /task\.candidates\.find\(\(row\) => \{/);
+  assert.match(planner, /priority = \{ empty_lane: 3, replace_now: 2, none: 1 \}/);
+});
+
+test("historical exact-slot evidence can override imperfect inferred fit labels", () => {
+  assert.match(planner, /candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen/);
+  assert.match(planner, /!explicitAllowed && !historicallySeen && candidateFit !== currentFit/);
+});
+
+
+test("smart plan preserves per-lane assignments separately from pickup totals", () => {
+  assert.match(planner, /slotAssignments: SmartRoutePlanItem\[\]/);
+  assert.match(planner, /function slotAssignmentItems/);
+  assert.match(planner, /machineSlotId: decision\.machineSlotId/);
+  assert.match(planner, /slotCode: decision\.slotCode/);
+  assert.match(planner, /slotAssignments,\s*substitutions/);
+});
+
+test("replanning an existing route excludes that route's old reservation", () => {
+  assert.match(planner, /excludeRouteId\?: string \| null/);
+  assert.match(planner, /routeId === String\(input\.excludeRouteId \?\? ""\)/);
+  assert.match(operatorSmartApi, /excludeRouteId: routeId/);
+});
+
+test("operator can build Smart Pickup at storage before confirmation", () => {
+  assert.match(operatorPickList, /AI Smart Pickup/);
+  assert.match(operatorPickList, /Build Smart Pickup/);
+  assert.match(operatorPickList, /\/api\/operator\/routes\/\$\{routeId\}\/smart-plan/);
+  assert.match(operatorPickList, /no usable lane is left empty/);
+  assert.match(operatorPickList, /setPrepared\(Boolean\(payload\.prepared\)\)/);
+  assert.match(operatorSmartApi, /generateSmartRoutePlan/);
+  assert.match(operatorSmartApi, /plan\.slotAssignments/);
+});
+
+test("Smart Pickup refuses to overwrite physical pickup history", () => {
+  assert.match(operatorSmartApi, /picked_quantity/);
+  assert.match(operatorSmartApi, /picked_qty/);
+  assert.match(operatorSmartApi, /storage_to_operator_bag/);
+  assert.match(operatorSmartApi, /prepared_at/);
+  assert.match(applyMigration, /Smart Route cannot be regenerated after pickup has started/);
+});
+
+test("Smart Pickup apply is atomic planning only and leaves storage deduction to confirmation", () => {
+  assert.match(applyMigration, /snacky_apply_smart_route_plan_v1/);
+  assert.match(applyMigration, /delete from public\.route_stop_items/);
+  assert.match(applyMigration, /insert into public\.route_stop_items/);
+  assert.match(applyMigration, /insert into public\.route_stock_lines/);
+  assert.match(applyMigration, /'smart_ai_plan'/);
+  assert.doesNotMatch(applyMigration, /insert into public\.inventory_movements/i);
+  assert.doesNotMatch(applyMigration, /update public\.inventory/i);
+  assert.match(applyMigration, /security invoker/);
+  assert.match(applyMigration, /set search_path = pg_catalog/);
+  assert.match(applyMigration, /route_stop_items_source_check/);
+  assert.match(applyMigration, /refill_order_lines_source_check/);
+  assert.match(applyMigration, /'smart_ai_plan'::text/);
+  assert.match(applyMigration, /recommended_take_qty/);
+  assert.match(applyMigration, /final_take_qty/);
+  assert.match(applyMigration, /grant execute on function public\.snacky_apply_smart_route_plan_v1\(uuid, jsonb\) to service_role/);
+});
+
+
+test("Smart Route can re-merchandise a proven weak partially depleted lane", () => {
+  assert.match(planner, /const strongerLocalSeller = Boolean/);
+  assert.match(planner, /strongestAlternative\.machineSalesUnits >= 6/);
+  assert.match(planner, /strongestAlternative\.machineSalesUnits >= exactMachineSales \* 2\.5/);
+  assert.match(planner, /strongestAlternative\.score >= originalCandidate\.score \+ 10/);
+  assert.match(planner, /currentQty <= transitionFloorQty/);
+  assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
+  assert.match(planner, /candidates\.filter\(\(candidate\) => !candidate\.original\)/);
+  assert.match(planner, /AI assortment optimization:/);
+});
+
+test("Smart Route evaluates full lanes but only creates work when refill or replacement is justified", () => {
+  assert.match(planner, /if \(capacity <= 0\) continue/);
+  assert.match(planner, /if \(neededQty <= 0\) continue/);
+  assert.match(planner, /transitionMode === "replace_now" \? capacity : refillNeededQty/);
 });

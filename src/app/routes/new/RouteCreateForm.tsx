@@ -1521,6 +1521,9 @@ export function RouteCreateForm({
               </span>
             </div>
             <p className="mt-1 leading-6">{smartPlan.summary}</p>
+            <div className="mt-2 inline-flex rounded-full border border-violet-200 bg-white px-2.5 py-1 text-xs font-semibold text-violet-900">
+              {tr(locale, "No-empty-lane policy: AI may repeat strong sellers across lanes", "سياسة عدم ترك فتحات فارغة: يمكن للذكاء الاصطناعي تكرار المنتجات القوية في أكثر من فتحة")}
+            </div>
             <p className="mt-1 text-xs text-violet-800">
               {tr(
                 locale,
