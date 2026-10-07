@@ -87,9 +87,9 @@ async function restoreBaseline(vmsMachineId: string, baseline: XySlotState) {
   const restored = await writeAndVerify({
     vmsMachineId,
     slotCode: baseline.slotCode,
-    vmsProductId: baselineProductId,
-    priceLyd: baselinePriceLyd,
-    stockQty: baselineStockQty,
+    vmsProductId: baseline.vmsProductId,
+    priceLyd: baseline.priceLyd,
+    stockQty: baseline.currentQty,
   });
   return restored.state;
 }
