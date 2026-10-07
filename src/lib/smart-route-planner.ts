@@ -178,12 +178,31 @@ type ValidatedDecision = AiDecision & {
   currentProductId: string;
   currentProductName: string;
   selectedProductName: string;
+  currentQty: number;
+  capacity: number;
   neededQty: number;
   substituted: boolean;
   transitionMode: "none" | "empty_lane" | "replace_now";
   returnCurrentQty: number;
   projectedQtyAtNextService: number;
   transitionFloorQty: number;
+};
+
+export type SmartRouteSlotAllocation = {
+  machine_slot_id: string | null;
+  slot_code: string | null;
+  current_qty: number;
+  observed_current_qty: number;
+  target_qty: number;
+  capacity: number;
+  recommended_take_qty: number;
+  final_take_qty: number;
+  allocation_kind: "slot";
+  transition_mode: "none" | "empty_lane" | "replace_now";
+  substituted: boolean;
+  from_product_id: string;
+  from_product_name: string;
+  return_current_qty: number;
 };
 
 export type SmartRoutePlanItem = {
@@ -194,6 +213,7 @@ export type SmartRoutePlanItem = {
   slotCode: string | null;
   source: "smart_ai_plan";
   notes: string | null;
+  slotAllocations: SmartRouteSlotAllocation[];
 };
 
 export type SmartRoutePlanResult = {
@@ -686,6 +706,8 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
         ...decision,
         selectedProductId: original.productId,
         selectedProductName: original.productName,
+        currentQty: task.currentQty,
+        capacity: task.capacity,
         quantity: originalQty,
         machineId: task.machineId,
         machineSlotId: task.machineSlotId,
@@ -708,6 +730,8 @@ function validateDecisions(tasks: PlanTask[], proposed: AiDecision[], startingAv
       ...decision,
       selectedProductId: candidate.productId,
       selectedProductName: candidate.productName,
+      currentQty: task.currentQty,
+      capacity: task.capacity,
       quantity,
       machineId: task.machineId,
       machineSlotId: task.machineSlotId,
@@ -735,6 +759,8 @@ function slotAssignmentItems(decisions: ValidatedDecision[]): SmartRoutePlanItem
       notes = `Slot ${decision.slotCode}: replace ${decision.currentProductName} with ${decision.selectedProductName}. ${decision.reason}`;
     }
 
+    const startingQtyForSelectedProduct = decision.substituted ? 0 : decision.currentQty;
+    const targetQty = Math.min(decision.capacity, startingQtyForSelectedProduct + decision.quantity);
     return {
       machineId: decision.machineId,
       productId: decision.selectedProductId,
@@ -743,6 +769,22 @@ function slotAssignmentItems(decisions: ValidatedDecision[]): SmartRoutePlanItem
       slotCode: decision.slotCode,
       source: "smart_ai_plan" as const,
       notes,
+      slotAllocations: [{
+        machine_slot_id: decision.machineSlotId,
+        slot_code: decision.slotCode,
+        current_qty: startingQtyForSelectedProduct,
+        observed_current_qty: decision.currentQty,
+        target_qty: targetQty,
+        capacity: decision.capacity,
+        recommended_take_qty: decision.quantity,
+        final_take_qty: decision.quantity,
+        allocation_kind: "slot" as const,
+        transition_mode: decision.transitionMode,
+        substituted: decision.substituted,
+        from_product_id: decision.currentProductId,
+        from_product_name: decision.currentProductName,
+        return_current_qty: decision.returnCurrentQty,
+      }],
     };
   });
 }
@@ -755,6 +797,7 @@ function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanIte
     machineSlotIds: Set<string>;
     slotCodes: Set<string>;
     notes: string[];
+    slotAllocations: SmartRouteSlotAllocation[];
   }>();
 
   decisions.forEach((decision) => {
@@ -766,10 +809,28 @@ function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanIte
       machineSlotIds: new Set<string>(),
       slotCodes: new Set<string>(),
       notes: [],
+      slotAllocations: [],
     };
     current.quantity += decision.quantity;
     if (decision.machineSlotId) current.machineSlotIds.add(decision.machineSlotId);
     if (decision.slotCode) current.slotCodes.add(decision.slotCode);
+    const startingQtyForSelectedProduct = decision.substituted ? 0 : decision.currentQty;
+    current.slotAllocations.push({
+      machine_slot_id: decision.machineSlotId,
+      slot_code: decision.slotCode,
+      current_qty: startingQtyForSelectedProduct,
+      observed_current_qty: decision.currentQty,
+      target_qty: Math.min(decision.capacity, startingQtyForSelectedProduct + decision.quantity),
+      capacity: decision.capacity,
+      recommended_take_qty: decision.quantity,
+      final_take_qty: decision.quantity,
+      allocation_kind: "slot",
+      transition_mode: decision.transitionMode,
+      substituted: decision.substituted,
+      from_product_id: decision.currentProductId,
+      from_product_name: decision.currentProductName,
+      return_current_qty: decision.returnCurrentQty,
+    });
     if (decision.substituted && decision.transitionMode === "replace_now") {
       current.notes.push(
         `PLANNED PRODUCT CHANGE — Slot ${decision.slotCode}: remove the remaining ${decision.returnCurrentQty} × ${decision.currentProductName} from the machine and record “Returned from machine → Product replaced”. Then change and verify the XY slot as ${decision.selectedProductName}, and fill ${decision.quantity} units. Do not mix the two products in one lane. ${decision.reason}`,
@@ -790,6 +851,7 @@ function aggregateManualItems(decisions: ValidatedDecision[]): SmartRoutePlanIte
     slotCode: row.slotCodes.size ? Array.from(row.slotCodes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(", ") : null,
     source: "smart_ai_plan" as const,
     notes: row.notes.join(" "),
+    slotAllocations: row.slotAllocations.sort((a, b) => String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""), undefined, { numeric: true })),
   }));
 }
 

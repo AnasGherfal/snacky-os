@@ -14,7 +14,7 @@ import {
 } from "@/lib/machine-quantity-confirmation";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
-import { readXyMachineLayout } from "@/lib/xy-vms-control";
+import { readXyMachineLayout, setXySlotProduct } from "@/lib/xy-vms-control";
 import { verifyMachineQuantityRowsAgainstXy } from "@/lib/xy-quantity-verification";
 
 function clean(value: unknown) {
@@ -125,6 +125,27 @@ function validateFilledItems(value: unknown) {
     if (!isUuid(row?.productId)) return `Filled row ${index + 1} has an invalid product.`;
     const quantity = Number(row?.quantity);
     if (!Number.isSafeInteger(quantity) || quantity < 0) return `Filled row ${index + 1} must have a whole quantity of zero or more.`;
+
+    if (row.slotQuantities !== undefined && row.slotQuantities !== null) {
+      if (!Array.isArray(row.slotQuantities) || row.slotQuantities.length > 100) {
+        return `Filled row ${index + 1} has invalid lane quantities.`;
+      }
+      const seen = new Set<string>();
+      let slotTotal = 0;
+      for (const [slotIndex, slot] of row.slotQuantities.entries()) {
+        const machineSlotId = clean(slot?.machineSlotId);
+        const slotCode = clean(slot?.slotCode);
+        const slotQuantity = Number(slot?.quantity);
+        if (!machineSlotId && !slotCode) return `Lane ${slotIndex + 1} on filled row ${index + 1} is missing its lane id.`;
+        if (machineSlotId && !isUuid(machineSlotId)) return `Lane ${slotIndex + 1} on filled row ${index + 1} has an invalid lane id.`;
+        if (!Number.isSafeInteger(slotQuantity) || slotQuantity < 0) return `Lane ${slotIndex + 1} on filled row ${index + 1} must have a whole quantity of zero or more.`;
+        const key = machineSlotId || `slot:${slotCode}`;
+        if (seen.has(key)) return `Filled row ${index + 1} contains the same lane more than once.`;
+        seen.add(key);
+        slotTotal += slotQuantity;
+      }
+      if (slotTotal !== quantity) return `Lane quantities on filled row ${index + 1} must add up to the filled product quantity.`;
+    }
   }
   return null;
 }
@@ -230,17 +251,86 @@ export async function POST(
       if(!vmsMachineId){
         return NextResponse.json({success:false,installed:true,code:"XY_MACHINE_ID_MISSING",error:"This machine is not connected to an XY machine id. Use screenshot evidence instead."},{status:409});
       }
+
       let liveLayout;
       try{
         liveLayout=await readXyMachineLayout(vmsMachineId);
-      }catch(error){
+      }catch{
         return NextResponse.json({success:false,installed:true,code:"XY_LIVE_UNAVAILABLE",error:"Could not read the machine from XY right now. Wait and retry, upload screenshots, or use the power-off option."},{status:503});
       }
-      const verification=verifyMachineQuantityRowsAgainstXy(rows,liveLayout);
+
+      const liveBySlot=new Map(liveLayout.map((slot)=>[clean(slot.slotCode),slot]));
+      const pendingWrites=rows.filter((row)=>{
+        const slotCode=clean(row.slotCode);
+        const live=liveBySlot.get(slotCode);
+        return live?.currentQty===null||Number(live?.currentQty)!==Number(row.finalQty);
+      });
+
+      for(let offset=0;offset<pendingWrites.length;offset+=5){
+        const chunk=pendingWrites.slice(offset,offset+5);
+        const results=await Promise.all(chunk.map(async(row)=>{
+          const slotCode=clean(row.slotCode);
+          if(!slotCode||["VMS","VMS item"].includes(slotCode)){
+            return {row,ok:false,message:"This refill row does not have an exact XY lane."};
+          }
+          const live=liveBySlot.get(slotCode);
+          if(!live){
+            return {row,ok:false,message:`XY no longer reports lane ${slotCode}.`};
+          }
+          if(!live.vmsProductId){
+            return {row,ok:false,message:`XY lane ${slotCode} has no product mapping to preserve.`};
+          }
+          if(live.priceLyd===null||!Number.isFinite(Number(live.priceLyd))||Number(live.priceLyd)<=0){
+            return {row,ok:false,message:`XY lane ${slotCode} has no reliable selling price, so Snacky will not write its stock quantity.`};
+          }
+          try{
+            const write=await setXySlotProduct({
+              vmsMachineId,
+              slotCode,
+              vmsProductId:String(live.vmsProductId),
+              priceLyd:Number(live.priceLyd),
+              stockQty:Number(row.finalQty),
+            });
+            return {
+              row,
+              ok:write.accepted,
+              message:write.accepted?null:(write.message||`XY rejected the quantity update for lane ${slotCode}.`),
+              xyCode:write.code,
+            };
+          }catch(error){
+            return {row,ok:false,message:error instanceof Error?error.message:`Could not update XY lane ${slotCode}.`};
+          }
+        }));
+
+        const failed=results.find((result)=>!result.ok);
+        if(failed){
+          return NextResponse.json({
+            success:false,
+            installed:true,
+            code:"XY_QUANTITY_WRITE_FAILED",
+            error:failed.message||"XY rejected a machine quantity update. Any accepted lane updates are safe to retry.",
+            slotCode:failed.row.slotCode,
+            xyCode:"xyCode" in failed?failed.xyCode:null,
+          },{status:502});
+        }
+      }
+
+      let verification=verifyMachineQuantityRowsAgainstXy(rows,liveLayout);
+      for(const delayMs of [600,1200,2200]){
+        if(verification.verified) break;
+        await new Promise((resolve)=>setTimeout(resolve,delayMs));
+        try{
+          liveLayout=await readXyMachineLayout(vmsMachineId);
+        }catch{
+          continue;
+        }
+        verification=verifyMachineQuantityRowsAgainstXy(rows,liveLayout);
+      }
+
       if(!verification.verified){
         return NextResponse.json({
           success:false,installed:true,code:"XY_QUANTITY_MISMATCH",
-          error:"XY does not show the expected post-refill quantities yet. Refresh the machine/XY connection and retry, or upload screenshots.",
+          error:"Snacky sent the refill quantities to XY, but XY has not reported every expected lane quantity yet. Retry safely or upload screenshots.",
           mismatches:verification.mismatches,
         },{status:409});
       }

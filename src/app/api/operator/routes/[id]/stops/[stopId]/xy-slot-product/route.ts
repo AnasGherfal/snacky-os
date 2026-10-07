@@ -30,7 +30,7 @@ export async function POST(
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
   }
 
-  let body: { slotCode?: unknown; productId?: unknown };
+  let body: { slotCode?: unknown; productId?: unknown; smartRouteSwap?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -39,6 +39,7 @@ export async function POST(
 
   const slotCode = String(body.slotCode ?? "").trim();
   const productId = String(body.productId ?? "").trim();
+  const smartRouteSwapRequested = body.smartRouteSwap === true;
   if (!slotCode || !isUuid(productId)) {
     return NextResponse.json({ success: false, error: "Choose a valid slot and product." }, { status: 400 });
   }
@@ -95,6 +96,72 @@ export async function POST(
     return NextResponse.json({ success: false, error: "That product does not have a confirmed XY mapping yet." }, { status: 409 });
   }
 
+  let smartRouteSwap: {
+    fromProductId: string;
+    returnCurrentQty: number;
+  } | null = null;
+
+  if (smartRouteSwapRequested) {
+    const { data: smartRows, error: smartRowsError } = await admin
+      .from("route_stop_items")
+      .select("product_id, source, slot_allocations")
+      .eq("route_stop_id", stopId)
+      .eq("source", "smart_ai_plan");
+    if (smartRowsError) {
+      return NextResponse.json({ success: false, error: "Could not verify the Smart Route product-change plan." }, { status: 500 });
+    }
+
+    for (const row of smartRows ?? []) {
+      if (String(row.product_id ?? "") !== productId) continue;
+      const allocations = Array.isArray(row.slot_allocations) ? row.slot_allocations : [];
+      const allocation = allocations.find((value: any) => (
+        String(value?.slot_code ?? "").trim() === slotCode
+        && String(value?.transition_mode ?? "") === "replace_now"
+        && value?.substituted === true
+        && String(value?.from_product_id ?? "").trim()
+        && Number(value?.return_current_qty ?? 0) > 0
+      ));
+      if (!allocation) continue;
+      smartRouteSwap = {
+        fromProductId: String(allocation.from_product_id),
+        returnCurrentQty: Number(allocation.return_current_qty),
+      };
+      break;
+    }
+
+    if (!smartRouteSwap) {
+      return NextResponse.json({
+        success: false,
+        error: "This XY change does not match the current Smart Route swap plan. Refresh the stop before continuing.",
+      }, { status: 409 });
+    }
+
+    const { data: returnRows, error: returnError } = await admin
+      .from("inventory_adjustments")
+      .select("quantity, notes")
+      .eq("route_stop_id", stopId)
+      .eq("machine_id", stop.machine_id)
+      .eq("product_id", smartRouteSwap.fromProductId)
+      .eq("adjustment_type", "returned_from_machine")
+      .eq("reason", "Product replaced")
+      .eq("status", "confirmed");
+    if (returnError) {
+      return NextResponse.json({ success: false, error: "Could not verify the old-product return before changing XY." }, { status: 500 });
+    }
+    const recordedReturnQty = (returnRows ?? [])
+      .filter((row: any) => (
+        String(row.notes ?? "").startsWith("Smart Route product swap")
+        && String(row.notes ?? "").includes(`lane ${slotCode}`)
+      ))
+      .reduce((sum: number, row: any) => sum + Math.max(0, Number(row.quantity ?? 0)), 0);
+    if (recordedReturnQty < smartRouteSwap.returnCurrentQty) {
+      return NextResponse.json({
+        success: false,
+        error: `Record the ${smartRouteSwap.returnCurrentQty} returned old units before changing this Smart Route lane in XY.`,
+      }, { status: 409 });
+    }
+  }
+
   const beforeLayout = await readXyMachineLayout(String(machine.vms_machine_id));
   const beforeSlot = beforeLayout.find((slot) => slot.slotCode === slotCode) ?? null;
   if (!beforeSlot) {
@@ -102,13 +169,14 @@ export async function POST(
   }
 
   const currentStockQty = beforeSlot.currentQty;
-  if (currentStockQty === null || !Number.isSafeInteger(Number(currentStockQty)) || Number(currentStockQty) < 0) {
+  if (!smartRouteSwap && (currentStockQty === null || !Number.isSafeInteger(Number(currentStockQty)) || Number(currentStockQty) < 0)) {
     return NextResponse.json({
       success: false,
       code: "MISSING_XY_STOCK_QTY",
       error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
     }, { status: 409 });
   }
+  const targetStockQty = smartRouteSwap ? 0 : Number(currentStockQty);
 
   const targetVmsProductId = String(mapping.vms_product_id);
   const machinePrices = Array.from(new Set(
@@ -154,7 +222,7 @@ export async function POST(
     slotCode,
     vmsProductId: targetVmsProductId,
     priceLyd,
-    stockQty: Number(currentStockQty),
+    stockQty: targetStockQty,
   });
 
   if (!write.accepted) {
@@ -175,12 +243,14 @@ export async function POST(
         vms_machine_id: machine.vms_machine_id,
         selected_product_id: product.id,
         selected_vms_product_id: targetVmsProductId,
+        slot_code: slotCode,
         price_source: machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product",
         xy_http_status: write.httpStatus,
         xy_code: write.code,
         xy_message: write.message,
-        xy_stock_qty_sent: Number(currentStockQty),
+        xy_stock_qty_sent: targetStockQty,
         accepted: false,
+        smart_route_swap: Boolean(smartRouteSwap),
       },
       summary: `XY rejected slot ${slotCode} product change before machine verification`,
     });
@@ -204,7 +274,7 @@ export async function POST(
     slotCode,
     expectedVmsProductId: targetVmsProductId,
     expectedPriceLyd: priceLyd,
-    expectedStockQty: Number(currentStockQty),
+    expectedStockQty: targetStockQty,
   });
 
   await admin.from("system_activity_logs").insert({
@@ -233,8 +303,9 @@ export async function POST(
       xy_http_status: write.httpStatus,
       xy_code: write.code,
       xy_message: write.message,
-      xy_stock_qty_sent: Number(currentStockQty),
+      xy_stock_qty_sent: targetStockQty,
       verified: verification.verified,
+      smart_route_swap: Boolean(smartRouteSwap),
     },
     summary: `XY slot ${slotCode}: ${beforeSlot.productName ?? beforeSlot.vmsProductId ?? "empty"} → ${product.name}`,
   });

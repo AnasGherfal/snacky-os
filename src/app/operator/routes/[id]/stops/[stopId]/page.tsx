@@ -116,8 +116,16 @@ interface StopRefillItem {
     machine_slot_id?: string | null;
     slot_code?: string | null;
     current_qty?: unknown;
+    observed_current_qty?: unknown;
+    target_qty?: unknown;
+    capacity?: unknown;
     final_take_qty?: unknown;
     recommended_take_qty?: unknown;
+    transition_mode?: "none" | "empty_lane" | "replace_now";
+    substituted?: boolean;
+    from_product_id?: string | null;
+    from_product_name?: string | null;
+    return_current_qty?: unknown;
   }>;
   assignedQty?: number;
   parQty: number;
@@ -212,6 +220,16 @@ interface InventoryAdjustmentRow {
   createdAt: string | null;
 }
 
+type SmartSwapRequirement = {
+  laneKey: string;
+  slotCode: string;
+  fromProductId: string;
+  fromProductName: string;
+  targetProductId: string;
+  targetProductName: string;
+  returnQty: number;
+};
+
 interface MachineStorageStockRow {
   id: string;
   machineId: string | null;
@@ -291,6 +309,7 @@ interface MissingProductReport {
 
 type StopDraft = {
   filledQtys: Record<string, number>;
+  laneFilledQtys: Record<string, number>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -594,6 +613,46 @@ async function prepareProofPhoto(file: File) {
   return new File([bestBlob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
 }
 
+function laneFillKey(productId: string, allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const laneIdentity = String(allocation.machine_slot_id ?? "").trim()
+    || `slot:${String(allocation.slot_code ?? "VMS").trim() || "VMS"}`;
+  return `${productId}:${laneIdentity}`;
+}
+
+function plannedLaneAddition(allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const value = Number(allocation.final_take_qty ?? allocation.recommended_take_qty ?? 0);
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function laneStartingQty(allocation: NonNullable<StopRefillItem["slotAllocations"]>[number]) {
+  const value = Number(allocation.current_qty ?? 0);
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function distributeProductFillToLanes(item: StopRefillItem, totalQuantity: number) {
+  const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+  const result: Record<string, number> = {};
+  let remaining = Math.max(0, Math.floor(Number(totalQuantity) || 0));
+  allocations.forEach((allocation, index) => {
+    const planned = plannedLaneAddition(allocation);
+    const isLast = index === allocations.length - 1;
+    const quantity = isLast ? remaining : Math.min(remaining, planned);
+    result[laneFillKey(item.productId, allocation)] = Math.max(0, quantity);
+    remaining = Math.max(0, remaining - quantity);
+  });
+  return result;
+}
+
+function slotQuantitiesForItem(item: StopRefillItem, laneFilledQtys: Record<string, number>) {
+  const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+  if (!allocations.length) return undefined;
+  return allocations.map((allocation) => ({
+    machineSlotId: String(allocation.machine_slot_id ?? "").trim() || null,
+    slotCode: String(allocation.slot_code ?? "").trim() || null,
+    quantity: Math.max(0, Math.floor(Number(laneFilledQtys[laneFillKey(item.productId, allocation)] ?? 0))),
+  }));
+}
+
 function comparableStopDraft(draft: StopDraft) {
   return JSON.stringify({
     ...draft,
@@ -634,6 +693,7 @@ export default function MachineStopPage() {
   const [issuePriority, setIssuePriority] = useState<"critical" | "high" | "normal" | "low">("normal");
   const [issueDescription, setIssueDescription] = useState("");
   const [filledQtys, setFilledQtys] = useState<Record<string, number>>({});
+  const [laneFilledQtys, setLaneFilledQtys] = useState<Record<string, number>>({});
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -659,6 +719,7 @@ export default function MachineStopPage() {
   const [xySwapSaving, setXySwapSaving] = useState(false);
   const [xySwapError, setXySwapError] = useState("");
   const [xySwapSuccess, setXySwapSuccess] = useState("");
+  const [smartReturnSavingKey, setSmartReturnSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
     const editorOpen = Boolean(xyEditSlotCode || xySwapSourceSlotCode);
@@ -706,6 +767,7 @@ export default function MachineStopPage() {
   const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
   const stopDraft = useMemo<StopDraft>(() => ({
     filledQtys,
+    laneFilledQtys,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -722,6 +784,7 @@ export default function MachineStopPage() {
     cleaningDone,
     extraProducts,
     filledQtys,
+    laneFilledQtys,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -742,6 +805,7 @@ export default function MachineStopPage() {
     shouldSave: shouldSaveStopDraft,
     onRestore: (draft) => {
       setFilledQtys(draft.filledQtys ?? {});
+      setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -759,6 +823,68 @@ export default function MachineStopPage() {
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
   const machineLayoutRows = useMemo(() => groupMachineLayoutRows(stopData?.machineLayout ?? []), [stopData?.machineLayout]);
+  const smartSwapRequirements = useMemo<SmartSwapRequirement[]>(() => {
+    if (!stopData) return [];
+    const requirements: SmartSwapRequirement[] = [];
+    stopData.refillItems.forEach((item) => {
+      (item.slotAllocations ?? []).forEach((allocation) => {
+        const fromProductId = String(allocation.from_product_id ?? "").trim();
+        const returnQty = Math.max(0, Math.floor(Number(allocation.return_current_qty ?? 0)));
+        const slotCode = String(allocation.slot_code ?? item.slotCode ?? "").trim();
+        if (
+          allocation.substituted !== true
+          || allocation.transition_mode !== "replace_now"
+          || !fromProductId
+          || !slotCode
+          || returnQty <= 0
+        ) return;
+        requirements.push({
+          laneKey: laneFillKey(item.productId, allocation),
+          slotCode,
+          fromProductId,
+          fromProductName: String(allocation.from_product_name ?? "Previous product").trim() || "Previous product",
+          targetProductId: item.productId,
+          targetProductName: item.productName,
+          returnQty,
+        });
+      });
+    });
+    return requirements;
+  }, [stopData]);
+
+  const activeSmartSwapRequirements = useMemo(
+    () => smartSwapRequirements.filter((requirement) => Math.max(0, Number(laneFilledQtys[requirement.laneKey] ?? 0)) > 0),
+    [laneFilledQtys, smartSwapRequirements],
+  );
+  const smartRequiredReturnByProduct = useMemo(() => {
+    const totals = new Map<string, number>();
+    activeSmartSwapRequirements.forEach((requirement) => {
+      totals.set(requirement.fromProductId, (totals.get(requirement.fromProductId) ?? 0) + requirement.returnQty);
+    });
+    return totals;
+  }, [activeSmartSwapRequirements]);
+  const smartReturnedQtyByProduct = useMemo(() => {
+    const totals = new Map<string, number>();
+    (stopData?.adjustments ?? []).forEach((adjustment) => {
+      if (
+        adjustment.adjustmentType !== "returned_from_machine"
+        || adjustment.reason !== "Product replaced"
+        || !String(adjustment.notes ?? "").startsWith("Smart Route product swap")
+        || !adjustment.productId
+      ) return;
+      totals.set(adjustment.productId, (totals.get(adjustment.productId) ?? 0) + Math.max(0, Number(adjustment.quantity ?? 0)));
+    });
+    return totals;
+  }, [stopData?.adjustments]);
+  const smartReturnReadyFor = (requirement: SmartSwapRequirement) => (
+    (smartReturnedQtyByProduct.get(requirement.fromProductId) ?? 0)
+      >= (smartRequiredReturnByProduct.get(requirement.fromProductId) ?? requirement.returnQty)
+  );
+  const unresolvedSmartReturnRequirements = activeSmartSwapRequirements.filter((requirement) => !smartReturnReadyFor(requirement));
+  const unresolvedSmartXyRequirements = activeSmartSwapRequirements.filter((requirement) => {
+    const liveSlot = (stopData?.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
+    return liveSlot?.productId !== requirement.targetProductId;
+  });
   const machineStorageStockRows = stopData?.machineStorageStock ?? [];
   const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
   const machineStorageStockUnits = machineStorageStockRows.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
@@ -829,7 +955,14 @@ export default function MachineStopPage() {
       const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`, {
         method: "POST",
         headers: { "content-type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ slotCode: xyEditSlotCode, productId: xyReplacementProductId }),
+        body: JSON.stringify({
+          slotCode: xyEditSlotCode,
+          productId: xyReplacementProductId,
+          smartRouteSwap: activeSmartSwapRequirements.some((requirement) => (
+            requirement.slotCode === xyEditSlotCode
+            && requirement.targetProductId === xyReplacementProductId
+          )),
+        }),
       }, 30000);
       const parsed = await readServerResponse(response, {
         operation: "operator_xy_slot_product_change",
@@ -881,7 +1014,7 @@ export default function MachineStopPage() {
     } finally {
       setXyChangeSaving(false);
     }
-  }, [fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
+  }, [activeSmartSwapRequirements, fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
 
   const applyXySlotSwap = useCallback(async () => {
     if (!routeId || !stopId || !xySwapSourceSlotCode || !xySwapTargetSlotCode || !stopData) return;
@@ -963,7 +1096,8 @@ export default function MachineStopPage() {
     assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
     filledQty: Number(filledQtys[item.productId] ?? 0),
     slotAllocations: item.slotAllocations ?? [],
-  })), [filledQtys, stopData]);
+    slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
+  })), [filledQtys, laneFilledQtys, stopData]);
   const stopExecutionSummary = useMemo(() => {
     if (!stopData) {
     return {
@@ -1054,16 +1188,20 @@ export default function MachineStopPage() {
           }).catch((err) => console.warn("[operator:stop] Could not mark stop in progress", err));
         }
         const initialQtys: Record<string, number> = {};
+        const initialLaneQtys: Record<string, number> = {};
         const initialNotes: Record<string, string> = {};
         const initialUnavailable: Record<string, boolean> = {};
         stopPayload.refillItems?.forEach((item: StopRefillItem) => {
           const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
           const hasSavedQty = item.filledQty !== null && item.filledQty !== undefined;
-          initialQtys[item.productId] = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
+          const initialTotal = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
+          initialQtys[item.productId] = initialTotal;
+          Object.assign(initialLaneQtys, distributeProductFillToLanes(item, initialTotal));
           if (item.notes) initialNotes[item.productId] = item.notes;
           if (hasSavedQty && Number(item.filledQty ?? 0) === 0 && assignedQty > 0) initialUnavailable[item.productId] = true;
         });
         setFilledQtys(initialQtys);
+        setLaneFilledQtys(initialLaneQtys);
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1072,6 +1210,7 @@ export default function MachineStopPage() {
         setFinalPhotoName(initialFinalPhotoName);
         initialStopDraftRef.current = comparableStopDraft({
           filledQtys: initialQtys,
+          laneFilledQtys: initialLaneQtys,
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1116,8 +1255,90 @@ export default function MachineStopPage() {
   const setAssignedQty = (item: StopRefillItem, quantity: number) => {
     const current = filledQtys[item.productId] ?? 0;
     const max = remainingBagQty(item.productId, current);
-    setFilledQtys((prev) => ({ ...prev, [item.productId]: Math.max(0, Math.min(max, quantity)) }));
+    const nextQuantity = Math.max(0, Math.min(max, quantity));
+    setFilledQtys((prev) => ({ ...prev, [item.productId]: nextQuantity }));
+    setLaneFilledQtys((prev) => ({ ...prev, ...distributeProductFillToLanes(item, nextQuantity) }));
     if (quantity > max) setError("Actual filled quantity cannot exceed what is available in the operator bag.");
+  };
+
+  const setLaneFilledQty = (
+    item: StopRefillItem,
+    allocation: NonNullable<StopRefillItem["slotAllocations"]>[number],
+    quantity: number,
+  ) => {
+    const allocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
+    const key = laneFillKey(item.productId, allocation);
+    const currentProductTotal = Number(filledQtys[item.productId] ?? 0);
+    const maximumProductTotal = remainingBagQty(item.productId, currentProductTotal);
+    const otherLaneTotal = allocations.reduce((sum, row) => {
+      const rowKey = laneFillKey(item.productId, row);
+      return rowKey === key ? sum : sum + Math.max(0, Number(laneFilledQtys[rowKey] ?? 0));
+    }, 0);
+    const plannedMaximum = plannedLaneAddition(allocation);
+    const startingQty = laneStartingQty(allocation);
+    const capacity = Math.max(0, Math.floor(Number(allocation.capacity ?? 0)));
+    const physicalLaneMaximum = capacity > 0 ? Math.max(0, capacity - startingQty) : plannedMaximum;
+    const laneMaximum = Math.max(0, Math.min(physicalLaneMaximum || maximumProductTotal, maximumProductTotal - otherLaneTotal));
+    const nextLaneQty = Math.max(0, Math.min(laneMaximum, Math.floor(Number(quantity) || 0)));
+    const nextTotal = otherLaneTotal + nextLaneQty;
+    setLaneFilledQtys((prev) => ({ ...prev, [key]: nextLaneQty }));
+    setFilledQtys((prev) => ({ ...prev, [item.productId]: nextTotal }));
+    if (quantity > laneMaximum) {
+      setError("Lane quantity cannot exceed its planned capacity or what is available in the operator bag.");
+    }
+  };
+
+  const recordSmartRouteReturn = async (requirement: SmartSwapRequirement) => {
+    const returnKey = `${requirement.slotCode}:${requirement.fromProductId}`;
+    if (smartReturnSavingKey) return;
+    setSmartReturnSavingKey(returnKey);
+    setError("");
+    try {
+      const clientSubmissionId = `smart-route-return:v1:${routeId}:${stopId}:${requirement.slotCode}:${requirement.fromProductId}`;
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/smart-return`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: requirement.fromProductId,
+          quantity: requirement.returnQty,
+          slotCode: requirement.slotCode,
+          clientSubmissionId,
+        }),
+      });
+      const parsed = await readServerResponse(response, {
+        operation: "operator_smart_route_return",
+        route_id: routeId,
+        route_stop_id: stopId,
+        slot_code: requirement.slotCode,
+        product_id: requirement.fromProductId,
+      });
+      if (!response.ok || parsed.payload?.success === false || !parsed.payload?.adjustment) {
+        throw new Error(responseMessage(parsed.payload) || tr("Could not record the Smart Route return.", "تعذر تسجيل المنتج الراجع لخطة الجولة الذكية."));
+      }
+
+      const row = parsed.payload.adjustment as Record<string, unknown>;
+      const savedAdjustment: InventoryAdjustmentRow = {
+        id: String(row.id ?? clientSubmissionId),
+        adjustmentType: String(row.adjustment_type ?? "returned_from_machine"),
+        productId: row.product_id ? String(row.product_id) : requirement.fromProductId,
+        productName: String(row.product_name ?? requirement.fromProductName),
+        quantity: Number(row.quantity ?? requirement.returnQty),
+        reason: String(row.reason ?? "Product replaced"),
+        notes: String(row.notes ?? ""),
+        photoUrl: null,
+        status: String(row.status ?? "confirmed"),
+        createdAt: String(row.created_at ?? new Date().toISOString()),
+      };
+      setStopData((current) => current ? {
+        ...current,
+        adjustments: [savedAdjustment, ...(current.adjustments ?? []).filter((adjustment) => adjustment.id !== savedAdjustment.id)],
+      } : current);
+    } catch (returnError) {
+      setError(returnError instanceof Error ? returnError.message : tr("Could not record the Smart Route return.", "تعذر تسجيل المنتج الراجع لخطة الجولة الذكية."));
+    } finally {
+      setSmartReturnSavingKey(null);
+    }
   };
 
   const addExtraProduct = () => {
@@ -1178,6 +1399,22 @@ export default function MachineStopPage() {
       setError(tr("Please take or upload the final machine photo before completing the stop.", "التقط أو ارفع الصورة النهائية للجهاز قبل إنهاء الموقع."));
       return;
     }
+    if (unresolvedSmartReturnRequirements.length && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr(
+        "Record every required old-product return before completing this Smart Route stop.",
+        "سجّل كل المنتجات القديمة المطلوب إرجاعها قبل إنهاء موقع الجولة الذكية.",
+      ));
+      document.getElementById("smart-route-changes")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (unresolvedSmartXyRequirements.length && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr(
+        "Update and verify every executed Smart Route product change in XY before completing this stop.",
+        "حدّث وتحقق من كل تغيير منتج تم تنفيذه في XY قبل إنهاء هذا الموقع.",
+      ));
+      document.getElementById("smart-route-changes")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     if (compressorSafetyInstalled && !compressorProofReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
       setError(tr("Save the compressor ON photo before completing this stop.", "احفظ صورة تشغيل الضاغط قبل إنهاء هذا الموقع."));
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1226,6 +1463,7 @@ export default function MachineStopPage() {
           reason: unavailableProducts[item.productId] ? "Product not in operator bag" : undefined,
           notes: lineNotes[item.productId] || undefined,
           unavailable: Boolean(unavailableProducts[item.productId]),
+          slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
         })),
         extraItems: extraProducts
           .filter((item) => item.productId && item.quantity > 0)
@@ -1881,6 +2119,84 @@ export default function MachineStopPage() {
           })() : null}
         </section>
 
+        {smartSwapRequirements.length ? (
+          <section id="smart-route-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-violet-700">{tr("Smart Route product changes", "تغييرات منتجات الجولة الذكية")}</div>
+                <h2 className="mt-1 text-lg font-bold text-violet-950">{tr("Return old product → update XY → fill new product", "أرجع المنتج القديم ← حدّث XY ← عبّئ المنتج الجديد")}</h2>
+                <p className="mt-1 text-sm leading-6 text-violet-900">{tr(
+                  "These steps are enforced only for lanes you actually fill. Set a lane's actual fill to 0 if the planned swap cannot be executed today.",
+                  "تُفرض هذه الخطوات فقط على الخانات التي ستعبئها فعلياً. اجعل تعبئة الخانة 0 إذا تعذر تنفيذ التبديل اليوم.",
+                )}</p>
+              </div>
+              <span className="rounded-full bg-violet-700 px-3 py-1 text-xs font-bold text-white">
+                {activeSmartSwapRequirements.length} {tr("active", "نشط")}
+              </span>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {smartSwapRequirements.map((requirement) => {
+                const laneFill = Math.max(0, Number(laneFilledQtys[requirement.laneKey] ?? 0));
+                const active = laneFill > 0;
+                const returnReady = active && smartReturnReadyFor(requirement);
+                const liveSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === requirement.slotCode);
+                const xyReady = active && liveSlot?.productId === requirement.targetProductId;
+                const savingKey = `${requirement.slotCode}:${requirement.fromProductId}`;
+                return (
+                  <article key={`${requirement.slotCode}:${requirement.targetProductId}`} className="rounded-xl border border-violet-200 bg-white p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-slate-950">{tr("Lane", "الخانة")} {requirement.slotCode}</div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          {requirement.fromProductName} → <strong>{requirement.targetProductName}</strong>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {tr("Planned new fill", "التعبئة الجديدة المخططة")}: {laneFill} · {tr("Old units to remove", "الوحدات القديمة المطلوب إخراجها")}: {requirement.returnQty}
+                        </div>
+                      </div>
+                      <span className={active ? (returnReady && xyReady ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800" : "rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900") : "rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"}>
+                        {!active ? tr("Skipped — fill is 0", "متروك — التعبئة 0") : returnReady && xyReady ? tr("Ready to fill", "جاهز للتعبئة") : tr("Action required", "يتطلب إجراء")}
+                      </span>
+                    </div>
+                    {active ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          className={returnReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-primary min-h-11"}
+                          disabled={returnReady || smartReturnSavingKey !== null}
+                          onClick={() => void recordSmartRouteReturn(requirement)}
+                        >
+                          {returnReady
+                            ? tr("Old product return recorded", "تم تسجيل إرجاع المنتج القديم")
+                            : smartReturnSavingKey === savingKey
+                              ? tr("Recording return...", "جارٍ تسجيل الإرجاع...")
+                              : tr(`I removed ${requirement.returnQty} × ${requirement.fromProductName}`, `أخرجت ${requirement.returnQty} × ${requirement.fromProductName}`)}
+                        </button>
+                        <button
+                          type="button"
+                          className={xyReady ? "btn-secondary min-h-11 border-emerald-300 text-emerald-800" : "btn-secondary min-h-11"}
+                          disabled={!returnReady || xyReady}
+                          onClick={() => {
+                            setXySwapSourceSlotCode(null);
+                            setXySwapTargetSlotCode("");
+                            setXyEditSlotCode(requirement.slotCode);
+                            setXyReplacementProductId(requirement.targetProductId);
+                            setXyChangeError("");
+                            setXyChangeSuccess("");
+                          }}
+                        >
+                          {xyReady ? tr("XY product verified", "تم التحقق من المنتج في XY") : tr("Change XY to new product", "غيّر XY إلى المنتج الجديد")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <h2 className="text-lg font-semibold">{t("Assigned products")}</h2>
@@ -1909,6 +2225,7 @@ export default function MachineStopPage() {
                 const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
                 const maxQty = remainingBagQty(item.productId, actualQty);
+                const laneAllocations = Array.isArray(item.slotAllocations) ? item.slotAllocations : [];
                 return (
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -1957,8 +2274,44 @@ export default function MachineStopPage() {
                       <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
                       <Metric label={tr("Difference", "الفرق")} value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[220px_1fr]">
-                      <label className="block">
+                    {laneAllocations.length ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 md:p-4">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{tr("Actual quantity by lane", "الكمية الفعلية لكل خانة")}</div>
+                            <div className="text-xs text-slate-500">{tr("Record what you physically put into each lane. Snacky totals these automatically.", "سجّل ما وضعته فعلياً في كل خانة. سناكي يجمع الإجمالي تلقائياً.")}</div>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900">
+                            {tr("Total filled", "إجمالي التعبئة")}: {actualQty}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {laneAllocations.map((allocation, laneIndex) => {
+                            const key = laneFillKey(item.productId, allocation);
+                            const planned = plannedLaneAddition(allocation);
+                            const before = laneStartingQty(allocation);
+                            const laneActual = Math.max(0, Number(laneFilledQtys[key] ?? 0));
+                            return (
+                              <div key={key || laneIndex} className="rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <div className="font-bold text-slate-900">{tr("Lane", "الخانة")} {String(allocation.slot_code ?? item.slotCode ?? "VMS")}</div>
+                                  <div className="text-xs text-slate-500">{before} + {laneActual} = <strong className="text-slate-900">{before + laneActual}</strong></div>
+                                </div>
+                                <div className="mb-2 text-xs text-slate-500">{tr("Planned add", "الإضافة المخططة")}: {planned}</div>
+                                <QuantityStepper
+                                  value={laneActual}
+                                  max={planned || maxQty}
+                                  onChange={(quantity) => setLaneFilledQty(item, allocation, quantity)}
+                                  disabled={unavailableProducts[item.productId]}
+                                  inputLabel={`${item.productName} lane ${String(allocation.slot_code ?? "")} actual filled quantity`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="block max-w-[220px]">
                         <span className="mb-1 block text-sm font-medium text-slate-800">{t("Filled quantity")}</span>
                         <QuantityStepper
                           value={actualQty}
@@ -1968,16 +2321,16 @@ export default function MachineStopPage() {
                           inputLabel={`${item.productName} actual filled quantity`}
                         />
                       </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes for change")}</span>
-                        <input
-                          value={lineNotes[item.productId] ?? ""}
-                          onChange={(event) => setLineNotes((prev) => ({ ...prev, [item.productId]: event.target.value }))}
-                          className="field-input"
-                          placeholder={t("Explain shortage, overfill, or condition")}
-                        />
-                      </label>
-                    </div>
+                    )}
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes for change")}</span>
+                      <input
+                        value={lineNotes[item.productId] ?? ""}
+                        onChange={(event) => setLineNotes((prev) => ({ ...prev, [item.productId]: event.target.value }))}
+                        className="field-input"
+                        placeholder={t("Explain shortage, overfill, or condition")}
+                      />
+                    </label>
                     <label className="flex items-center gap-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
@@ -1985,7 +2338,16 @@ export default function MachineStopPage() {
                         onChange={(event) => {
                           const checked = event.target.checked;
                           setUnavailableProducts((prev) => ({ ...prev, [item.productId]: checked }));
-                          if (checked) setFilledQtys((prev) => ({ ...prev, [item.productId]: 0 }));
+                          if (checked) {
+                            setFilledQtys((prev) => ({ ...prev, [item.productId]: 0 }));
+                            setLaneFilledQtys((prev) => {
+                              const next = { ...prev };
+                              laneAllocations.forEach((allocation) => {
+                                next[laneFillKey(item.productId, allocation)] = 0;
+                              });
+                              return next;
+                            });
+                          }
                         }}
                       />
                       {t("Mark assigned product as unavailable")}

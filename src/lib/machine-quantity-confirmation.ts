@@ -6,6 +6,12 @@ export type MachineQuantityAllocation = {
   recommended_take_qty?: unknown;
 };
 
+export type MachineQuantitySlotFill = {
+  machineSlotId?: string | null;
+  slotCode?: string | null;
+  quantity?: unknown;
+};
+
 export type MachineQuantitySourceItem = {
   productId: string;
   productName: string;
@@ -15,6 +21,7 @@ export type MachineQuantitySourceItem = {
   assignedQty?: unknown;
   filledQty?: unknown;
   slotAllocations?: MachineQuantityAllocation[] | null;
+  slotQuantities?: MachineQuantitySlotFill[] | null;
 };
 
 export type MachineQuantityRow = {
@@ -45,6 +52,7 @@ export type MachineQuantityCatalogSlot = {
 export type MachineQuantityFilledItem = {
   productId?: unknown;
   quantity?: unknown;
+  slotQuantities?: MachineQuantitySlotFill[] | null;
 };
 
 export const MACHINE_QUANTITY_READY_STATUSES = [
@@ -142,12 +150,33 @@ export function buildMachineQuantityRows(items: MachineQuantitySourceItem[]): Ma
   items.forEach((item) => {
     let remaining = unitQuantity(item.filledQty);
     const allocations = allocationsFor(item);
+    const explicitSlotQuantities = Array.isArray(item.slotQuantities)
+      ? item.slotQuantities.filter((row) => row && typeof row === "object")
+      : [];
+    const explicitTotal = explicitSlotQuantities.reduce((sum, row) => sum + unitQuantity(row.quantity), 0);
+    const useExplicitSlotQuantities = explicitSlotQuantities.length > 0 && explicitTotal === remaining;
+
+    const explicitQtyForAllocation = (allocation: MachineQuantityAllocation) => {
+      if (!useExplicitSlotQuantities) return null;
+      const machineSlotId = clean(allocation.machine_slot_id);
+      const slotCode = clean(allocation.slot_code);
+      const matched = explicitSlotQuantities.find((row) => {
+        const rowMachineSlotId = clean(row.machineSlotId);
+        const rowSlotCode = clean(row.slotCode);
+        if (machineSlotId && rowMachineSlotId) return machineSlotId === rowMachineSlotId;
+        return Boolean(slotCode && rowSlotCode && slotCode === rowSlotCode);
+      });
+      return matched ? unitQuantity(matched.quantity) : 0;
+    };
 
     allocations.forEach((allocation, index) => {
       const plannedAddition = unitQuantity(allocation.final_take_qty ?? allocation.recommended_take_qty);
+      const explicitQty = explicitQtyForAllocation(allocation);
       const isLast = index === allocations.length - 1;
-      const addedQty = isLast ? remaining : Math.min(remaining, plannedAddition);
-      remaining -= addedQty;
+      const addedQty = explicitQty === null
+        ? (isLast ? remaining : Math.min(remaining, plannedAddition))
+        : explicitQty;
+      if (explicitQty === null) remaining -= addedQty;
       if (addedQty <= 0) return;
 
       const previousQty = unitQuantity(allocation.current_qty);
@@ -173,11 +202,16 @@ export function buildMachineQuantitySourcesFromPlan(
   planRows: MachineQuantityPlanRow[],
   filledItems: MachineQuantityFilledItem[],
 ) {
-  const filledByProduct = new Map<string, number>();
+  const filledByProduct = new Map<string, { quantity: number; slotQuantities: MachineQuantitySlotFill[] }>();
   filledItems.forEach((item) => {
     const productId = clean(item.productId);
     if (!productId) return;
-    filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + unitQuantity(item.quantity));
+    const current = filledByProduct.get(productId) ?? { quantity: 0, slotQuantities: [] };
+    current.quantity += unitQuantity(item.quantity);
+    if (Array.isArray(item.slotQuantities)) {
+      current.slotQuantities.push(...item.slotQuantities.filter((row) => row && typeof row === "object"));
+    }
+    filledByProduct.set(productId, current);
   });
 
   const grouped = new Map<string, MachineQuantitySourceItem>();
@@ -201,8 +235,9 @@ export function buildMachineQuantitySourcesFromPlan(
       machineSlotId: clean(plan.machine_slot_id) || null,
       currentQty: 0,
       assignedQty: 0,
-      filledQty: filledByProduct.get(productId) ?? 0,
+      filledQty: filledByProduct.get(productId)?.quantity ?? 0,
       slotAllocations: [],
+      slotQuantities: filledByProduct.get(productId)?.slotQuantities ?? [],
     };
     current.assignedQty = unitQuantity(current.assignedQty) + unitQuantity(plan.planned_quantity);
     current.slotAllocations = [...(current.slotAllocations ?? []), ...(parsedAllocations.length ? parsedAllocations : [fallbackAllocation])];

@@ -14,6 +14,23 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 import { notifyRouteAssigned } from "@/lib/notification-delivery";
 import { autoPlanRouteProducts, type AutoPlanRouteProductsResult } from "@/lib/route-auto-plan";
 
+type SmartRouteSlotAllocationPayload = {
+  machine_slot_id?: string | null;
+  slot_code?: string | null;
+  current_qty?: number;
+  observed_current_qty?: number;
+  target_qty?: number;
+  capacity?: number;
+  recommended_take_qty?: number;
+  final_take_qty?: number;
+  allocation_kind?: "slot";
+  transition_mode?: "none" | "empty_lane" | "replace_now";
+  substituted?: boolean;
+  from_product_id?: string;
+  from_product_name?: string;
+  return_current_qty?: number;
+};
+
 type CreateRoutePayload = {
   routeDate?: string;
   creationMode?: "full" | "stops_only";
@@ -32,6 +49,7 @@ type CreateRoutePayload = {
     slotCode?: string | null;
     source?: "smart_ai_plan";
     notes?: string | null;
+    slotAllocations?: SmartRouteSlotAllocationPayload[];
   }[];
   adminOverride?: boolean;
 };
@@ -455,6 +473,24 @@ export async function POST(request: Request) {
       slotCode: String(item.slotCode ?? "").trim() || null,
       source: item.source === "smart_ai_plan" ? "smart_ai_plan" as const : "manual_admin_assignment" as const,
       notes: String(item.notes ?? "").trim().slice(0, 2000) || null,
+      slotAllocations: (Array.isArray(item.slotAllocations) ? item.slotAllocations : []).map((allocation) => ({
+        machine_slot_id: String(allocation?.machine_slot_id ?? "").trim() || null,
+        slot_code: String(allocation?.slot_code ?? "").trim() || null,
+        current_qty: planQuantity(allocation?.current_qty),
+        observed_current_qty: planQuantity(allocation?.observed_current_qty),
+        target_qty: planQuantity(allocation?.target_qty),
+        capacity: planQuantity(allocation?.capacity),
+        recommended_take_qty: planQuantity(allocation?.recommended_take_qty),
+        final_take_qty: planQuantity(allocation?.final_take_qty),
+        allocation_kind: "slot" as const,
+        transition_mode: ["empty_lane", "replace_now"].includes(String(allocation?.transition_mode ?? ""))
+          ? String(allocation?.transition_mode) as "empty_lane" | "replace_now"
+          : "none" as const,
+        substituted: Boolean(allocation?.substituted),
+        from_product_id: String(allocation?.from_product_id ?? "").trim() || null,
+        from_product_name: String(allocation?.from_product_name ?? "").trim().slice(0, 500) || null,
+        return_current_qty: planQuantity(allocation?.return_current_qty),
+      })).filter((allocation) => allocation.final_take_qty > 0),
     }))
     .filter((item) => item.machineId && item.productId && item.quantity > 0);
 
@@ -671,6 +707,7 @@ export async function POST(request: Request) {
       returned_quantity: null,
       source: item.source,
       notes: item.notes,
+      slot_allocations: item.slotAllocations,
     })),
   ].filter((item) => Boolean(item.route_stop_id && item.product_id && planQuantity(item.planned_quantity) > 0));
 
@@ -769,6 +806,7 @@ export async function POST(request: Request) {
         recommended_take_qty: item.quantity,
         final_take_qty: item.quantity,
         source: item.source,
+        slot_allocations: item.slotAllocations,
       }))
       .filter((line): line is RefillLineInsert => Boolean(line.refill_order_id));
     const refillLines = [...recommendationLines, ...manualLines];

@@ -154,6 +154,7 @@ export async function POST(
       machine_slot_id: item.machineSlotId ?? null,
       slot_code: item.slotCode ?? null,
       notes: item.notes ?? null,
+      slot_allocations: item.slotAllocations,
     }));
 
     const { data: applied, error: applyError } = await admin.rpc("snacky_apply_smart_route_plan_v1", {

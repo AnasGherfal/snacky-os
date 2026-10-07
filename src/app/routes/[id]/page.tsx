@@ -192,7 +192,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .order("stop_order", { ascending: true }),
     supabase
       .from("route_stop_items")
-      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, slot_code, planned_quantity, source")
+      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, slot_code, planned_quantity, recommended_take_qty, final_take_qty, picked_quantity, filled_quantity, source, notes, slot_allocations")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
     supabase
@@ -320,6 +320,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     pendingStopInventoryCommitResult,
     manualSalesResult,
     adjustmentsResult,
+    quantityConfirmationsResult,
+    smartXyEventsResult,
   ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
@@ -365,6 +367,18 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .eq("route_id", id)
       .neq("status", "cancelled")
       .order("created_at", { ascending: true }),
+    stopIds.length
+      ? supportClient
+          .from("route_stop_quantity_confirmations")
+          .select("route_stop_id, quantity_rows, verification_status, submitted_at, confirmed_at, resolved_at")
+          .in("route_stop_id", stopIds)
+      : Promise.resolve({ data: [], error: null }),
+    supportClient
+      .from("system_activity_logs")
+      .select("action, entity_id, metadata, summary, created_at")
+      .contains("metadata", { route_id: id })
+      .in("action", ["xy_slot_product_change", "xy_slot_product_change_unverified", "xy_slot_product_change_rejected"])
+      .order("created_at", { ascending: true }),
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
@@ -379,8 +393,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   if (manualSalesResult.error && !isMissingTable(manualSalesResult.error, "route_manual_sales")) console.warn("[routes:detail] Manual sales unavailable", { id, error: manualSalesResult.error });
   if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) console.warn("[routes:detail] Inventory adjustments unavailable", { id, error: adjustmentsResult.error });
+  if (quantityConfirmationsResult.error && !isMissingTable(quantityConfirmationsResult.error, "route_stop_quantity_confirmations")) console.warn("[routes:detail] Quantity confirmations unavailable", { id, error: quantityConfirmationsResult.error });
+  if (smartXyEventsResult.error && !isMissingTable(smartXyEventsResult.error, "system_activity_logs")) console.warn("[routes:detail] Smart Route XY events unavailable", { id, error: smartXyEventsResult.error });
   const manualSales = manualSalesResult.error ? [] : (manualSalesResult.data ?? []);
   const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
+  const routeQuantityConfirmations = quantityConfirmationsResult.error ? [] : (quantityConfirmationsResult.data ?? []);
+  const smartXyEvents = smartXyEventsResult.error ? [] : (smartXyEventsResult.data ?? []);
   const completionImageStopDescriptors = routeStops.map((stop: any) => ({
     id: String(stop.id),
     title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
@@ -471,6 +489,79 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
     : null;
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
+  const quantityConfirmationByStop = new Map(routeQuantityConfirmations.map((row: any) => [row.route_stop_id, row]));
+  const smartXyEventByStopLane = new Map<string, any>();
+  smartXyEvents.forEach((event: any) => {
+    const stopId = String(event?.metadata?.route_stop_id ?? "");
+    const slotCode = String(event?.metadata?.slot_code ?? event?.metadata?.slot ?? "");
+    if (!stopId || !slotCode) return;
+    smartXyEventByStopLane.set(`${stopId}:${slotCode}`, event);
+  });
+  const smartRouteLaneRows = routeStopItems.flatMap((item: any) => {
+    if (item.source !== "smart_ai_plan") return [];
+    const allocations = Array.isArray(item.slot_allocations) && item.slot_allocations.length
+      ? item.slot_allocations
+      : [{
+          machine_slot_id: item.machine_slot_id ?? null,
+          slot_code: item.slot_code ?? null,
+          current_qty: 0,
+          observed_current_qty: 0,
+          target_qty: Number(item.planned_quantity ?? 0),
+          recommended_take_qty: Number(item.planned_quantity ?? 0),
+          final_take_qty: Number(item.planned_quantity ?? 0),
+          allocation_kind: "slot",
+          transition_mode: "none",
+          substituted: false,
+          from_product_id: item.product_id,
+          from_product_name: productById.get(item.product_id)?.name ?? null,
+          return_current_qty: 0,
+        }];
+
+    return allocations.map((allocation: any) => {
+      const slotCode = String(allocation.slot_code ?? item.slot_code ?? "");
+      const confirmation = quantityConfirmationByStop.get(item.route_stop_id) as any;
+      const quantityRows = Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows : [];
+      const actualLane = quantityRows.find((row: any) => (
+        String(row.slotCode ?? row.slot_code ?? "") === slotCode
+        && String(row.productId ?? row.product_id ?? "") === String(item.product_id)
+      )) ?? null;
+      const fromProductId = String(allocation.from_product_id ?? item.product_id ?? "");
+      const requiredReturnQty = Math.max(0, Number(allocation.return_current_qty ?? 0));
+      const returnRows = routeAdjustments.filter((adjustment: any) => (
+        adjustment.route_stop_id === item.route_stop_id
+        && adjustment.adjustment_type === "returned_from_machine"
+        && adjustment.reason === "Product replaced"
+        && String(adjustment.product_id ?? "") === fromProductId
+        && String(adjustment.notes ?? "").startsWith("Smart Route product swap")
+        && String(adjustment.notes ?? "").includes(`lane ${slotCode}`)
+      ));
+      const returnedQty = returnRows.reduce((sum: number, adjustment: any) => sum + Math.max(0, Number(adjustment.quantity ?? 0)), 0);
+      const xyEvent = smartXyEventByStopLane.get(`${item.route_stop_id}:${slotCode}`) ?? null;
+      return {
+        routeStopItemId: item.id,
+        routeStopId: item.route_stop_id,
+        machineId: item.machine_id,
+        productId: item.product_id,
+        productName: productById.get(item.product_id)?.name ?? tr(locale, "Unknown product", "منتج غير معروف"),
+        slotCode: slotCode || "-",
+        plannedAdd: Math.max(0, Number(allocation.final_take_qty ?? item.planned_quantity ?? 0)),
+        previousQty: Math.max(0, Number(allocation.current_qty ?? 0)),
+        observedPreviousQty: Math.max(0, Number(allocation.observed_current_qty ?? allocation.current_qty ?? 0)),
+        targetQty: Math.max(0, Number(allocation.target_qty ?? 0)),
+        actualAdded: actualLane ? Math.max(0, Number(actualLane.addedQty ?? actualLane.added_qty ?? 0)) : null,
+        actualFinal: actualLane ? Math.max(0, Number(actualLane.finalQty ?? actualLane.final_qty ?? 0)) : null,
+        verificationStatus: String(confirmation?.verification_status ?? ""),
+        transitionMode: String(allocation.transition_mode ?? "none"),
+        substituted: allocation.substituted === true,
+        fromProductId,
+        fromProductName: String(allocation.from_product_name ?? productById.get(fromProductId)?.name ?? "-"),
+        requiredReturnQty,
+        returnedQty,
+        xyAction: String(xyEvent?.action ?? ""),
+        xySummary: String(xyEvent?.summary ?? ""),
+      };
+    });
+  });
   const confirmedManualSales = manualSales.filter((sale: any) => String(sale.status ?? "confirmed").toLowerCase() === "confirmed");
   const manualSalesTotal = confirmedManualSales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0);
   const damagedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "damaged");
@@ -909,6 +1000,91 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+        {smartRouteLaneRows.length ? (
+          <section className="surface-card border-violet-200 p-4">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-violet-700">{tr(locale, "Smart Route audit", "تدقيق الجولة الذكية")}</div>
+                <h2 className="mt-1 text-lg font-semibold">{tr(locale, "AI lane plan vs operator execution", "خطة الخانات بالذكاء الاصطناعي مقابل التنفيذ الفعلي")}</h2>
+                <p className="text-sm text-slate-500">{tr(
+                  locale,
+                  "Each Smart Route lane keeps its planned product, actual filled quantity, required old-product return, XY product-change result, and quantity-verification evidence.",
+                  "تحتفظ كل خانة في الجولة الذكية بالمنتج المخطط، والكمية الفعلية، وإرجاع المنتج القديم المطلوب، ونتيجة تغيير المنتج في XY، وإثبات الكمية.",
+                )}</p>
+              </div>
+              <StatusBadge
+                status={smartRouteLaneRows.some((row: any) => (
+                  (row.substituted && row.actualAdded !== null && row.actualAdded > 0 && (row.returnedQty < row.requiredReturnQty || row.xyAction !== "xy_slot_product_change"))
+                  || row.verificationStatus === "offline_pending"
+                )) ? "needs_review" : "ok"}
+                label={smartRouteLaneRows.some((row: any) => (
+                  (row.substituted && row.actualAdded !== null && row.actualAdded > 0 && (row.returnedQty < row.requiredReturnQty || row.xyAction !== "xy_slot_product_change"))
+                  || row.verificationStatus === "offline_pending"
+                )) ? tr(locale, "Needs review", "يحتاج مراجعة") : tr(locale, "OK", "سليم")}
+              />
+            </div>
+            <DataTable headers={[
+              tr(locale, "Machine", "الجهاز"),
+              tr(locale, "Lane", "الخانة"),
+              tr(locale, "Plan", "الخطة"),
+              tr(locale, "Actual", "الفعلي"),
+              tr(locale, "Swap / return", "التبديل / الإرجاع"),
+              tr(locale, "XY", "XY"),
+            ]}>
+              {smartRouteLaneRows.map((row: any) => {
+                const swapExecuted = row.actualAdded !== null && row.actualAdded > 0;
+                const returnOk = !row.substituted || !swapExecuted || row.returnedQty >= row.requiredReturnQty;
+                const xyProductOk = !row.substituted || !swapExecuted || row.xyAction === "xy_slot_product_change";
+                const quantityStatusLabel = row.verificationStatus === "xy_api_verified"
+                  ? tr(locale, "XY synced + verified", "تم تحديث XY والتحقق")
+                  : row.verificationStatus === "xy_screenshot_saved"
+                    ? tr(locale, "Screenshot verified", "تم التحقق بصورة")
+                    : row.verificationStatus === "offline_pending"
+                      ? tr(locale, "Power-off pending", "معلق بسبب انقطاع الكهرباء")
+                      : tr(locale, "Not confirmed yet", "لم يتم التأكيد بعد");
+                return (
+                  <tr key={`${row.routeStopItemId}:${row.slotCode}`}>
+                    <td>{formatMachineDisplayName(machineById.get(row.machineId) ?? null, { includeArea: true })}</td>
+                    <td><strong>{row.slotCode}</strong></td>
+                    <td>
+                      <div>{row.productName} +{row.plannedAdd}</div>
+                      <div className="mt-1 text-xs text-slate-500">{row.previousQty} → {row.targetQty || row.previousQty + row.plannedAdd}</div>
+                    </td>
+                    <td>
+                      {row.actualAdded === null ? (
+                        <span className="text-slate-500">{tr(locale, "Pending", "معلق")}</span>
+                      ) : (
+                        <>
+                          <strong>+{row.actualAdded}</strong>
+                          <div className="mt-1 text-xs text-slate-500">{tr(locale, "Final", "النهائي")} {row.actualFinal}</div>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      {row.substituted ? (
+                        <>
+                          <div>{row.fromProductName} → <strong>{row.productName}</strong></div>
+                          <div className={returnOk ? "mt-1 text-xs font-semibold text-emerald-700" : "mt-1 text-xs font-semibold text-rose-700"}>
+                            {tr(locale, "Return", "الإرجاع")}: {row.returnedQty}/{row.requiredReturnQty}
+                          </div>
+                        </>
+                      ) : <span className="text-slate-500">-</span>}
+                    </td>
+                    <td>
+                      <div className={xyProductOk ? "text-sm font-semibold text-emerald-700" : "text-sm font-semibold text-rose-700"}>
+                        {row.substituted && swapExecuted
+                          ? (xyProductOk ? tr(locale, "Product verified", "تم التحقق من المنتج") : tr(locale, "Product change pending", "تغيير المنتج معلق"))
+                          : tr(locale, "No product change", "لا يوجد تغيير منتج")}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">{quantityStatusLabel}</div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </DataTable>
+          </section>
+        ) : null}
 
         <section className="surface-card p-4">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
