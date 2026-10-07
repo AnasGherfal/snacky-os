@@ -31,7 +31,7 @@ export function MachineQuantityConfirmationCard({
   machineId: string;
   items: MachineQuantitySourceItem[];
   completed?: boolean;
-  onStateChange?: (state: { installed: boolean; ready: boolean }) => void;
+  onStateChange?: (state: { installed: boolean; ready: boolean; status: MachineQuantityVerificationStatus | null }) => void;
 }) {
   const { t, locale } = useLanguage();
   const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
@@ -103,8 +103,8 @@ export function MachineQuantityConfirmationCard({
   }, [routeId, stopId]);
 
   useEffect(() => {
-    onStateChangeRef.current?.({ installed, ready });
-  }, [installed, ready]);
+    onStateChangeRef.current?.({ installed, ready, status });
+  }, [installed, ready, status]);
 
   // The operator's quantities become a completed refill only after pressing
   // Complete Stop. Optional evidence can be captured here beforehand.
@@ -146,7 +146,7 @@ export function MachineQuantityConfirmationCard({
     setEvidenceFiles(Array.isArray(confirmation?.evidence_files) ? confirmation.evidence_files : []);
     setSavedAt(confirmation?.submitted_at ?? confirmation?.confirmed_at ?? new Date().toISOString());
     setShowOffline(false);
-    onStateChangeRef.current?.({ installed: true, ready: true });
+    onStateChangeRef.current?.({ installed: true, ready: true, status: String(confirmation?.verification_status ?? "") as MachineQuantityVerificationStatus });
   }
 
   async function uploadScreenshots(selected: File[]) {
