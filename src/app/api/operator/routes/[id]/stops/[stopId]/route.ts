@@ -1039,6 +1039,16 @@ export async function GET(
       };
     });
 
+    const { data: queuedXyChanges, error: queuedXyError } = await operationalReadClient
+      .from("xy_pending_slot_changes")
+      .select("id,slot_code,target_product_id,target_stock_qty,status,last_error,verified_at,created_at")
+      .eq("route_stop_id", stopId)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (queuedXyError && queuedXyError.code !== "42P01" && queuedXyError.code !== "PGRST205") {
+      console.warn("[operator:stop-data] Could not load queued XY changes", { routeId, stopId, error: queuedXyError });
+    }
+
     return NextResponse.json({
       stopId,
       routeId,
@@ -1061,6 +1071,7 @@ export async function GET(
       machineStorageStock: machineStorageStockRows ?? [],
       adjustments,
       machineIssues,
+      queuedXyChanges: queuedXyError ? [] : queuedXyChanges ?? [],
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
