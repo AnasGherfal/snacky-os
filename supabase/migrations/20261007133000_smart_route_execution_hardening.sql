@@ -143,7 +143,7 @@ begin
   select distinct
     p_route_id,
     item.machine_id,
-    'assigned'
+    'assigned'::public.refill_status
   from jsonb_to_recordset(p_items) as item(
     machine_id uuid,
     product_id uuid,
