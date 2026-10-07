@@ -18,6 +18,7 @@ import {
   loadConfirmedXyProductIds,
   syncMachineQuantityRowsToXy,
   type XyQuantitySyncResult,
+  type XySyncMachineQuantityRow,
 } from "@/lib/xy-refill-quantity-sync";
 
 function clean(value: unknown) {
@@ -135,7 +136,8 @@ function validateFilledItems(value: unknown) {
 async function syncRowsForContext(
   admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   stop: { machine?: unknown },
-  rows: ReturnType<typeof buildMachineQuantityRows>,
+  rows: XySyncMachineQuantityRow[],
+  persistPrepared: (rows: XySyncMachineQuantityRow[]) => Promise<void>,
 ): Promise<XyQuantitySyncResult> {
   const machineRelation = Array.isArray(stop.machine) ? stop.machine[0] as Record<string, unknown> | undefined : stop.machine as Record<string, unknown> | null | undefined;
   const vmsMachineId = clean(machineRelation?.vms_machine_id);
@@ -145,11 +147,12 @@ async function syncRowsForContext(
       message: "This machine is not linked to an XY machine id.",
       rows: rows.map((row) => ({
         slotCode: row.slotCode,
-        expectedQty: row.finalQty,
+        expectedQty: row.xySyncTargetQty ?? row.finalQty,
         actualQty: null,
         status: "blocked" as const,
         message: "This machine is not linked to an XY machine id.",
       })),
+      quantityRows: rows,
     };
   }
 
@@ -158,6 +161,7 @@ async function syncRowsForContext(
     vmsMachineId,
     rows,
     expectedVmsProductIds: mappings,
+    persistPrepared,
   });
 }
 
@@ -291,14 +295,32 @@ export async function POST(
         }, { status: 409 });
       }
 
-      const rows = Array.isArray(existing.quantity_rows) ? existing.quantity_rows : [];
-      const syncResult = await syncRowsForContext(context.admin, context.stop, rows);
-      const verified = syncResult.status === "verified";
+      const rows = Array.isArray(existing.quantity_rows) ? existing.quantity_rows as XySyncMachineQuantityRow[] : [];
       const attemptedAt = new Date().toISOString();
+      const syncResult = await syncRowsForContext(
+        context.admin,
+        context.stop,
+        rows,
+        async (preparedRows) => {
+          const { error: targetSaveError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .update({
+              quantity_rows: preparedRows,
+              verification_status: "xy_sync_pending",
+              auto_sync_eligible: true,
+              updated_at: attemptedAt,
+            })
+            .eq("route_stop_id", stopId)
+            .in("verification_status", ["offline_pending", "xy_sync_pending"]);
+          if (targetSaveError) throw targetSaveError;
+        },
+      );
+      const verified = syncResult.status === "verified";
       const { data, error } = await context.admin
         .from("route_stop_quantity_confirmations")
         .update({
           verification_status: verified ? "xy_api_verified" : "xy_sync_pending",
+          quantity_rows: syncResult.quantityRows ?? rows,
           offline_reason: verified ? null : existing.offline_reason,
           sync_attempt_count: Number(existing.sync_attempt_count ?? 0) + 1,
           last_sync_attempt_at: attemptedAt,
@@ -348,7 +370,38 @@ export async function POST(
 
     let syncResult: XyQuantitySyncResult | null = null;
     if (mode === "xy_api") {
-      syncResult = await syncRowsForContext(context.admin, context.stop, rows);
+      syncResult = await syncRowsForContext(
+        context.admin,
+        context.stop,
+        rows,
+        async (preparedRows) => {
+          const provisionalRecord = {
+            route_id: routeId,
+            route_stop_id: stopId,
+            machine_id: context.stop.machine_id,
+            operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
+            quantity_rows: preparedRows,
+            confirmation_key: confirmationKey,
+            verification_status: "xy_sync_pending",
+            evidence_files: [],
+            offline_reason: null,
+            submitted_at: now,
+            confirmed_at: now,
+            created_by_user_id: context.profile.id,
+            sync_attempt_count: 1,
+            last_sync_attempt_at: now,
+            last_sync_error: null,
+            auto_sync_eligible: true,
+            resolved_at: null,
+            resolved_by_user_id: null,
+            updated_at: now,
+          };
+          const { error: targetSaveError } = await context.admin
+            .from("route_stop_quantity_confirmations")
+            .upsert(provisionalRecord, { onConflict: "route_stop_id" });
+          if (targetSaveError) throw targetSaveError;
+        },
+      );
       await logSyncAttempt(context.admin, context, routeId, stopId, syncResult);
     }
 
@@ -360,7 +413,7 @@ export async function POST(
       route_stop_id: stopId,
       machine_id: context.stop.machine_id,
       operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
-      quantity_rows: rows,
+      quantity_rows: syncResult?.quantityRows ?? rows,
       confirmation_key: confirmationKey,
       verification_status: syncVerified ? "xy_api_verified" : syncPending ? "xy_sync_pending" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
       evidence_files: evidenceFiles,
