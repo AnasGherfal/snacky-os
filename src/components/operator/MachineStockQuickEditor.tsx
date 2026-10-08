@@ -9,6 +9,7 @@ export type QuickMachineSlot = {
   currentQty: number;
   capacity: number;
   vmsProductId: string | null;
+  priceLyd?: number | null;
 };
 
 export type QuickMachineRow = {
@@ -40,6 +41,7 @@ export function MachineStockQuickEditor({
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [rowInputs, setRowInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
 
   const updateOne = (slot: QuickMachineSlot, raw: string) => {
     setError("");
@@ -81,6 +83,7 @@ export function MachineStockQuickEditor({
     applicable.forEach((slot) => { next[slot.slotCode] = parsed; });
     onChange(next);
     setError("");
+    setFeedback(tr(`Row ${row.rowIndex}: ${applicable.length} selections set to ${parsed}. Press Complete Stop to sync.`, `تم ضبط الصف ${row.rowIndex}: ${applicable.length} خانة على ${parsed}. اضغط إنهاء الموقع للمزامنة.`));
   };
 
   const changedCount = Object.keys(values).length;
@@ -97,6 +100,7 @@ export function MachineStockQuickEditor({
         </div>
       </div>
 
+      {feedback ? <p role="status" aria-live="polite" className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">✓ {feedback}</p> : null}
       <div className="space-y-2">
         {rows.map((row) => {
           const usable = row.slots.filter((s) => s.vmsProductId && s.capacity > 0);
