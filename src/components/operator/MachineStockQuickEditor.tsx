@@ -159,7 +159,7 @@ export function MachineStockQuickEditor({
                   {usable.map((slot) => {
                     const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode);
                     return (
-                      <label key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                      <div key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                         <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
                         <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
                         <span className="mt-1 block text-xs text-slate-500">{tr("XY last", "آخر XY")}: {units(slot.currentQty)} · {tr("Max", "السعة")}: {slot.capacity}</span>
@@ -169,7 +169,26 @@ export function MachineStockQuickEditor({
                           placeholder="—"
                           aria-label={tr(`Selection ${slot.slotCode} final quantity`, `العدد النهائي للخانة ${slot.slotCode}`)}
                           className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-center text-lg font-bold text-slate-950" />
-                      </label>
+                        {onPriceChange ? (
+                          <label className="mt-2 block text-xs font-semibold text-slate-700">
+                            {tr("Price (LYD)", "السعر (د.ل)")}
+                            <input type="number" inputMode="decimal" min={0.01} max={1000} step={0.01}
+                              aria-label={tr(`Selection ${slot.slotCode} price`, `سعر الخانة ${slot.slotCode}`)}
+                              value={Object.hasOwn(prices, slot.slotCode) ? prices[slot.slotCode] : ""}
+                              placeholder={slot.priceLyd ? Number(slot.priceLyd).toFixed(2) : "—"}
+                              onChange={(e) => updatePrice(slot, e.target.value)}
+                              className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-center text-base text-slate-950" />
+                          </label>
+                        ) : null}
+                        {onChangeProduct ? <button type="button" onClick={() => onChangeProduct(slot.slotCode)}
+                          className="mt-2 min-h-9 w-full rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800">
+                          {tr("Change product", "تغيير المنتج")}
+                        </button> : null}
+                        {onHideSelection ? <button type="button" onClick={() => onHideSelection(slot.slotCode)}
+                          className="mt-1 min-h-9 w-full text-xs text-slate-500 underline">
+                          {tr("Not physically present? Hide", "غير موجودة فعلياً؟ إخفاء")}
+                        </button> : null}
+                      </div>
                     );
                   })}
                 </div>
