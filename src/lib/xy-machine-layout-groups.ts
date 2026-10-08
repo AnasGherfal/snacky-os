@@ -21,9 +21,11 @@ export function groupMachineLayoutRows<T extends { slotCode: string }>(slots: T[
       : Math.floor((n - 1) / 10) + 1;
     rows.set(rowIndex, [...(rows.get(rowIndex) ?? []), slot]);
   });
+  // Label the physical rows in visible order. Sparse XY numbering may skip
+  // 011–020 entirely, but the next visible 021–030 group is still Row 2.
   return Array.from(rows.entries()).sort(([a], [b]) => a - b)
-    .map(([rowIndex, rowSlots]) => ({
-      rowIndex,
+    .map(([, rowSlots], index) => ({
+      rowIndex: index + 1,
       slots: rowSlots.sort((a, b) => Number(a.slotCode) - Number(b.slotCode)),
     }));
 }
