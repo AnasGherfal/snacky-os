@@ -945,6 +945,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
     ["reserving route statuses", reservingRoutesResult.error],
+    ["physical-fit profiles", profilesResult.error],
+    ["slot safety rules", slotRulesResult.error],
+    ["location restrictions", locationRulesResult.error],
   ].filter(([, error]) => error);
   if (essentialFailures.length) {
     console.error("[smart-route] Essential planning reads failed", essentialFailures);
@@ -953,10 +956,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
   const warnings: string[] = [];
   const optionalFailures = [
-    ["product profiles", profilesResult.error],
     ["machine context", machineContextResult.error],
-    ["slot rules", slotRulesResult.error],
-    ["location rules", locationRulesResult.error],
     ["demand signals", demandResult.error],
     ["sales signals", salesSignalResult.error],
     ["fit history", fitHistoryResult.error],
@@ -1030,9 +1030,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const { data: physicallyHidden, error: hiddenError } = await supabase.from("xy_hidden_machine_selections")
     .select("machine_id,slot_code").in("machine_id",machineIds);
   if (hiddenError) {
-    console.warn("[smart-route] Physical lane visibility unavailable", hiddenError);
-    // Fail closed on missing physical configuration: do not plan hidden XY lanes.
-    warnings.push("Physical lane visibility could not be checked; verify machine layouts before using the plan.");
+    console.error("[smart-route] Physical lane visibility unavailable", hiddenError);
+    throw new Error("Smart Route could not verify which machine lanes physically exist. Retry when the machine layout service is available; no stock was changed.");
   }
   const hiddenLaneKeys = new Set((physicallyHidden ?? []).map((slot: any) => `${slot.machine_id}:${slot.slot_code}`));
   const stockRows = ((stockResult.data ?? []) as StockRow[])
