@@ -1112,12 +1112,12 @@ export default function MachineStopPage() {
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
     productName: item.productName,
-    slotCode: item.slotCode,
-    machineSlotId: item.machineSlotId,
-    currentQty: item.currentQty,
+    slotCode: item.hasExactLanePlan === false ? "VMS" : item.slotCode,
+    machineSlotId: item.hasExactLanePlan === false ? null : item.machineSlotId,
+    currentQty: item.hasExactLanePlan === false ? 0 : item.currentQty,
     assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
     filledQty: Number(filledQtys[item.productId] ?? 0),
-    slotAllocations: item.slotAllocations ?? [],
+    slotAllocations: item.hasExactLanePlan === false ? [] : item.slotAllocations ?? [],
     hasExactLanePlan: item.hasExactLanePlan,
     slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
   })), [filledQtys, laneFilledQtys, stopData]);
