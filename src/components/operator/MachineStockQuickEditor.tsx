@@ -9,6 +9,7 @@ export type QuickMachineSlot = {
   currentQty: number;
   capacity: number;
   vmsProductId: string | null;
+  priceLyd?: number | null;
 };
 
 export type QuickMachineRow = {
@@ -29,10 +30,22 @@ export function MachineStockQuickEditor({
   rows,
   values,
   onChange,
+  prices = {},
+  onPriceChange,
+  onChangeProduct,
+  onHideSelection,
+  hiddenSelections = [],
+  onRestoreSelection,
 }: {
   rows: QuickMachineRow[];
   values: Record<string, number>;
   onChange: (next: Record<string, number>) => void;
+  prices?: Record<string, number>;
+  onPriceChange?: (next: Record<string, number>) => void;
+  onChangeProduct?: (slotCode: string) => void;
+  onHideSelection?: (slotCode: string) => void;
+  hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
+  onRestoreSelection?: (slotCode: string) => void;
 }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -40,6 +53,7 @@ export function MachineStockQuickEditor({
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [rowInputs, setRowInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
 
   const updateOne = (slot: QuickMachineSlot, raw: string) => {
     setError("");
@@ -81,9 +95,26 @@ export function MachineStockQuickEditor({
     applicable.forEach((slot) => { next[slot.slotCode] = parsed; });
     onChange(next);
     setError("");
+    setFeedback(tr(`Row ${row.rowIndex}: ${applicable.length} selections set to ${parsed}. Press Complete Stop to sync.`, `تم ضبط الصف ${row.rowIndex}: ${applicable.length} خانة على ${parsed}. اضغط إنهاء الموقع للمزامنة.`));
   };
 
-  const changedCount = Object.keys(values).length;
+  const updatePrice = (slot: QuickMachineSlot, raw: string) => {
+    if (!onPriceChange) return;
+    const next = { ...prices };
+    if (!raw.trim()) { delete next[slot.slotCode]; onPriceChange(next); return; }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0 || value > 1000 || Math.abs(value * 100 - Math.round(value * 100)) > 0.0001) {
+      setError(tr("Price must be positive with up to two decimal places.", "السعر يجب أن يكون موجباً وبحد أقصى خانتين عشريتين."));
+      return;
+    }
+    next[slot.slotCode] = value;
+    onPriceChange(next);
+    setError("");
+    setFeedback(tr(`Selection ${slot.slotCode}: price ${value.toFixed(2)} LYD staged until Complete Stop.`,
+      `سعر الخانة ${slot.slotCode} = ${value.toFixed(2)} د.ل محفوظ مؤقتاً إلى حين إنهاء الموقع.`));
+  };
+
+  const changedCount = new Set([...Object.keys(values), ...Object.keys(prices)]).size;
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white p-3 shadow-sm sm:p-5" aria-label={tr("Machine lane inventory", "مخزون خانات الجهاز")}>
       <div className="mb-3">
@@ -97,6 +128,7 @@ export function MachineStockQuickEditor({
         </div>
       </div>
 
+      {feedback ? <p role="status" aria-live="polite" className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">✓ {feedback}</p> : null}
       <div className="space-y-2">
         {rows.map((row) => {
           const usable = row.slots.filter((s) => s.vmsProductId && s.capacity > 0);
@@ -125,9 +157,9 @@ export function MachineStockQuickEditor({
               {open ? (
                 <div className="grid grid-cols-2 gap-2 border-t border-slate-200 bg-white p-3 sm:grid-cols-3 lg:grid-cols-5">
                   {usable.map((slot) => {
-                    const changed = Object.hasOwn(values, slot.slotCode);
+                    const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode);
                     return (
-                      <label key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                      <div key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                         <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
                         <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
                         <span className="mt-1 block text-xs text-slate-500">{tr("XY last", "آخر XY")}: {units(slot.currentQty)} · {tr("Max", "السعة")}: {slot.capacity}</span>
@@ -137,7 +169,26 @@ export function MachineStockQuickEditor({
                           placeholder="—"
                           aria-label={tr(`Selection ${slot.slotCode} final quantity`, `العدد النهائي للخانة ${slot.slotCode}`)}
                           className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-center text-lg font-bold text-slate-950" />
-                      </label>
+                        {onPriceChange ? (
+                          <label className="mt-2 block text-xs font-semibold text-slate-700">
+                            {tr("Price (LYD)", "السعر (د.ل)")}
+                            <input type="number" inputMode="decimal" min={0.01} max={1000} step={0.01}
+                              aria-label={tr(`Selection ${slot.slotCode} price`, `سعر الخانة ${slot.slotCode}`)}
+                              value={Object.hasOwn(prices, slot.slotCode) ? prices[slot.slotCode] : ""}
+                              placeholder={slot.priceLyd ? Number(slot.priceLyd).toFixed(2) : "—"}
+                              onChange={(e) => updatePrice(slot, e.target.value)}
+                              className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-center text-base text-slate-950" />
+                          </label>
+                        ) : null}
+                        {onChangeProduct ? <button type="button" onClick={() => onChangeProduct(slot.slotCode)}
+                          className="mt-2 min-h-9 w-full rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800">
+                          {tr("Change product", "تغيير المنتج")}
+                        </button> : null}
+                        {onHideSelection ? <button type="button" onClick={() => onHideSelection(slot.slotCode)}
+                          className="mt-1 min-h-9 w-full text-xs text-slate-500 underline">
+                          {tr("Not physically present? Hide", "غير موجودة فعلياً؟ إخفاء")}
+                        </button> : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -146,10 +197,25 @@ export function MachineStockQuickEditor({
           );
         })}
       </div>
-      {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
+      {hiddenSelections.length ? (
+        <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-amber-950">
+            {tr(`${hiddenSelections.length} physically absent selections hidden · Manage`,
+              `${hiddenSelections.length} خانات غير موجودة فعلياً مخفية · إدارة`)}
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {hiddenSelections.map((row) => <button key={row.slot_code} type="button"
+              className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900"
+              onClick={() => onRestoreSelection?.(row.slot_code)}>
+              {row.slot_code} · {tr("Restore", "إظهار")}
+            </button>)}
+          </div>
+        </details>
+      ) : null}
+            {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
-        "Only selections you set will be synchronized. An untouched selection is left alone. Changes are queued securely at Complete Stop—no waiting for XY here.",
-        "ستتم مزامنة الخانات التي حددتها فقط، ولن تتغير الخانات التي لم تلمسها. تُحفظ التغييرات عند إنهاء الموقع دون انتظار اتصال XY.",
+        "Only edited selections are saved at Complete Stop. A background worker tries up to 5 updates per minute. Check the admin route audit for verified or pending status.",
+        "تُحفظ الخانات المعدلة فقط عند إنهاء الموقع. ينفّذ النظام في الخلفية حتى 5 تحديثات في الدقيقة، ويمكن للإدارة متابعة حالة المزامنة.",
       )}</p>
     </section>
   );
