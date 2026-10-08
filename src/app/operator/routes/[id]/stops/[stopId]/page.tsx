@@ -229,6 +229,7 @@ interface StopData {
   routeStatus: string;
   refillItems: StopRefillItem[];
   machineLayout?: MachineLayoutSlot[];
+  hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
   productCatalogDeferred?: boolean;
@@ -1366,7 +1367,28 @@ export default function MachineStopPage() {
     }
   };
 
-  const addExtraProduct = () => {
+  const toggleSelectionVisibility = async (slotCode: string, hidden: boolean) => {
+    if (hidden && !window.confirm(tr(
+      `Hide selection ${slotCode} because it is not physically present?`,
+      `إخفاء الخانة ${slotCode} لأنها غير موجودة فعلياً؟`,
+    ))) return;
+    setError("");
+    try {
+      localDraft.saveNow();
+      const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-visibility`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slotCode, hidden }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not save selection visibility.");
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : tr("Could not save selection visibility.", "تعذر حفظ ظهور الخانة."));
+    }
+  };
+
+    const addExtraProduct = () => {
     setExtraProducts((prev) => [...prev, { id: newClientId(), productId: "", quantity: 0, reason: "extra_stock_left_at_machine", notes: "" }]);
   };
 
@@ -2482,6 +2504,17 @@ export default function MachineStopPage() {
           rows={machineLayoutRows}
           values={selectionFinalQtys}
           onChange={setSelectionFinalQtys}
+          hiddenSelections={stopData.hiddenSelections ?? []}
+          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
+          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
+          onChangeProduct={(slotCode) => {
+            setXySwapSourceSlotCode(null);
+            setXySwapTargetSlotCode("");
+            setXyEditSlotCode(slotCode);
+            setXyReplacementProductId("");
+            setXyChangeError("");
+            setXyChangeSuccess("");
+          }}
         />
         <details className="rounded-xl border border-slate-200 bg-white p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-500">
