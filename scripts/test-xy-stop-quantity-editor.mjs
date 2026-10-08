@@ -45,7 +45,7 @@ test("Operator can fill an entire XY row then override a single selection", () =
   assert.match(editor, /next\[slot.slotCode\] = parsed/);
   assert.match(editor, /updateOne\(slot, e.target.value\)/);
   assert.match(editor, /parsed > slot.capacity/);
-  assert.match(editor, /Only selections you set will be synchronized/);
+  assert.match(editor, /Only edited selections are saved at Complete Stop/);
   assert.match(editor, /FINAL quantity physically inside each selection/);
   assert.doesNotMatch(editor, /capacity - currentQty/);
 });
