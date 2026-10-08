@@ -17,9 +17,10 @@ const operatorPickList = fs.readFileSync(path.join(repoRoot, "src/app/operator/r
 const operatorSmartApi = fs.readFileSync(path.join(repoRoot, "src/app/api/operator/routes/[id]/smart-plan/route.ts"), "utf8");
 const applyMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20261007105000_apply_smart_route_plan.sql"), "utf8");
 
-test("smart planner is draft-only and refreshes XY before reasoning", () => {
+test("smart planner uses verified XY snapshots without blocking on refresh before reasoning", () => {
   assert.match(planner, /import "server-only"/);
-  assert.match(planner, /ensureFreshXyRoutePlanningData/);
+  assert.doesNotMatch(planner, /await ensureFreshXyRoutePlanningData/);
+  assert.match(planner, /background_snapshot/);
   assert.match(api, /generateSmartRoutePlan/);
   assert.doesNotMatch(api, /\.from\("routes"\)\.insert/);
   assert.doesNotMatch(api, /\.from\("inventory_movements"\)\.insert/);
@@ -130,7 +131,9 @@ test("owner rule screen exposes hard venue, fit, and lane controls", () => {
 
 test("large route AI reasoning is batched and each failed batch falls back safely", () => {
   assert.match(planner, /AI_TASK_BATCH_SIZE = 40/);
-  assert.match(planner, /tasks\.slice\(offset, offset \+ AI_TASK_BATCH_SIZE\)/);
+  assert.match(planner, /aiTasks\.slice\(offset, offset \+ AI_TASK_BATCH_SIZE\)/);
+  assert.match(planner, /AI_MAX_TASKS = 80/);
+  assert.match(planner, /Promise\.all\(chunks\.map\(\(batch\) => callPlannerAI\(batch\)\)\)/);
   assert.match(planner, /batch\.map\(fallbackDecision\)/);
 });
 
@@ -222,4 +225,12 @@ test("Smart Route evaluates full lanes but only creates work when refill or repl
   assert.match(planner, /if \(capacity <= 0\) continue/);
   assert.match(planner, /if \(neededQty <= 0\) continue/);
   assert.match(planner, /transitionMode === "replace_now" \? capacity : refillNeededQty/);
+});
+
+
+test("smart planner groups noisy warnings without hiding critical stock issues", () => {
+  assert.match(planner, /summarizeSmartRouteWarnings/);
+  assert.match(planner, /Custom lane rules unavailable/);
+  assert.match(planner, /locationRulesResult.error \|\| slotRulesResult.error/);
+  assert.match(planner, /signal: AbortSignal.timeout\(10000\)/);
 });
