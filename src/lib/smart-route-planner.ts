@@ -1269,20 +1269,29 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     };
   }
 
-  const aiResults: Array<Awaited<ReturnType<typeof callPlannerAI>>> = [];
-  const proposed: AiDecision[] = [];
+  // Hundreds of lane tasks on multi-machine routes must not start a long,
+  // sequential series of LLM calls and time out the Generate button.
+  // The deterministic optimiser still sees every task and enforces the
+  // route-wide stock constraints. AI focuses on the highest-priority 80.
   const AI_TASK_BATCH_SIZE = 40;
-
-  for (let offset = 0; offset < tasks.length; offset += AI_TASK_BATCH_SIZE) {
-    const batch = tasks.slice(offset, offset + AI_TASK_BATCH_SIZE);
-    const result = await callPlannerAI(batch);
-    aiResults.push(result);
+  const AI_MAX_TASKS = 80;
+  const aiTasks = tasks.slice(0, AI_MAX_TASKS);
+  const chunks: PlanTask[][] = [];
+  for (let offset = 0; offset < aiTasks.length; offset += AI_TASK_BATCH_SIZE) {
+    chunks.push(aiTasks.slice(offset, offset + AI_TASK_BATCH_SIZE));
+  }
+  const aiResults = await Promise.all(chunks.map((batch) => callPlannerAI(batch)));
+  const proposed: AiDecision[] = [];
+  chunks.forEach((batch, index) => {
+    const result = aiResults[index];
     if (result.warning) warnings.push(result.warning);
-    if (result.ok) {
-      proposed.push(...result.decisions);
-    } else {
-      proposed.push(...batch.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
-    }
+    if (result.ok) proposed.push(...result.decisions);
+    else proposed.push(...batch.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
+  });
+  const remainingTasks = tasks.slice(AI_MAX_TASKS);
+  if (remainingTasks.length) {
+    proposed.push(...remainingTasks.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
+    warnings.push(`AI reviewed the 80 most urgent lanes; ${remainingTasks.length} additional lanes were optimised deterministically with the same stock, compatibility and location constraints.`);
   }
 
   const decisions = validateDecisions(tasks, proposed, availableByProduct, warnings);
