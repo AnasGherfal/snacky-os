@@ -960,7 +960,19 @@ export async function GET(
       if (slotCode && imageUrl && !latestImageBySlot.has(slotCode)) latestImageBySlot.set(slotCode, imageUrl);
     });
 
+    // Physical layout overrides are machine-specific and reversible. Some XY
+    // imports retain removed/nonphysical channel codes; do not display them as
+    // fillable selections just because historical stock rows still exist.
+    const { data: hiddenSlotRows, error: hiddenSlotError } = await operationalReadClient
+      .from("xy_hidden_machine_selections")
+      .select("slot_code,reason,updated_at")
+      .eq("machine_id", stop.machine_id);
+    if (hiddenSlotError) console.warn("[operator:stop] Cannot verify physical slot visibility", hiddenSlotError);
+    const hiddenSelections = hiddenSlotError ? [] : (hiddenSlotRows ?? []);
+    const hiddenSlotCodes = new Set(hiddenSelections.map((row: any) => String(row.slot_code ?? "").trim()));
+
     const machineLayout = latestMachineStockRows
+      .filter((row) => !hiddenSlotCodes.has(String(row.slot_code ?? "").trim()))
       .map((row) => {
         const slotCode = String(row.slot_code ?? "").trim();
         const productId = String(row.product_id ?? "").trim();
@@ -1060,6 +1072,7 @@ export async function GET(
       routeStatus: route.status,
       refillItems,
       machineLayout,
+      hiddenSelections,
       extraItems: existingExtraItems,
       productOptions: initialProductOptions,
       productCatalogDeferred: initialProductOptions.length < productOptions.length,
