@@ -215,7 +215,9 @@ test("Smart Route can re-merchandise a proven weak partially depleted lane", () 
   assert.match(planner, /currentQty <= transitionFloorQty/);
   assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
   assert.match(planner, /candidates\.filter\(\(candidate\) => !candidate\.original\)/);
-  assert.match(planner, /AI assortment optimization:/);
+  // Assortment changes are operational substitutions, not error warnings.
+  assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
+  assert.match(planner, /Approved merchandising changes appear in substitutions, not warnings/);
 });
 
 test("Smart Route evaluates full lanes but only creates work when refill or replacement is justified", () => {
