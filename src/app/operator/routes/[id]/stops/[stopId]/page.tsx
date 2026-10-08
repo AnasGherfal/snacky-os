@@ -1374,6 +1374,59 @@ export default function MachineStopPage() {
     }
   };
 
+  const changeProductInSelection = async (slotCode: string, productId: string) => {
+    if (!routeId || !stopId || !stopData) throw new Error("Machine stop is unavailable.");
+    const existing = stopData.machineLayout?.find((slot) => slot.slotCode === slotCode);
+    if (!existing) throw new Error(`Selection ${slotCode} was not found in the current XY layout.`);
+    if (existing.productId === productId) throw new Error(tr("That product is already in this selection.", "المنتج موجود بالفعل في هذه الخانة."));
+    const plannedSmartSwap = activeSmartSwapRequirements.some((item) =>
+      item.slotCode === slotCode && item.targetProductId === productId);
+    const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ slotCode, productId, queueOnOffline: true, smartRouteSwap: plannedSmartSwap }),
+    }, 30000);
+    const parsed = await readServerResponse(response, {
+      operation: "inline_xy_product_change", route_id: routeId, route_stop_id: stopId, slot_code: slotCode,
+    });
+    const payload = parsed.payload as Record<string, unknown> | null;
+    if (!response.ok || (payload?.queued !== true && payload?.verified !== true)) {
+      throw new Error(responseMessage(payload) || tr("Could not save this product change.", "تعذر حفظ تغيير المنتج."));
+    }
+    const selected = (fullProductCatalog ?? stopData.productOptions).find((item) => item.id === productId);
+    if (payload.queued === true) {
+      setStopData((previous) => previous ? {
+        ...previous,
+        queuedXyChanges: [{
+          id: String(payload.queueId ?? `${slotCode}:${productId}`),
+          slot_code: slotCode,
+          target_product_id: productId,
+          target_stock_qty: 0,
+          status: "pending" as const,
+          last_error: null,
+        }, ...(previous.queuedXyChanges ?? []).filter((item) => item.slot_code !== slotCode)],
+      } : previous);
+    } else {
+      const verified = payload.slot as { currentQty?: number; priceLyd?: number; vmsProductId?: string; capacity?: number } | null;
+      setStopData((previous) => previous ? {
+        ...previous,
+        machineLayout: (previous.machineLayout ?? []).map((slot) => slot.slotCode === slotCode
+          ? {
+              ...slot,
+              productId,
+              productName: selected?.name ?? slot.productName,
+              currentQty: Number(verified?.currentQty ?? 0),
+              priceLyd: Number(verified?.priceLyd ?? slot.priceLyd),
+              vmsProductId: String(verified?.vmsProductId ?? slot.vmsProductId ?? "") || null,
+            } : slot),
+      } : previous);
+    }
+    // Product changes are a separate zero-sellable-stock operation. Never send an
+    // earlier stock or price draft for a lane whose product was just changed.
+    setSelectionFinalQtys((prior) => { const next = { ...prior }; delete next[slotCode]; return next; });
+    setSelectionPriceLyd((prior) => { const next = { ...prior }; delete next[slotCode]; return next; });
+  };
+
   const toggleSelectionVisibility = async (slotCode: string, hidden: boolean) => {
     if (hidden && !window.confirm(tr(
       `Hide selection ${slotCode} because it is not physically present?`,
@@ -2516,17 +2569,14 @@ export default function MachineStopPage() {
           rows={machineLayoutRows}
           values={selectionFinalQtys}
           onChange={setSelectionFinalQtys}
+          prices={selectionPriceLyd}
+          onPriceChange={setSelectionPriceLyd}
+          products={fullProductCatalog ?? stopData.productOptions}
+          onLoadProducts={() => void loadFullProductCatalog().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))}
+          onChangeProduct={changeProductInSelection}
           hiddenSelections={stopData.hiddenSelections ?? []}
           onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
           onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
-          onChangeProduct={(slotCode) => {
-            setXySwapSourceSlotCode(null);
-            setXySwapTargetSlotCode("");
-            setXyEditSlotCode(slotCode);
-            setXyReplacementProductId("");
-            setXyChangeError("");
-            setXyChangeSuccess("");
-          }}
         />
         <details className="rounded-xl border border-slate-200 bg-white p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-500">
