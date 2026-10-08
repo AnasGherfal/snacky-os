@@ -272,6 +272,29 @@ const decisionSchema = {
   },
 } as const;
 
+function compactPlanWarnings(allWarnings: string[]) {
+  const unique = Array.from(new Set(allWarnings.filter(Boolean)));
+  const unfillable = unique.filter((message) =>
+    message.startsWith("UNFILLABLE:") || message.startsWith("HARD NO-EMPTY-LANE EXCEPTION"));
+  const stale = unique.filter((message) => message.startsWith("Skipped stale XY lane"));
+  const stock = unique.filter((message) =>
+    message.startsWith("Clamped ") || message.includes("exhausted by higher-priority"));
+  const swap = unique.filter((message) => message.startsWith("Blocked substitution"));
+  const handled = new Set([...unfillable, ...stale, ...stock, ...swap]);
+  const notes = unique.filter((message) => !handled.has(message));
+  const brief: string[] = [];
+  if (unfillable.length) {
+    brief.push(`${unfillable.length} usable lanes have no compatible in-stock replacement. Review before dispatch.`);
+    brief.push(...unfillable.slice(0, 3));
+  }
+  if (stale.length) brief.push(`${stale.length} lanes were excluded because their XY data was stale.`);
+  if (stock.length) brief.push(`${stock.length} stock allocations were automatically adjusted to available storage.`);
+  if (swap.length) brief.push(`${swap.length} unsafe product substitutions were prevented.`);
+  brief.push(...notes.slice(0, 5));
+  if (notes.length > 5) brief.push(`${notes.length - 5} additional technical notices recorded in the Smart Route audit.`);
+  return brief;
+}
+
 function units(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -553,6 +576,7 @@ async function callPlannerAI(tasks: PlanTask[]) {
 
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
+      signal: AbortSignal.timeout(9_000),
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -862,8 +886,18 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const machineIds = Array.from(new Set(input.machineIds.map(String).filter(Boolean)));
   if (!machineIds.length) throw new Error("Choose at least one machine before generating a smart plan.");
 
-  const xyRefresh = await ensureFreshXyRoutePlanningData();
-  const salesRefresh = await ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 });
+  // Sync services improve the forecast but MUST NOT block an inventory-safe
+  // plan when a single XY endpoint times out. Keep the last verified snapshot.
+  const [xyRefresh, salesRefresh] = await Promise.all([
+    ensureFreshXyRoutePlanningData().catch((error) => {
+      console.warn("[smart-route] XY freshness refresh unavailable; using verified snapshot", error);
+      return { outcome: "failed" as const, reason: "XY refresh unavailable" };
+    }),
+    ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 }).catch((error) => {
+      console.warn("[smart-route] Live sales unavailable; using stock depletion", error);
+      return { outcome: "failed" as const, reason: "Live sales unavailable" };
+    }),
+  ]);
   const now = new Date();
   const recentFillSince = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -901,7 +935,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     supabase.from("route_stop_fill_lines").select("machine_id, product_id, actual_qty, created_at").in("machine_id", machineIds).gte("created_at", recentFillSince),
   ]);
 
-  const failures = [
+  // Inventory, route reservations and XY machine identities are essential;
+  // demand, AI fit evidence and optional history are improvements, not blockers.
+  const essentialFailures = [
     ["machines", machinesResult.error],
     ["XY stock", stockResult.error],
     ["machine slots", slotsResult.error],
@@ -909,23 +945,32 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
     ["reserving route statuses", reservingRoutesResult.error],
-    ["product profiles", profilesResult.error],
-    ["machine context", machineContextResult.error],
-    ["slot rules", slotRulesResult.error],
-    ["location rules", locationRulesResult.error],
-    ["demand signals", demandResult.error],
-    ["fit history", fitHistoryResult.error],
-  ].filter((entry) => entry[1]);
-
-  if (failures.length) {
-    throw new Error(`Smart planning data is incomplete: ${failures.map(([label, error]) => `${label}: ${(error as { message?: string })?.message ?? "unknown error"}`).join("; ")}`);
+    ["physical-fit profiles", profilesResult.error],
+    ["slot safety rules", slotRulesResult.error],
+    ["location restrictions", locationRulesResult.error],
+  ].filter(([, error]) => error);
+  if (essentialFailures.length) {
+    console.error("[smart-route] Essential planning reads failed", essentialFailures);
+    throw new Error("Smart Route could not verify machine stock or available storage. Retry after the stock data has refreshed; no route or stock was changed.");
   }
 
   const warnings: string[] = [];
-  if (refillHistoryResult.error) warnings.push("Past route-fill history could not be loaded.");
-  if (salesSignalResult.error) warnings.push("True transaction-sales signals could not be loaded; ranking fell back to XY stock depletion.");
+  const optionalFailures = [
+    ["machine context", machineContextResult.error],
+    ["demand signals", demandResult.error],
+    ["sales signals", salesSignalResult.error],
+    ["fit history", fitHistoryResult.error],
+    ["past route fills", refillHistoryResult.error],
+  ].filter(([, error]) => error);
+  if (optionalFailures.length) {
+    console.warn("[smart-route] Optional scoring inputs degraded", optionalFailures);
+    warnings.push("Some optional demand/fit signals were unavailable; used verified XY stock and storage for a conservative plan.");
+  }
+  if (xyRefresh.outcome === "failed" || xyRefresh.outcome === "unavailable") {
+    warnings.push("XY live refresh was unavailable; the plan uses the latest saved XY snapshot. Review data freshness before visiting machines.");
+  }
   if (salesRefresh.outcome === "failed" || salesRefresh.outcome === "unavailable") {
-    warnings.push(`Live XY sales refresh is ${salesRefresh.outcome}: ${salesRefresh.reason ?? "configuration or vendor API issue"}`);
+    warnings.push("Recent live sales were unavailable; product ranking uses historic demand and stock depletion.");
   }
 
   const machines = (machinesResult.data ?? []) as MachineRow[];
@@ -982,7 +1027,15 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const availableByProduct = new Map<string, number>();
   products.forEach((product) => availableByProduct.set(product.id, Math.max(0, units(storageByProduct.get(product.id)) - units(reservedByProduct.get(product.id)))));
 
-  const stockRows = (stockResult.data ?? []) as StockRow[];
+  const { data: physicallyHidden, error: hiddenError } = await supabase.from("xy_hidden_machine_selections")
+    .select("machine_id,slot_code").in("machine_id",machineIds);
+  if (hiddenError) {
+    console.error("[smart-route] Physical lane visibility unavailable", hiddenError);
+    throw new Error("Smart Route could not verify which machine lanes physically exist. Retry when the machine layout service is available; no stock was changed.");
+  }
+  const hiddenLaneKeys = new Set((physicallyHidden ?? []).map((slot: any) => `${slot.machine_id}:${slot.slot_code}`));
+  const stockRows = ((stockResult.data ?? []) as StockRow[])
+    .filter((slot) => !hiddenLaneKeys.has(`${slot.machine_id}:${slot.slot_code}`));
   const latestCaptureByMachine = new Map<string, number>();
   stockRows.forEach((stock) => {
     const capturedAt = stock.captured_at ? Date.parse(stock.captured_at) : Number.NaN;
@@ -1047,9 +1100,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       : Math.max(1, refillNeededQty);
 
     if (originalAvailableUnits <= 0 && currentQty > 0 && !stockoutReplaceNow) {
-      warnings.push(
-        `${product.name} has no verified warehouse stock for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code}, but the lane is still ${currentQty}/${capacity}. Smart Route will switch it before empty once it reaches the ${transitionFloorQty}-unit transition zone or is forecast to cross that zone before the next typical service.`,
-      );
+      // Still stocked in the machine: no pickup and no operator action today.
+      // This is not an error and should not flood the Smart Route screen.
       continue;
     }
 
@@ -1145,7 +1197,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       .slice(0, 10);
 
     if (!candidates.length) {
-      warnings.push(`No verified in-stock compatible product is available for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} (${product.name}).`);
+      if (currentQty === 0) warnings.push(`UNFILLABLE: ${machine.name ?? machine.machine_code ?? machine.id}, lane ${stock.slot_code} has no compatible available product in storage.`);
       continue;
     }
 
@@ -1192,14 +1244,12 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
         : candidates.filter((candidate) => candidate.original);
 
     if (!taskCandidates.length) {
-      warnings.push(`No executable candidate remains for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} after applying Smart Route substitution rules.`);
+      if (currentQty === 0) warnings.push(`UNFILLABLE: ${machine.name ?? machine.machine_code ?? machine.id}, lane ${stock.slot_code}: no compatible substitute in storage.`);
       continue;
     }
 
     if (mixReplaceNow && strongestAlternative) {
-      warnings.push(
-        `AI assortment optimization: ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} can change from ${product.name} to ${strongestAlternative.productName}; verified 21-day machine sales are ${exactMachineSales} vs ${strongestAlternative.machineSalesUnits}. The remaining ${currentQty} units must be returned before the slot is changed.`,
-      );
+      // Approved merchandising changes appear in substitutions, not warnings.
     }
 
     tasks.push({
@@ -1252,7 +1302,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       manualStopItems: [],
       slotAssignments: [],
       substitutions: [],
-      warnings,
+      warnings: compactPlanWarnings(warnings),
       freshness: {
         xyOutcome: xyRefresh.outcome,
         latestStockAt,
@@ -1266,17 +1316,28 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const aiResults: Array<Awaited<ReturnType<typeof callPlannerAI>>> = [];
   const proposed: AiDecision[] = [];
   const AI_TASK_BATCH_SIZE = 40;
-
-  for (let offset = 0; offset < tasks.length; offset += AI_TASK_BATCH_SIZE) {
-    const batch = tasks.slice(offset, offset + AI_TASK_BATCH_SIZE);
-    const result = await callPlannerAI(batch);
+  const MAX_AI_BATCHES = 2;
+  const aiBatches: PlanTask[][] = [];
+  for (let offset = 0; offset < tasks.length && aiBatches.length < MAX_AI_BATCHES; offset += AI_TASK_BATCH_SIZE) {
+    aiBatches.push(tasks.slice(offset, offset + AI_TASK_BATCH_SIZE));
+  }
+  // AI may explain up to 80 top-priority lanes in parallel; all other lanes
+  // still use the deterministic commercial optimizer. Never block the whole
+  // route on a slow or unavailable language-model request.
+  const batchResults = await Promise.all(aiBatches.map((batch) => callPlannerAI(batch)));
+  batchResults.forEach((result, index) => {
+    const batch = aiBatches[index];
     aiResults.push(result);
-    if (result.warning) warnings.push(result.warning);
+    if (result.warning) warnings.push("AI explanations were temporarily unavailable; the safe Smart Route optimizer completed the plan.");
     if (result.ok) {
       proposed.push(...result.decisions);
     } else {
       proposed.push(...batch.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
     }
+  });
+  const coveredByAI = aiBatches.length * AI_TASK_BATCH_SIZE;
+  if (tasks.length > coveredByAI) {
+    proposed.push(...tasks.slice(coveredByAI).map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
   }
 
   const decisions = validateDecisions(tasks, proposed, availableByProduct, warnings);
@@ -1349,7 +1410,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     manualStopItems,
     slotAssignments,
     substitutions,
-    warnings: Array.from(new Set(warnings)),
+    warnings: compactPlanWarnings(warnings),
     freshness: {
       xyOutcome: xyRefresh.outcome,
       latestStockAt,

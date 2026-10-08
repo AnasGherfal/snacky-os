@@ -287,6 +287,7 @@ type StopDraft = {
   filledQtys: Record<string, number>;
   laneFilledQtys: Record<string, number>;
   selectionFinalQtys: Record<string, number>;
+  selectionPrices: Record<string, number>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -676,6 +677,8 @@ export default function MachineStopPage() {
   const [laneFilledQtys, setLaneFilledQtys] = useState<Record<string, number>>({});
   // Only touched physical XY selections. Never infer actual lane stock from a product total.
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
+  const [selectionPrices, setSelectionPrices] = useState<Record<string, number>>({});
+  const [showAdvancedLayout, setShowAdvancedLayout] = useState(false);
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -752,6 +755,7 @@ export default function MachineStopPage() {
     filledQtys,
     laneFilledQtys,
     selectionFinalQtys,
+    selectionPrices,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -770,6 +774,7 @@ export default function MachineStopPage() {
     filledQtys,
     laneFilledQtys,
     selectionFinalQtys,
+    selectionPrices,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -792,6 +797,7 @@ export default function MachineStopPage() {
       setFilledQtys(draft.filledQtys ?? {});
       setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setSelectionFinalQtys(draft.selectionFinalQtys ?? {});
+      setSelectionPrices(draft.selectionPrices ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -1227,6 +1233,7 @@ export default function MachineStopPage() {
         setFilledQtys(initialQtys);
         setLaneFilledQtys(initialLaneQtys);
         setSelectionFinalQtys({});
+        setSelectionPrices({});
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1237,6 +1244,7 @@ export default function MachineStopPage() {
           filledQtys: initialQtys,
           laneFilledQtys: initialLaneQtys,
           selectionFinalQtys: {},
+          selectionPrices: {},
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1516,7 +1524,12 @@ export default function MachineStopPage() {
       // Save exact final machine-lane stock in the secure async queue.
       // This is independent of bag-to-machine actual refill accounting and
       // NEVER waits for a remote XY write or readback.
-      const selections = Object.entries(selectionFinalQtys).map(([slotCode, finalQty]) => ({ slotCode, finalQty }));
+      const selectionCodes = new Set([...Object.keys(selectionFinalQtys), ...Object.keys(selectionPrices)]);
+      const selections = Array.from(selectionCodes).map((slotCode) => ({
+        slotCode,
+        ...(Object.hasOwn(selectionFinalQtys, slotCode) ? { finalQty: selectionFinalQtys[slotCode] } : {}),
+        ...(Object.hasOwn(selectionPrices, slotCode) ? { priceLyd: selectionPrices[slotCode] } : {}),
+      }));
       if (selections.length) {
         const saved = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`, {
           method: "POST",
@@ -1796,6 +1809,33 @@ export default function MachineStopPage() {
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
 
+                <MachineStockQuickEditor
+          rows={machineLayoutRows}
+          values={selectionFinalQtys}
+          onChange={setSelectionFinalQtys}
+          prices={selectionPrices}
+          onPriceChange={setSelectionPrices}
+          hiddenSelections={stopData.hiddenSelections ?? []}
+          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
+          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
+          onChangeProduct={(slotCode) => {
+            setXySwapSourceSlotCode(null);
+            setXySwapTargetSlotCode("");
+            setXyEditSlotCode(slotCode);
+            setXyReplacementProductId("");
+            setXyChangeError("");
+            setXyChangeSuccess("");
+          }}
+        />
+        <button type="button"
+          onClick={() => setShowAdvancedLayout((value) => !value)}
+          className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
+          {showAdvancedLayout
+            ? tr("Hide advanced XY layout and lane moves", "إخفاء توزيع XY المتقدم ونقل الخانات")
+            : tr("Advanced: see full XY layout and move lanes", "متقدم: عرض توزيع XY الكامل ونقل الخانات")}
+        </button>
+
+        <div className={showAdvancedLayout || xyEditSlotCode || xySwapSourceSlotCode ? "" : "hidden"}>
         <section className="overflow-hidden rounded-2xl border border-slate-300 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2240,6 +2280,7 @@ export default function MachineStopPage() {
             );
           })() : null}
         </section>
+        </div>
 
         {smartSwapRequirements.length ? (
           <section id="smart-route-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
@@ -2500,22 +2541,7 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <MachineStockQuickEditor
-          rows={machineLayoutRows}
-          values={selectionFinalQtys}
-          onChange={setSelectionFinalQtys}
-          hiddenSelections={stopData.hiddenSelections ?? []}
-          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
-          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
-          onChangeProduct={(slotCode) => {
-            setXySwapSourceSlotCode(null);
-            setXySwapTargetSlotCode("");
-            setXyEditSlotCode(slotCode);
-            setXyReplacementProductId("");
-            setXyChangeError("");
-            setXyChangeSuccess("");
-          }}
-        />
+
         <details className="rounded-xl border border-slate-200 bg-white p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-500">
             {tr("Optional XY screenshots / technical verification", "اختياري: صور XY أو التحقق الفني")}

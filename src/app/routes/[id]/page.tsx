@@ -411,7 +411,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const xyQueueRows = queuedXyError ? [] : (queuedXyChanges ?? []);
   const { data: xyQuantityRows, error: xyQuantityError } = await supportClient
     .from("xy_stop_quantity_syncs")
-    .select("id,machine_id,slot_code,expected_xy_qty,target_qty,status,attempt_count,last_error,verified_at,created_at")
+    .select("id,machine_id,slot_code,expected_xy_qty,target_qty,expected_price_lyd,target_price_lyd,update_stock,status,attempt_count,last_error,verified_at,created_at")
     .eq("route_id", id).order("slot_code", { ascending: true }).limit(150);
   if (xyQuantityError && !isMissingTable(xyQuantityError, "xy_stop_quantity_syncs")) {
     console.warn("[routes:detail] XY selection syncs unavailable", { id, error: xyQuantityError });
@@ -1029,7 +1029,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             <DataTable headers={[
               tr(locale, "Machine", "الجهاز"),
               tr(locale, "Selection", "الخانة"),
-              tr(locale, "Last XY → Actual", "آخر XY ← الفعلي"),
+              tr(locale, "Stock: XY → Actual", "الكمية: XY ← الفعلي"),
+              tr(locale, "Price: XY → New", "السعر: XY ← الجديد"),
               tr(locale, "Status", "الحالة"),
               tr(locale, "Attempts / notes", "المحاولات / الملاحظات"),
             ]}>
@@ -1037,7 +1038,10 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                 <tr key={row.id}>
                   <td>{formatMachineDisplayName(machineById.get(row.machine_id) ?? null, { includeArea: true })}</td>
                   <td className="font-mono font-bold">{row.slot_code}</td>
-                  <td>{row.expected_xy_qty} → <strong>{row.target_qty}</strong></td>
+                  <td>{row.update_stock ? <>{row.expected_xy_qty} → <strong>{row.target_qty}</strong></> : <span className="text-slate-500">{tr(locale, "Unchanged", "دون تغيير")}</span>}</td>
+                  <td>{row.target_price_lyd === null
+                    ? <span className="text-slate-500">{tr(locale, "Unchanged", "دون تغيير")}</span>
+                    : <>{row.expected_price_lyd ?? "—"} → <strong>{row.target_price_lyd} LYD</strong></>}</td>
                   <td><StatusBadge status={row.status === "verified" ? "complete" : "needs_review"}
                     label={row.status === "verified"
                       ? tr(locale, "XY verified", "تم التحقق عبر XY")

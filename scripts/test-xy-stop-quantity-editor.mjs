@@ -55,7 +55,9 @@ test("Complete Stop queues specific user-entered XY final stock, never invents a
   const endpoint = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-final-quantities/route.ts");
   assert.match(page, /selectionFinalQtys/);
   assert.match(page, /MachineStockQuickEditor/);
-  assert.match(page, /Object.entries\(selectionFinalQtys\)/);
+  assert.match(page, /selectionCodes = new Set/);
+  assert.match(page, /Object.keys\(selectionFinalQtys\)/);
+  assert.match(page, /Object.keys\(selectionPrices\)/);
   assert.match(page, /xy-final-quantities/);
   assert.match(page, /queue_exact_xy_slot_quantities/);
   assert.match(page, /Optional XY screenshots \/ technical verification/);
