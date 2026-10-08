@@ -209,12 +209,12 @@ export function RouteStopQuickActions() {
 
   return (
     <>
-      <section className="sticky top-2 z-20 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Quick stop actions", "إجراءات الموقع السريعة")}</div>
+      <details className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2">
+          <span className="text-sm font-bold text-slate-800">{tr("More stop actions", "إجراءات إضافية للموقع")} ▾</span>
           {photoSaved ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr("Machine photo saved", "صورة الماكينة محفوظة")}</span> : null}
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        </summary>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
           <button type="button" className="btn-secondary min-h-12 px-2 text-sm" onClick={() => openSection("snacky:open-manual-sale", "manual-route-sales")}>{tr("Manual sale", "بيع يدوي")}</button>
           <button type="button" className="btn-secondary min-h-12 px-2 text-sm" onClick={() => setCompOpen(true)}>{tr("Compensation", "تعويض عميل")}</button>
           <button type="button" className="btn-secondary min-h-12 px-2 text-sm" onClick={() => openSection("snacky:open-inventory-adjustment", "inventory-adjustments", { adjustmentType: "damaged" })}>{tr("Damaged", "تالف")}</button>
@@ -222,7 +222,7 @@ export function RouteStopQuickActions() {
           <button type="button" className={photoSaved ? "min-h-12 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-sm font-semibold text-emerald-800" : "btn-secondary min-h-12 px-2 text-sm"} onClick={() => setPhotoOpen(true)}>{photoSaved ? tr("Photo saved", "الصورة محفوظة") : tr("Machine photo", "صورة الماكينة")}</button>
         </div>
         <p className="mt-2 text-xs text-slate-500">{tr("Customer compensation is tracked separately and never counts as a sale or revenue.", "تعويض العميل يُسجَّل بشكل مستقل ولا يُحسب كبيع أو إيراد.")}</p>
-      </section>
+      </details>
 
       {photoOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-3 sm:items-center" onClick={() => !photoSaving && setPhotoOpen(false)}>

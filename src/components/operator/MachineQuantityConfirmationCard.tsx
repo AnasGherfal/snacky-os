@@ -25,12 +25,14 @@ export function MachineQuantityConfirmationCard({
   items,
   completed,
   onStateChange,
+  compactEvidenceOnly = false,
 }: {
   routeId: string;
   stopId: string;
   machineId: string;
   items: MachineQuantitySourceItem[];
   completed?: boolean;
+  compactEvidenceOnly?: boolean;
   onStateChange?: (state: { installed: boolean; ready: boolean; status: MachineQuantityVerificationStatus | null }) => void;
 }) {
   const { t, locale } = useLanguage();
@@ -228,28 +230,30 @@ export function MachineQuantityConfirmationCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">{tr("Machine-system inventory", "مخزون نظام الجهاز")}</div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">{tr("Update machine quantities", "حدّث كميات الجهاز")}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-700">{tr("After physically filling the machine, Snacky writes the confirmed lane quantities into XY and reads them back to verify the result. Screenshots remain available as a fallback.", "بعد تعبئة الجهاز فعلياً، يرسل سناكي كميات الخانات المؤكدة إلى XY ثم يقرأها من جديد للتحقق. تبقى صور الشاشة خياراً احتياطياً.")}</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{compactEvidenceOnly ? tr("Optional XY evidence", "إثبات XY الاختياري") : tr("Update machine quantities", "حدّث كميات الجهاز")}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{compactEvidenceOnly
+            ? tr("Use the row/selection editor above to save final stock at Complete Stop. Photos are optional and are not needed to finish the route.", "استخدم محرر الصفوف والخانات أعلاه لحفظ الكميات النهائية عند إنهاء الموقع. الصور اختيارية وليست مطلوبة لإنهاء الجولة.")
+            : tr("After physically filling the machine, Snacky writes the confirmed lane quantities into XY and reads them back to verify the result. Screenshots remain available as a fallback.", "بعد تعبئة الجهاز فعلياً، يرسل سناكي كميات الخانات المؤكدة إلى XY ثم يقرأها من جديد للتحقق. تبقى صور الشاشة خياراً احتياطياً.")}</p>
         </div>
         <span className={ownerPending ? "shrink-0 rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white" : ready ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
           {ownerPending ? tr("Sync pending", "مزامنة معلقة") : ready ? tr("Saved", "تم الحفظ") : tr("Saved on completion", "يُحفظ عند الإنهاء")}
         </span>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      {!compactEvidenceOnly ? <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {rows.map((row) => (
           <div key={`${row.productId}:${row.machineSlotId ?? row.slotCode}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Selection", "الخانة")} {row.slotCode}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{row.slotCode === "VMS" ? tr("Product total — no lane assigned", "إجمالي المنتج — دون خانة محددة") : `${tr("Selection", "الخانة")} ${row.slotCode}`}</div>
               <div className="truncate text-sm font-semibold text-slate-900">{row.productName}</div>
             </div>
             <div className="shrink-0 text-right">
               <div className="text-xl font-bold text-slate-950">{row.finalQty}</div>
-              <div className="text-xs text-slate-500">{row.previousQty} + {row.addedQty}</div>
+              <div className="text-xs text-slate-500">{row.slotCode === "VMS" ? tr("No physical lane claimed", "لم تُحدَّد خانة فعلية") : `${row.previousQty} + ${row.addedQty}`}</div>
             </div>
           </div>
         ))}
-      </div>
+      </div> : null}
 
       {!loaded ? <p className="mt-4 text-sm text-slate-600">{tr("Checking saved evidence...", "جارٍ التحقق من الإثبات المحفوظ...")}</p> : null}
       {loaded && !installed ? (
@@ -275,13 +279,13 @@ export function MachineQuantityConfirmationCard({
         </div>
       ) : null}
 
-      {!ready && loaded && installed && !completed && !canSyncDirectlyWithXy ? (
+      {!compactEvidenceOnly && !ready && loaded && installed && !completed && !canSyncDirectlyWithXy ? (
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
           <strong>{tr("This route has no exact XY lane assignments.", "هذه الجولة لا تحتوي على تعيينات دقيقة لخانات XY.")}</strong>{" "}
           {tr("It was created with product-level quantities only. Snacky cannot safely split those totals between vending lanes automatically. After updating the machine's real lane quantities, upload current XY screenshots below to confirm this stop. Do not choose the power-off option unless the machine really has no electricity.", "أُنشئت هذه الجولة بكميات إجمالية لكل منتج فقط، ولا يمكن لسناكي توزيعها بأمان على خانات الجهاز دون معرفة الكميات الحقيقية. بعد تحديث كميات الخانات الفعلية في الجهاز، ارفع صور شاشة XY الحالية أدناه لإثبات التعبئة. لا تستخدم خيار انقطاع الكهرباء إلا إذا كان الجهاز دون كهرباء فعلاً.")}
         </div>
       ) : null}
-      {!ready && loaded && installed && !completed && canSyncDirectlyWithXy ? (
+      {!compactEvidenceOnly && !ready && loaded && installed && !completed && canSyncDirectlyWithXy ? (
         <button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={() => {setSaving(true);setError("");void saveMode("xy_api").catch((verifyError) => setError(verifyError instanceof Error ? verifyError.message : tr("Could not update and verify quantities with XY.", "تعذر تحديث الكميات والتحقق منها عبر XY."))).finally(() => setSaving(false));}}>
           {saving ? tr("Updating XY...", "جارٍ تحديث XY...") : tr("Update & verify with XY", "حدّث وتحقق عبر XY")}
         </button>

@@ -6,6 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
+import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
+import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -171,42 +173,6 @@ interface MachineLayoutSlot {
   mismatch: boolean;
 }
 
-function groupMachineLayoutRows(slots: MachineLayoutSlot[]) {
-  const sorted = [...slots].sort((a, b) => Number(a.slotCode) - Number(b.slotCode));
-  const firstTwenty = sorted.filter((slot) => {
-    const n = Number(slot.slotCode);
-    return Number.isFinite(n) && n >= 1 && n <= 20;
-  });
-  const hasWideTopPattern = firstTwenty.length >= 6
-    && firstTwenty.every((slot) => Number(slot.slotCode) % 2 === 1);
-
-  const rows = new Map<number, MachineLayoutSlot[]>();
-  sorted.forEach((slot) => {
-    const n = Number(slot.slotCode);
-    if (!Number.isFinite(n) || n <= 0) {
-      const fallback = 99;
-      rows.set(fallback, [...(rows.get(fallback) ?? []), slot]);
-      return;
-    }
-
-    let rowIndex: number;
-    if (hasWideTopPattern && n <= 20) {
-      rowIndex = 1;
-    } else if (hasWideTopPattern) {
-      rowIndex = Math.floor((n - 21) / 10) + 2;
-    } else {
-      rowIndex = Math.floor((n - 1) / 10) + 1;
-    }
-    rows.set(rowIndex, [...(rows.get(rowIndex) ?? []), slot]);
-  });
-
-  return Array.from(rows.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([rowIndex, rowSlots]) => ({
-      rowIndex,
-      slots: rowSlots.sort((a, b) => Number(a.slotCode) - Number(b.slotCode)),
-    }));
-}
 
 interface InventoryAdjustmentRow {
   id: string;
@@ -319,6 +285,7 @@ interface MissingProductReport {
 type StopDraft = {
   filledQtys: Record<string, number>;
   laneFilledQtys: Record<string, number>;
+  selectionFinalQtys: Record<string, number>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -706,6 +673,8 @@ export default function MachineStopPage() {
   const [issueDescription, setIssueDescription] = useState("");
   const [filledQtys, setFilledQtys] = useState<Record<string, number>>({});
   const [laneFilledQtys, setLaneFilledQtys] = useState<Record<string, number>>({});
+  // Only touched physical XY selections. Never infer actual lane stock from a product total.
+  const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -781,6 +750,7 @@ export default function MachineStopPage() {
   const stopDraft = useMemo<StopDraft>(() => ({
     filledQtys,
     laneFilledQtys,
+    selectionFinalQtys,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -798,6 +768,7 @@ export default function MachineStopPage() {
     extraProducts,
     filledQtys,
     laneFilledQtys,
+    selectionFinalQtys,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -819,6 +790,7 @@ export default function MachineStopPage() {
     onRestore: (draft) => {
       setFilledQtys(draft.filledQtys ?? {});
       setLaneFilledQtys(draft.laneFilledQtys ?? {});
+      setSelectionFinalQtys(draft.selectionFinalQtys ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -1140,12 +1112,12 @@ export default function MachineStopPage() {
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
     productName: item.productName,
-    slotCode: item.slotCode,
-    machineSlotId: item.machineSlotId,
-    currentQty: item.currentQty,
+    slotCode: item.hasExactLanePlan === false ? "VMS" : item.slotCode,
+    machineSlotId: item.hasExactLanePlan === false ? null : item.machineSlotId,
+    currentQty: item.hasExactLanePlan === false ? 0 : item.currentQty,
     assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
     filledQty: Number(filledQtys[item.productId] ?? 0),
-    slotAllocations: item.slotAllocations ?? [],
+    slotAllocations: item.hasExactLanePlan === false ? [] : item.slotAllocations ?? [],
     hasExactLanePlan: item.hasExactLanePlan,
     slotQuantities: slotQuantitiesForItem(item, laneFilledQtys),
   })), [filledQtys, laneFilledQtys, stopData]);
@@ -1253,6 +1225,7 @@ export default function MachineStopPage() {
         });
         setFilledQtys(initialQtys);
         setLaneFilledQtys(initialLaneQtys);
+        setSelectionFinalQtys({});
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1262,6 +1235,7 @@ export default function MachineStopPage() {
         initialStopDraftRef.current = comparableStopDraft({
           filledQtys: initialQtys,
           laneFilledQtys: initialLaneQtys,
+          selectionFinalQtys: {},
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1513,6 +1487,28 @@ export default function MachineStopPage() {
           throw new Error(responseMessage(savedEvidence.payload) || tr(
             "Could not save actual machine quantities. Your draft is safe; retry Complete Stop.",
             "تعذر حفظ الكميات الفعلية. المسودة محفوظة، أعد الضغط على إنهاء الموقع.",
+          ));
+        }
+      }
+
+      // Save exact final machine-lane stock in the secure async queue.
+      // This is independent of bag-to-machine actual refill accounting and
+      // NEVER waits for a remote XY write or readback.
+      const selections = Object.entries(selectionFinalQtys).map(([slotCode, finalQty]) => ({ slotCode, finalQty }));
+      if (selections.length) {
+        const saved = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ selections }),
+        }, 20000);
+        const result = await readServerResponse(saved, {
+          operation: "queue_exact_xy_slot_quantities", route_id: routeId, route_stop_id: stopId,
+        });
+        if (!saved.ok || result.payload?.ok !== true) {
+          throw new Error(responseMessage(result.payload) || tr(
+            "Could not save the machine's selected final quantities. Your draft is safe; retry Complete Stop.",
+            "تعذر حفظ الكميات النهائية للخانات المختارة. المسودة محفوظة، أعد إنهاء الموقع.",
           ));
         }
       }
@@ -2482,18 +2478,31 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <MachineQuantityConfirmationCard
-          routeId={routeId}
-          stopId={stopId}
-          machineId={stopData.machineId}
-          items={machineQuantityItems}
-          completed={false}
-          onStateChange={({ installed, ready, status }) => {
-            setQuantityConfirmationInstalled(installed);
-            setQuantityConfirmationReady(ready);
-            setQuantityVerificationStatus(status);
-          }}
+        <MachineStockQuickEditor
+          rows={machineLayoutRows}
+          values={selectionFinalQtys}
+          onChange={setSelectionFinalQtys}
         />
+        <details className="rounded-xl border border-slate-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-500">
+            {tr("Optional XY screenshots / technical verification", "اختياري: صور XY أو التحقق الفني")}
+          </summary>
+          <div className="mt-3">
+          <MachineQuantityConfirmationCard
+            compactEvidenceOnly
+            routeId={routeId}
+            stopId={stopId}
+            machineId={stopData.machineId}
+            items={machineQuantityItems}
+            completed={false}
+            onStateChange={({ installed, ready, status }) => {
+              setQuantityConfirmationInstalled(installed);
+              setQuantityConfirmationReady(ready);
+              setQuantityVerificationStatus(status);
+            }}
+          />
+          </div>
+        </details>
 
                 <ManualRouteSalesSection
           routeId={routeId}
