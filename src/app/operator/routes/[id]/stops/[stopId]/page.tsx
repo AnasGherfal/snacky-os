@@ -288,6 +288,7 @@ type StopDraft = {
   laneFilledQtys: Record<string, number>;
   selectionFinalQtys: Record<string, number>;
   selectionPrices: Record<string, number>;
+  selectionProductIds: Record<string, string>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -678,6 +679,9 @@ export default function MachineStopPage() {
   // Only touched physical XY selections. Never infer actual lane stock from a product total.
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
   const [selectionPrices, setSelectionPrices] = useState<Record<string, number>>({});
+  const [selectionProductIds, setSelectionProductIds] = useState<Record<string, string>>({});
+  const [xyLiveState, setXyLiveState] = useState<{ state: "loading" | "live" | "cached"; at: string | null; error: string | null }>({ state: "loading", at: null, error: null });
+  const [selectionSaveStatuses, setSelectionSaveStatuses] = useState<Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>>({});
   const [showAdvancedLayout, setShowAdvancedLayout] = useState(false);
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
@@ -756,6 +760,7 @@ export default function MachineStopPage() {
     laneFilledQtys,
     selectionFinalQtys,
     selectionPrices,
+    selectionProductIds,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -775,6 +780,7 @@ export default function MachineStopPage() {
     laneFilledQtys,
     selectionFinalQtys,
     selectionPrices,
+    selectionProductIds,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -798,6 +804,7 @@ export default function MachineStopPage() {
       setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setSelectionFinalQtys(draft.selectionFinalQtys ?? {});
       setSelectionPrices(draft.selectionPrices ?? {});
+      setSelectionProductIds(draft.selectionProductIds ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -1234,6 +1241,7 @@ export default function MachineStopPage() {
         setLaneFilledQtys(initialLaneQtys);
         setSelectionFinalQtys({});
         setSelectionPrices({});
+        setSelectionProductIds({});
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1245,6 +1253,7 @@ export default function MachineStopPage() {
           laneFilledQtys: initialLaneQtys,
           selectionFinalQtys: {},
           selectionPrices: {},
+          selectionProductIds: {},
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
