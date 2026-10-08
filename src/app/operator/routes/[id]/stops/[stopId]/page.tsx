@@ -822,6 +822,61 @@ export default function MachineStopPage() {
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
   const machineLayoutRows = useMemo(() => groupMachineLayoutRows(stopData?.machineLayout ?? []), [stopData?.machineLayout]);
+  const refreshLiveXy = useCallback(async () => {
+    if (!routeId || !stopId) return;
+    setXyLiveState((previous) => ({ ...previous, state: "loading", error: null }));
+    try {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-live-layout`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      }, 16000);
+      const data = await response.json().catch(() => null) as {
+        ok?: boolean; fetchedAt?: string; error?: string;
+        slots?: Array<{
+          slotCode: string; vmsProductId: string | null; productId: string | null; productName: string;
+          currentQty: number | null; capacity: number | null; priceLyd: number | null;
+        }>;
+      } | null;
+      if (!response.ok || !data?.ok || !Array.isArray(data.slots)) {
+        throw new Error(data?.error || "Cannot reach XY for a live machine read.");
+      }
+      setStopData((current) => {
+        if (!current) return current;
+        const oldSlots = new Map((current.machineLayout ?? []).map((s) => [s.slotCode, s]));
+        const currentSlots: MachineLayoutSlot[] = data.slots!.map((slot) => {
+          const existing = oldSlots.get(slot.slotCode);
+          return {
+            slotCode: slot.slotCode,
+            vmsProductId: slot.vmsProductId,
+            vmsProductName: slot.productName,
+            productId: slot.productId,
+            productName: slot.productName,
+            imageUrl: existing?.imageUrl ?? null,
+            currentQty: slot.currentQty === null ? (existing?.currentQty ?? 0) : slot.currentQty,
+            capacity: slot.capacity === null ? (existing?.capacity ?? 0) : slot.capacity,
+            priceLyd: slot.priceLyd,
+            capturedAt: data.fetchedAt ?? new Date().toISOString(),
+            plannedProductId: existing?.plannedProductId ?? null,
+            plannedProductName: existing?.plannedProductName ?? null,
+            mismatch: Boolean(existing?.plannedProductId && slot.productId
+              && existing.plannedProductId !== slot.productId),
+          };
+        });
+        return { ...current, machineLayout: currentSlots };
+      });
+      setXyLiveState({ state: "live", at: data.fetchedAt ?? new Date().toISOString(), error: null });
+    } catch (cause) {
+      setXyLiveState({
+        state: "cached", at: null,
+        error: cause instanceof Error ? cause.message : "XY offline; showing last imported snapshot.",
+      });
+    }
+  }, [routeId, stopId]);
+
+  useEffect(() => {
+    if (!loading && stopData?.machineId) void refreshLiveXy();
+  }, [loading, stopData?.machineId, refreshLiveXy]);
+
   const smartSwapRequirements = useMemo<SmartSwapRequirement[]>(() => {
     if (!stopData) return [];
     const requirements: SmartSwapRequirement[] = [];
@@ -1384,6 +1439,81 @@ export default function MachineStopPage() {
     }
   };
 
+  const saveMachineSelection = async (slotCode: string) => {
+    if (!stopData || !routeId || !stopId) return;
+    const slot = (stopData.machineLayout ?? []).find((row) => row.slotCode === slotCode);
+    if (!slot) return;
+    const hasStock = Object.hasOwn(selectionFinalQtys, slotCode);
+    const hasPrice = Object.hasOwn(selectionPrices, slotCode);
+    const chosenProductId = selectionProductIds[slotCode] ?? "";
+    const productChanged = Boolean(chosenProductId && chosenProductId !== slot.productId);
+    if (!hasStock && !hasPrice && !productChanged) {
+      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
+        status: "error", message: tr("Nothing changed.", "لا توجد تغييرات."),
+      }}));
+      return;
+    }
+    if (productChanged && hasStock && selectionFinalQtys[slotCode] > 0) {
+      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
+        status: "error",
+        message: tr(
+          "Changing the product starts with zero sellable units. Save the product/price first, then set stock only after the replacement is physically loaded.",
+          "تغيير المنتج يبدأ بمخزون بيع صفر. احفظ المنتج والسعر أولاً، ثم حدّث الكمية بعد تعبئة المنتج الجديد فعلياً.",
+        ),
+      }}));
+      return;
+    }
+
+    setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
+      status: "saving", message: tr("Saving in Snacky…", "جارٍ الحفظ في سناكي…"),
+    }}));
+    try {
+      const endpoint = productChanged
+        ? `/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`
+        : `/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`;
+      const body = productChanged ? {
+        slotCode, productId: chosenProductId, queueOnOffline: true,
+        ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
+      } : {
+        selections: [{
+          slotCode,
+          ...(hasStock ? { finalQty: selectionFinalQtys[slotCode] } : {}),
+          ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
+        }],
+        applyImmediately: true,
+      };
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      }, 25000);
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean; success?: boolean; queued?: boolean | number; verified?: boolean;
+        message?: string; error?: string; baselineSource?: string;
+      };
+      if (!response.ok || (productChanged ? payload.success !== true : payload.ok !== true)) {
+        throw new Error(payload.error || tr("Could not save the selection.", "تعذر حفظ الخانة."));
+      }
+      const verified = productChanged && payload.verified === true;
+      const savedMessage = verified
+        ? tr("Saved and verified in XY.", "تم الحفظ والتحقق في XY.")
+        : productChanged
+          ? tr("Product change saved; XY pending. Sellable stock stays zero until physically verified.", "تم حفظ تغيير المنتج؛ XY معلق. مخزون البيع صفر حتى التحقق الفعلي.")
+          : tr("Saved in Snacky. XY sync pending in background.", "تم الحفظ في سناكي. المزامنة مع XY جارية في الخلفية.");
+      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
+        status: verified ? "verified" : "pending", message: savedMessage,
+      }}));
+      setSelectionFinalQtys((current) => { const next = { ...current }; delete next[slotCode]; return next; });
+      setSelectionPrices((current) => { const next = { ...current }; delete next[slotCode]; return next; });
+      setSelectionProductIds((current) => { const next = { ...current }; delete next[slotCode]; return next; });
+      if (verified) void refreshLiveXy();
+    } catch (cause) {
+      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
+        status: "error", message: cause instanceof Error ? cause.message : tr("Save failed.", "فشل الحفظ."),
+      }}));
+    }
+  };
+
   const toggleSelectionVisibility = async (slotCode: string, hidden: boolean) => {
     if (hidden && !window.confirm(tr(
       `Hide selection ${slotCode} because it is not physically present?`,
@@ -1818,12 +1948,36 @@ export default function MachineStopPage() {
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
 
+                <section className={`rounded-xl border p-3 text-sm ${xyLiveState.state === "live" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <strong>{xyLiveState.state === "live"
+                        ? tr("Live XY — direct read", "XY مباشر — قراءة فعلية")
+                        : xyLiveState.state === "loading"
+                          ? tr("Checking XY…", "جارٍ فحص XY…")
+                          : tr("Last imported XY — NOT live", "آخر استيراد XY — ليس مباشراً")}</strong>
+                      <p className="mt-1 text-xs">{xyLiveState.state === "live" && xyLiveState.at
+                        ? new Date(xyLiveState.at).toLocaleString(locale === "ar" ? "ar-LY" : "en-GB")
+                        : xyLiveState.error || tr("Current values may be outdated.", "القيم الحالية قد تكون قديمة.")}</p>
+                    </div>
+                    <button type="button" onClick={() => void refreshLiveXy()}
+                      disabled={xyLiveState.state === "loading"}
+                      className="min-h-10 rounded-lg border border-current px-3 text-xs font-bold disabled:opacity-50">
+                      {tr("Refresh XY", "تحديث XY")}
+                    </button>
+                  </div>
+                </section>
                 <MachineStockQuickEditor
           rows={machineLayoutRows}
           values={selectionFinalQtys}
           onChange={setSelectionFinalQtys}
           prices={selectionPrices}
           onPriceChange={setSelectionPrices}
+          productOptions={(fullProductCatalog ?? stopData.productOptions).map((p) => ({ id: p.id, name: p.name }))}
+          productSelections={selectionProductIds}
+          onSelectProduct={(slotCode, productId) => setSelectionProductIds((state) => ({ ...state, [slotCode]: productId }))}
+          onSaveSelection={(slotCode) => void saveMachineSelection(slotCode)}
+          saveStatuses={selectionSaveStatuses}
           hiddenSelections={stopData.hiddenSelections ?? []}
           onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
           onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
