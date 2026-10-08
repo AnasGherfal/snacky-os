@@ -287,6 +287,7 @@ type StopDraft = {
   filledQtys: Record<string, number>;
   laneFilledQtys: Record<string, number>;
   selectionFinalQtys: Record<string, number>;
+  selectionPriceLyd: Record<string, number>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -676,6 +677,7 @@ export default function MachineStopPage() {
   const [laneFilledQtys, setLaneFilledQtys] = useState<Record<string, number>>({});
   // Only touched physical XY selections. Never infer actual lane stock from a product total.
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
+  const [selectionPriceLyd, setSelectionPriceLyd] = useState<Record<string, number>>({});
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -752,6 +754,7 @@ export default function MachineStopPage() {
     filledQtys,
     laneFilledQtys,
     selectionFinalQtys,
+    selectionPriceLyd,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -770,6 +773,7 @@ export default function MachineStopPage() {
     filledQtys,
     laneFilledQtys,
     selectionFinalQtys,
+    selectionPriceLyd,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -792,6 +796,7 @@ export default function MachineStopPage() {
       setFilledQtys(draft.filledQtys ?? {});
       setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setSelectionFinalQtys(draft.selectionFinalQtys ?? {});
+      setSelectionPriceLyd(draft.selectionPriceLyd ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -1227,6 +1232,7 @@ export default function MachineStopPage() {
         setFilledQtys(initialQtys);
         setLaneFilledQtys(initialLaneQtys);
         setSelectionFinalQtys({});
+        setSelectionPriceLyd({});
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1237,6 +1243,7 @@ export default function MachineStopPage() {
           filledQtys: initialQtys,
           laneFilledQtys: initialLaneQtys,
           selectionFinalQtys: {},
+          selectionPriceLyd: {},
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1516,7 +1523,12 @@ export default function MachineStopPage() {
       // Save exact final machine-lane stock in the secure async queue.
       // This is independent of bag-to-machine actual refill accounting and
       // NEVER waits for a remote XY write or readback.
-      const selections = Object.entries(selectionFinalQtys).map(([slotCode, finalQty]) => ({ slotCode, finalQty }));
+      const editedSelectionCodes = new Set([...Object.keys(selectionFinalQtys), ...Object.keys(selectionPriceLyd)]);
+      const selections = Array.from(editedSelectionCodes).map((slotCode) => ({
+        slotCode,
+        ...(Object.hasOwn(selectionFinalQtys, slotCode) ? { finalQty: selectionFinalQtys[slotCode] } : {}),
+        ...(Object.hasOwn(selectionPriceLyd, slotCode) ? { priceLyd: selectionPriceLyd[slotCode] } : {}),
+      }));
       if (selections.length) {
         const saved = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`, {
           method: "POST",
