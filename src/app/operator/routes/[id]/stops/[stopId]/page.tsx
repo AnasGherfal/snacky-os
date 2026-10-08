@@ -2489,6 +2489,7 @@ export default function MachineStopPage() {
           </summary>
           <div className="mt-3">
           <MachineQuantityConfirmationCard
+            compactEvidenceOnly
             routeId={routeId}
             stopId={stopId}
             machineId={stopData.machineId}
