@@ -862,8 +862,18 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const machineIds = Array.from(new Set(input.machineIds.map(String).filter(Boolean)));
   if (!machineIds.length) throw new Error("Choose at least one machine before generating a smart plan.");
 
-  const xyRefresh = await ensureFreshXyRoutePlanningData();
-  const salesRefresh = await ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 });
+  // Sync services improve the forecast but MUST NOT block an inventory-safe
+  // plan when a single XY endpoint times out. Keep the last verified snapshot.
+  const [xyRefresh, salesRefresh] = await Promise.all([
+    ensureFreshXyRoutePlanningData().catch((error) => {
+      console.warn("[smart-route] XY freshness refresh unavailable; using verified snapshot", error);
+      return { outcome: "failed" as const, reason: "XY refresh unavailable" };
+    }),
+    ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 }).catch((error) => {
+      console.warn("[smart-route] Live sales unavailable; using stock depletion", error);
+      return { outcome: "failed" as const, reason: "Live sales unavailable" };
+    }),
+  ]);
   const now = new Date();
   const recentFillSince = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -901,7 +911,9 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     supabase.from("route_stop_fill_lines").select("machine_id, product_id, actual_qty, created_at").in("machine_id", machineIds).gte("created_at", recentFillSince),
   ]);
 
-  const failures = [
+  // Inventory, route reservations and XY machine identities are essential;
+  // demand, AI fit evidence and optional history are improvements, not blockers.
+  const essentialFailures = [
     ["machines", machinesResult.error],
     ["XY stock", stockResult.error],
     ["machine slots", slotsResult.error],
@@ -909,23 +921,32 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
     ["reserving route statuses", reservingRoutesResult.error],
+  ].filter(([, error]) => error);
+  if (essentialFailures.length) {
+    console.error("[smart-route] Essential planning reads failed", essentialFailures);
+    throw new Error("Smart Route could not verify machine stock or available storage. Retry after the stock data has refreshed; no route or stock was changed.");
+  }
+
+  const warnings: string[] = [];
+  const optionalFailures = [
     ["product profiles", profilesResult.error],
     ["machine context", machineContextResult.error],
     ["slot rules", slotRulesResult.error],
     ["location rules", locationRulesResult.error],
     ["demand signals", demandResult.error],
+    ["sales signals", salesSignalResult.error],
     ["fit history", fitHistoryResult.error],
-  ].filter((entry) => entry[1]);
-
-  if (failures.length) {
-    throw new Error(`Smart planning data is incomplete: ${failures.map(([label, error]) => `${label}: ${(error as { message?: string })?.message ?? "unknown error"}`).join("; ")}`);
+    ["past route fills", refillHistoryResult.error],
+  ].filter(([, error]) => error);
+  if (optionalFailures.length) {
+    console.warn("[smart-route] Optional scoring inputs degraded", optionalFailures);
+    warnings.push("Some optional demand/fit signals were unavailable; used verified XY stock and storage for a conservative plan.");
   }
-
-  const warnings: string[] = [];
-  if (refillHistoryResult.error) warnings.push("Past route-fill history could not be loaded.");
-  if (salesSignalResult.error) warnings.push("True transaction-sales signals could not be loaded; ranking fell back to XY stock depletion.");
+  if (xyRefresh.outcome === "failed" || xyRefresh.outcome === "unavailable") {
+    warnings.push("XY live refresh was unavailable; the plan uses the latest saved XY snapshot. Review data freshness before visiting machines.");
+  }
   if (salesRefresh.outcome === "failed" || salesRefresh.outcome === "unavailable") {
-    warnings.push(`Live XY sales refresh is ${salesRefresh.outcome}: ${salesRefresh.reason ?? "configuration or vendor API issue"}`);
+    warnings.push("Recent live sales were unavailable; product ranking uses historic demand and stock depletion.");
   }
 
   const machines = (machinesResult.data ?? []) as MachineRow[];
@@ -982,7 +1003,16 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const availableByProduct = new Map<string, number>();
   products.forEach((product) => availableByProduct.set(product.id, Math.max(0, units(storageByProduct.get(product.id)) - units(reservedByProduct.get(product.id)))));
 
-  const stockRows = (stockResult.data ?? []) as StockRow[];
+  const { data: physicallyHidden, error: hiddenError } = await supabase.from("xy_hidden_machine_selections")
+    .select("machine_id,slot_code").in("machine_id",machineIds);
+  if (hiddenError) {
+    console.warn("[smart-route] Physical lane visibility unavailable", hiddenError);
+    // Fail closed on missing physical configuration: do not plan hidden XY lanes.
+    warnings.push("Physical lane visibility could not be checked; verify machine layouts before using the plan.");
+  }
+  const hiddenLaneKeys = new Set((physicallyHidden ?? []).map((slot: any) => `${slot.machine_id}:${slot.slot_code}`));
+  const stockRows = ((stockResult.data ?? []) as StockRow[])
+    .filter((slot) => !hiddenLaneKeys.has(`${slot.machine_id}:${slot.slot_code}`));
   const latestCaptureByMachine = new Map<string, number>();
   stockRows.forEach((stock) => {
     const capturedAt = stock.captured_at ? Date.parse(stock.captured_at) : Number.NaN;
@@ -1047,9 +1077,8 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       : Math.max(1, refillNeededQty);
 
     if (originalAvailableUnits <= 0 && currentQty > 0 && !stockoutReplaceNow) {
-      warnings.push(
-        `${product.name} has no verified warehouse stock for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code}, but the lane is still ${currentQty}/${capacity}. Smart Route will switch it before empty once it reaches the ${transitionFloorQty}-unit transition zone or is forecast to cross that zone before the next typical service.`,
-      );
+      // Still stocked in the machine: no pickup and no operator action today.
+      // This is not an error and should not flood the Smart Route screen.
       continue;
     }
 
@@ -1145,7 +1174,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       .slice(0, 10);
 
     if (!candidates.length) {
-      warnings.push(`No verified in-stock compatible product is available for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} (${product.name}).`);
+      if (currentQty === 0) warnings.push(`UNFILLABLE: ${machine.name ?? machine.machine_code ?? machine.id}, lane ${stock.slot_code} has no compatible available product in storage.`);
       continue;
     }
 
@@ -1192,14 +1221,12 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
         : candidates.filter((candidate) => candidate.original);
 
     if (!taskCandidates.length) {
-      warnings.push(`No executable candidate remains for ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} after applying Smart Route substitution rules.`);
+      if (currentQty === 0) warnings.push(`UNFILLABLE: ${machine.name ?? machine.machine_code ?? machine.id}, lane ${stock.slot_code}: no compatible substitute in storage.`);
       continue;
     }
 
     if (mixReplaceNow && strongestAlternative) {
-      warnings.push(
-        `AI assortment optimization: ${machine.name ?? machine.machine_code ?? machine.id} slot ${stock.slot_code} can change from ${product.name} to ${strongestAlternative.productName}; verified 21-day machine sales are ${exactMachineSales} vs ${strongestAlternative.machineSalesUnits}. The remaining ${currentQty} units must be returned before the slot is changed.`,
-      );
+      // Approved merchandising changes appear in substitutions, not warnings.
     }
 
     tasks.push({
