@@ -65,11 +65,9 @@ export async function retryPendingStopXyQuantities() {
         summary.conflict++; continue;
       }
       if (stop.status !== "completed") { summary.waiting++; continue; }
-      if (Date.now() - Date.parse(row.created_at) > 12 * 60 * 60 * 1000) {
-        await settle("conflict", "Quantity update is older than 12 hours and may overwrite sales. Recheck actual machine stock.");
-        summary.conflict++; continue;
-      }
-
+      // Keep retrying through lengthy power/network outages. A pending request
+      // can only be applied when XY still reports the exact original product
+      // AND original stock baseline; any interim sale/change stops the write.
       const { data: relabel, error: relabelError } = await db.from("xy_pending_slot_changes")
         .select("id").eq("machine_id", row.machine_id).eq("slot_code", row.slot_code)
         .eq("status", "pending").limit(1);
