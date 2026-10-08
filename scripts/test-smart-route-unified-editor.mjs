@@ -21,7 +21,7 @@ test("Smart Route keeps inventory failures fatal while optional signals fail sof
   assert.match(planner,/const optionalFailures =/);
   assert.match(planner,/compactPlanWarnings/);
   assert.match(planner,/physical.*Hidden/i);
-  assert.match(planner,/No route or stock/);
+  assert.match(planner,/no route or stock was changed/i);
   assert.doesNotMatch(planner,/Smart planning data is incomplete:/);
 });
 
