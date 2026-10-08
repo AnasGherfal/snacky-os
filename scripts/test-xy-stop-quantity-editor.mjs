@@ -116,3 +116,44 @@ test("Row action visibly confirms staged selections; hidden physical lanes are r
   assert.match(migration, /'036'/);
   assert.match(migration, /'040'/);
 });
+
+
+test("machine stop live XY source makes a direct vendor call and never calls imported stock live", () => {
+  const liveApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-live-layout/route.ts");
+  const stopPage = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  assert.match(liveApi, /readXyMachineLayout/);
+  assert.match(liveApi, /vms_product_mappings/);
+  assert.match(liveApi, /source: "xy_live"/);
+  assert.match(liveApi, /Cache-Control.*no-store/);
+  assert.match(liveApi, /source: "cached_import"/);
+  assert.match(stopPage, /xy-live-layout/);
+  assert.match(stopPage, /Last imported XY — NOT live/);
+  assert.match(stopPage, /Live XY — direct read/);
+  assert.match(stopPage, /refreshLiveXy/);
+});
+
+test("each selection can save product price or stock with immediate confirmation", () => {
+  const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
+  const stopPage = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const quantityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-final-quantities/route.ts");
+  const productApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
+  const worker = read("src/lib/xy-stop-quantity-sync.ts");
+  const migration = read("supabase/migrations/20261009061000_xy_selection_save_before_stop.sql");
+
+  assert.match(editor, /Current in XY/);
+  assert.match(editor, /Save selection/);
+  assert.match(editor, /onSelectProduct/);
+  assert.match(editor, /onSaveSelection/);
+  assert.match(editor, /Price \(LYD\)/);
+  assert.match(editor, /role="status"/);
+  assert.match(stopPage, /saveMachineSelection/);
+  assert.match(stopPage, /applyImmediately: true/);
+  assert.match(stopPage, /stock stays zero until physically verified/);
+  assert.match(quantityApi, /apply_immediately: applyImmediately/);
+  assert.match(quantityApi, /readXyMachineLayout/);
+  assert.match(worker, /!row.apply_immediately && stop.status !== "completed"/);
+  assert.match(migration, /add column if not exists apply_immediately/);
+  assert.match(productApi, /requestedPrice/);
+  assert.match(productApi, /requestedPrice === null/);
+  assert.doesNotMatch(quantityApi, /insert into.*inventory_movements/);
+});
