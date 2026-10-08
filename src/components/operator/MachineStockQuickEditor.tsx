@@ -30,10 +30,22 @@ export function MachineStockQuickEditor({
   rows,
   values,
   onChange,
+  prices = {},
+  onPriceChange,
+  onChangeProduct,
+  onHideSelection,
+  hiddenSelections = [],
+  onRestoreSelection,
 }: {
   rows: QuickMachineRow[];
   values: Record<string, number>;
   onChange: (next: Record<string, number>) => void;
+  prices?: Record<string, number>;
+  onPriceChange?: (next: Record<string, number>) => void;
+  onChangeProduct?: (slotCode: string) => void;
+  onHideSelection?: (slotCode: string) => void;
+  hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
+  onRestoreSelection?: (slotCode: string) => void;
 }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -86,7 +98,7 @@ export function MachineStockQuickEditor({
     setFeedback(tr(`Row ${row.rowIndex}: ${applicable.length} selections set to ${parsed}. Press Complete Stop to sync.`, `تم ضبط الصف ${row.rowIndex}: ${applicable.length} خانة على ${parsed}. اضغط إنهاء الموقع للمزامنة.`));
   };
 
-  const changedCount = Object.keys(values).length;
+  const changedCount = new Set([...Object.keys(values), ...Object.keys(prices)]).size;
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white p-3 shadow-sm sm:p-5" aria-label={tr("Machine lane inventory", "مخزون خانات الجهاز")}>
       <div className="mb-3">
