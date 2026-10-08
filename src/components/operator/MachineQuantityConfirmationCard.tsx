@@ -240,12 +240,12 @@ export function MachineQuantityConfirmationCard({
         {rows.map((row) => (
           <div key={`${row.productId}:${row.machineSlotId ?? row.slotCode}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Selection", "الخانة")} {row.slotCode}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{row.slotCode === "VMS" ? tr("Product total — no lane assigned", "إجمالي المنتج — دون خانة محددة") : `${tr("Selection", "الخانة")} ${row.slotCode}`}</div>
               <div className="truncate text-sm font-semibold text-slate-900">{row.productName}</div>
             </div>
             <div className="shrink-0 text-right">
               <div className="text-xl font-bold text-slate-950">{row.finalQty}</div>
-              <div className="text-xs text-slate-500">{row.previousQty} + {row.addedQty}</div>
+              <div className="text-xs text-slate-500">{row.slotCode === "VMS" ? tr("No physical lane claimed", "لم تُحدَّد خانة فعلية") : `${row.previousQty} + ${row.addedQty}`}</div>
             </div>
           </div>
         ))}
