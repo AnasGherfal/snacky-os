@@ -98,6 +98,22 @@ export function MachineStockQuickEditor({
     setFeedback(tr(`Row ${row.rowIndex}: ${applicable.length} selections set to ${parsed}. Press Complete Stop to sync.`, `تم ضبط الصف ${row.rowIndex}: ${applicable.length} خانة على ${parsed}. اضغط إنهاء الموقع للمزامنة.`));
   };
 
+  const updatePrice = (slot: QuickMachineSlot, raw: string) => {
+    if (!onPriceChange) return;
+    const next = { ...prices };
+    if (!raw.trim()) { delete next[slot.slotCode]; onPriceChange(next); return; }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0 || value > 1000 || Math.abs(value * 100 - Math.round(value * 100)) > 0.0001) {
+      setError(tr("Price must be positive with up to two decimal places.", "السعر يجب أن يكون موجباً وبحد أقصى خانتين عشريتين."));
+      return;
+    }
+    next[slot.slotCode] = value;
+    onPriceChange(next);
+    setError("");
+    setFeedback(tr(`Selection ${slot.slotCode}: price ${value.toFixed(2)} LYD staged until Complete Stop.`,
+      `سعر الخانة ${slot.slotCode} = ${value.toFixed(2)} د.ل محفوظ مؤقتاً إلى حين إنهاء الموقع.`));
+  };
+
   const changedCount = new Set([...Object.keys(values), ...Object.keys(prices)]).size;
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white p-3 shadow-sm sm:p-5" aria-label={tr("Machine lane inventory", "مخزون خانات الجهاز")}>
@@ -141,7 +157,7 @@ export function MachineStockQuickEditor({
               {open ? (
                 <div className="grid grid-cols-2 gap-2 border-t border-slate-200 bg-white p-3 sm:grid-cols-3 lg:grid-cols-5">
                   {usable.map((slot) => {
-                    const changed = Object.hasOwn(values, slot.slotCode);
+                    const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode);
                     return (
                       <label key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                         <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
