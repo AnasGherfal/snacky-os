@@ -272,6 +272,29 @@ const decisionSchema = {
   },
 } as const;
 
+function compactPlanWarnings(allWarnings: string[]) {
+  const unique = Array.from(new Set(allWarnings.filter(Boolean)));
+  const unfillable = unique.filter((message) =>
+    message.startsWith("UNFILLABLE:") || message.startsWith("HARD NO-EMPTY-LANE EXCEPTION"));
+  const stale = unique.filter((message) => message.startsWith("Skipped stale XY lane"));
+  const stock = unique.filter((message) =>
+    message.startsWith("Clamped ") || message.includes("exhausted by higher-priority"));
+  const swap = unique.filter((message) => message.startsWith("Blocked substitution"));
+  const handled = new Set([...unfillable, ...stale, ...stock, ...swap]);
+  const notes = unique.filter((message) => !handled.has(message));
+  const brief: string[] = [];
+  if (unfillable.length) {
+    brief.push(`${unfillable.length} usable lanes have no compatible in-stock replacement. Review before dispatch.`);
+    brief.push(...unfillable.slice(0, 3));
+  }
+  if (stale.length) brief.push(`${stale.length} lanes were excluded because their XY data was stale.`);
+  if (stock.length) brief.push(`${stock.length} stock allocations were automatically adjusted to available storage.`);
+  if (swap.length) brief.push(`${swap.length} unsafe product substitutions were prevented.`);
+  brief.push(...notes.slice(0, 5));
+  if (notes.length > 5) brief.push(`${notes.length - 5} additional technical notices recorded in the Smart Route audit.`);
+  return brief;
+}
+
 function units(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -1279,7 +1302,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       manualStopItems: [],
       slotAssignments: [],
       substitutions: [],
-      warnings,
+      warnings: compactPlanWarnings(warnings),
       freshness: {
         xyOutcome: xyRefresh.outcome,
         latestStockAt,
@@ -1376,7 +1399,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     manualStopItems,
     slotAssignments,
     substitutions,
-    warnings: Array.from(new Set(warnings)),
+    warnings: compactPlanWarnings(warnings),
     freshness: {
       xyOutcome: xyRefresh.outcome,
       latestStockAt,
