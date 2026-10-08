@@ -678,6 +678,7 @@ export default function MachineStopPage() {
   // Only touched physical XY selections. Never infer actual lane stock from a product total.
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
   const [selectionPrices, setSelectionPrices] = useState<Record<string, number>>({});
+  const [showAdvancedLayout, setShowAdvancedLayout] = useState(false);
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
@@ -1808,6 +1809,33 @@ export default function MachineStopPage() {
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
 
+                <MachineStockQuickEditor
+          rows={machineLayoutRows}
+          values={selectionFinalQtys}
+          onChange={setSelectionFinalQtys}
+          prices={selectionPrices}
+          onPriceChange={setSelectionPrices}
+          hiddenSelections={stopData.hiddenSelections ?? []}
+          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
+          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
+          onChangeProduct={(slotCode) => {
+            setXySwapSourceSlotCode(null);
+            setXySwapTargetSlotCode("");
+            setXyEditSlotCode(slotCode);
+            setXyReplacementProductId("");
+            setXyChangeError("");
+            setXyChangeSuccess("");
+          }}
+        />
+        <button type="button"
+          onClick={() => setShowAdvancedLayout((value) => !value)}
+          className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
+          {showAdvancedLayout
+            ? tr("Hide advanced XY layout and lane moves", "إخفاء توزيع XY المتقدم ونقل الخانات")
+            : tr("Advanced: see full XY layout and move lanes", "متقدم: عرض توزيع XY الكامل ونقل الخانات")}
+        </button>
+
+        <div className={showAdvancedLayout || xyEditSlotCode || xySwapSourceSlotCode ? "" : "hidden"}>
         <section className="overflow-hidden rounded-2xl border border-slate-300 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2252,6 +2280,7 @@ export default function MachineStopPage() {
             );
           })() : null}
         </section>
+        </div>
 
         {smartSwapRequirements.length ? (
           <section id="smart-route-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
@@ -2512,24 +2541,7 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <MachineStockQuickEditor
-          rows={machineLayoutRows}
-          values={selectionFinalQtys}
-          onChange={setSelectionFinalQtys}
-          prices={selectionPrices}
-          onPriceChange={setSelectionPrices}
-          hiddenSelections={stopData.hiddenSelections ?? []}
-          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
-          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
-          onChangeProduct={(slotCode) => {
-            setXySwapSourceSlotCode(null);
-            setXySwapTargetSlotCode("");
-            setXyEditSlotCode(slotCode);
-            setXyReplacementProductId("");
-            setXyChangeError("");
-            setXyChangeSuccess("");
-          }}
-        />
+
         <details className="rounded-xl border border-slate-200 bg-white p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-500">
             {tr("Optional XY screenshots / technical verification", "اختياري: صور XY أو التحقق الفني")}
