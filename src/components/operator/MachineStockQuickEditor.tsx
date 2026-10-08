@@ -33,6 +33,8 @@ export function MachineStockQuickEditor({
   prices = {},
   onPriceChange,
   onChangeProduct,
+  products = [],
+  onLoadProducts,
   onHideSelection,
   hiddenSelections = [],
   onRestoreSelection,
@@ -42,7 +44,9 @@ export function MachineStockQuickEditor({
   onChange: (next: Record<string, number>) => void;
   prices?: Record<string, number>;
   onPriceChange?: (next: Record<string, number>) => void;
-  onChangeProduct?: (slotCode: string) => void;
+  onChangeProduct?: (slotCode: string, productId: string) => Promise<void>;
+  products?: Array<{ id: string; name: string }>;
+  onLoadProducts?: () => void;
   onHideSelection?: (slotCode: string) => void;
   hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
   onRestoreSelection?: (slotCode: string) => void;
@@ -54,6 +58,9 @@ export function MachineStockQuickEditor({
   const [rowInputs, setRowInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [productEditor, setProductEditor] = useState<Record<string, boolean>>({});
+  const [selectedProductBySlot, setSelectedProductBySlot] = useState<Record<string, string>>({});
+  const [savingProductSlot, setSavingProductSlot] = useState<string | null>(null);
 
   const updateOne = (slot: QuickMachineSlot, raw: string) => {
     setError("");
@@ -73,6 +80,8 @@ export function MachineStockQuickEditor({
     }
     next[slot.slotCode] = parsed;
     onChange(next);
+    setFeedback(tr(`Selection ${slot.slotCode}: final stock ${parsed} staged until Complete Stop.`,
+      `تم تحديد مخزون الخانة ${slot.slotCode} = ${parsed} إلى حين إنهاء الموقع.`));
   };
 
   const setWholeRow = (row: QuickMachineRow) => {
@@ -134,7 +143,7 @@ export function MachineStockQuickEditor({
           const usable = row.slots.filter((s) => s.vmsProductId && s.capacity > 0);
           if (!usable.length) return null;
           const rowName = `${usable[0].slotCode}–${usable[usable.length - 1].slotCode}`;
-          const setCount = usable.filter((s) => Object.hasOwn(values, s.slotCode)).length;
+          const setCount = usable.filter((s) => Object.hasOwn(values, s.slotCode) || Object.hasOwn(prices, s.slotCode)).length;
           const open = Boolean(expanded[row.rowIndex]);
           return (
             <div key={row.rowIndex} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
@@ -164,7 +173,7 @@ export function MachineStockQuickEditor({
                         <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
                         <span className="mt-1 block text-xs text-slate-500">{tr("XY last", "آخر XY")}: {units(slot.currentQty)} · {tr("Max", "السعة")}: {slot.capacity}</span>
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
-                          value={changed ? values[slot.slotCode] : ""}
+                          value={Object.hasOwn(values, slot.slotCode) ? values[slot.slotCode] : ""}
                           onChange={(e) => updateOne(slot, e.target.value)}
                           placeholder="—"
                           aria-label={tr(`Selection ${slot.slotCode} final quantity`, `العدد النهائي للخانة ${slot.slotCode}`)}
@@ -180,10 +189,52 @@ export function MachineStockQuickEditor({
                               className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-center text-base text-slate-950" />
                           </label>
                         ) : null}
-                        {onChangeProduct ? <button type="button" onClick={() => onChangeProduct(slot.slotCode)}
-                          className="mt-2 min-h-9 w-full rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800">
-                          {tr("Change product", "تغيير المنتج")}
-                        </button> : null}
+                        {onChangeProduct ? (
+                          <div className="mt-2">
+                            <button type="button" onClick={() => {
+                              const next = !productEditor[slot.slotCode];
+                              setProductEditor((prev) => ({ ...prev, [slot.slotCode]: next }));
+                              if (next) onLoadProducts?.();
+                            }} className="min-h-9 w-full rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800">
+                              {tr("Product · Change here", "المنتج · تغييره هنا")}
+                            </button>
+                            {productEditor[slot.slotCode] ? (
+                              <div className="mt-2 space-y-2 rounded-lg border border-sky-200 bg-sky-50 p-2">
+                                <select className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-900"
+                                  aria-label={tr(`Selection ${slot.slotCode} replacement product`, `المنتج البديل للخانة ${slot.slotCode}`)}
+                                  value={selectedProductBySlot[slot.slotCode] ?? ""}
+                                  onChange={(event) => setSelectedProductBySlot((prev) => ({ ...prev, [slot.slotCode]: event.target.value }))}>
+                                  <option value="">{tr("Choose product…", "اختر منتجاً…")}</option>
+                                  {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                                </select>
+                                <button type="button" className="min-h-9 w-full rounded-lg bg-sky-700 px-2 text-xs font-bold text-white disabled:opacity-50"
+                                  disabled={!selectedProductBySlot[slot.slotCode] || savingProductSlot !== null}
+                                  onClick={async () => {
+                                    const productId = selectedProductBySlot[slot.slotCode];
+                                    if (!productId) return;
+                                    setSavingProductSlot(slot.slotCode);
+                                    setError("");
+                                    try {
+                                      await onChangeProduct(slot.slotCode, productId);
+                                      setFeedback(tr(`Product change for ${slot.slotCode} saved; XY updates or queues automatically.`,
+                                        `حُفظ تغيير منتج الخانة ${slot.slotCode}، وسيتم تحديث XY تلقائياً أو عند عودة الاتصال.`));
+                                      setProductEditor((prev) => ({ ...prev, [slot.slotCode]: false }));
+                                    } catch (cause) {
+                                      setError(cause instanceof Error ? cause.message : tr("Could not change product.", "تعذر تغيير المنتج."));
+                                    } finally {
+                                      setSavingProductSlot(null);
+                                    }
+                                  }}>
+                                  {savingProductSlot === slot.slotCode ? tr("Saving…", "جارٍ الحفظ…") : tr("Save product", "حفظ المنتج")}
+                                </button>
+                                <p className="text-[11px] leading-5 text-sky-900">{tr(
+                                  "For safety, a new product starts with 0 sellable units until physically refilled. Do not claim stock for an unverified product change.",
+                                  "لحماية الزبائن يبدأ المنتج البديل بمخزون بيع يساوي صفراً حتى تعبئته فعلياً. لا تدخل كميات قبل التحقق من التغيير.",
+                                )}</p>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {onHideSelection ? <button type="button" onClick={() => onHideSelection(slot.slotCode)}
                           className="mt-1 min-h-9 w-full text-xs text-slate-500 underline">
                           {tr("Not physically present? Hide", "غير موجودة فعلياً؟ إخفاء")}
