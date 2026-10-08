@@ -61,6 +61,8 @@ export function MachineStockQuickEditor({
     if (raw.trim() === "") {
       delete next[slot.slotCode];
       onChange(next);
+      setFeedback(tr(`Selection ${slot.slotCode}: no stock change will be sent.`,
+        `الخانة ${slot.slotCode}: لن يُرسل أي تغيير للكمية.`));
       return;
     }
     const parsed = Number(raw);
@@ -73,6 +75,10 @@ export function MachineStockQuickEditor({
     }
     next[slot.slotCode] = parsed;
     onChange(next);
+    setFeedback(tr(
+      `Selection ${slot.slotCode}: final stock ${parsed} staged for Complete Stop.`,
+      `الخانة ${slot.slotCode}: تم تحديد الكمية النهائية ${parsed} لحفظها عند إنهاء الموقع.`,
+    ));
   };
 
   const setWholeRow = (row: QuickMachineRow) => {
@@ -101,7 +107,13 @@ export function MachineStockQuickEditor({
   const updatePrice = (slot: QuickMachineSlot, raw: string) => {
     if (!onPriceChange) return;
     const next = { ...prices };
-    if (!raw.trim()) { delete next[slot.slotCode]; onPriceChange(next); return; }
+    if (!raw.trim()) {
+      delete next[slot.slotCode];
+      onPriceChange(next);
+      setFeedback(tr(`Selection ${slot.slotCode}: price change cleared.`,
+        `الخانة ${slot.slotCode}: تم إلغاء تعديل السعر.`));
+      return;
+    }
     const value = Number(raw);
     if (!Number.isFinite(value) || value <= 0 || value > 1000 || Math.abs(value * 100 - Math.round(value * 100)) > 0.0001) {
       setError(tr("Price must be positive with up to two decimal places.", "السعر يجب أن يكون موجباً وبحد أقصى خانتين عشريتين."));
@@ -124,7 +136,7 @@ export function MachineStockQuickEditor({
           "سجّل العدد النهائي الموجود فعلياً داخل كل خانة. يمكنك ضبط صف كامل برقم واحد ثم تعديل أي خانة وحدها. هذه أرقام XY ولا تمثل الكمية المسحوبة من المخزن.",
         )}</p>
         <div className="mt-2 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
-          {tr(`${changedCount} selections set · XY sync runs after Complete Stop`, `تم تحديد ${changedCount} خانة · تُرسل إلى XY بعد إنهاء الموقع`)}
+          {tr(`${changedCount} selections edited · saved at Complete Stop, synced in background`, `تم تعديل ${changedCount} خانة · تُحفظ عند إنهاء الموقع وتُرسل بالخلفية`)}
         </div>
       </div>
 
@@ -164,7 +176,7 @@ export function MachineStockQuickEditor({
                         <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
                         <span className="mt-1 block text-xs text-slate-500">{tr("XY last", "آخر XY")}: {units(slot.currentQty)} · {tr("Max", "السعة")}: {slot.capacity}</span>
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
-                          value={changed ? values[slot.slotCode] : ""}
+                          value={Object.hasOwn(values, slot.slotCode) ? values[slot.slotCode] : ""}
                           onChange={(e) => updateOne(slot, e.target.value)}
                           placeholder="—"
                           aria-label={tr(`Selection ${slot.slotCode} final quantity`, `العدد النهائي للخانة ${slot.slotCode}`)}
