@@ -1978,6 +1978,8 @@ export default function MachineStopPage() {
           onSelectProduct={(slotCode, productId) => setSelectionProductIds((state) => ({ ...state, [slotCode]: productId }))}
           onSaveSelection={(slotCode) => void saveMachineSelection(slotCode)}
           saveStatuses={selectionSaveStatuses}
+          onLoadAllProducts={() => void loadFullProductCatalog()}
+          productCatalogLoading={productCatalogLoading}
           hiddenSelections={stopData.hiddenSelections ?? []}
           onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
           onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
@@ -2009,7 +2011,9 @@ export default function MachineStopPage() {
                 </p>
               </div>
               <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
-                {tr("Live from XY", "مباشر من XY")}
+                {xyLiveState.state === "live"
+                  ? tr("Live XY · direct read", "XY مباشر · قراءة فعلية")
+                  : tr("Last imported XY · not live", "آخر استيراد XY · ليس مباشراً")}
               </div>
             </div>
           </div>
