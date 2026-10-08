@@ -7,6 +7,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
+import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -172,42 +173,6 @@ interface MachineLayoutSlot {
   mismatch: boolean;
 }
 
-function groupMachineLayoutRows(slots: MachineLayoutSlot[]) {
-  const sorted = [...slots].sort((a, b) => Number(a.slotCode) - Number(b.slotCode));
-  const firstTwenty = sorted.filter((slot) => {
-    const n = Number(slot.slotCode);
-    return Number.isFinite(n) && n >= 1 && n <= 20;
-  });
-  const hasWideTopPattern = firstTwenty.length >= 6
-    && firstTwenty.every((slot) => Number(slot.slotCode) % 2 === 1);
-
-  const rows = new Map<number, MachineLayoutSlot[]>();
-  sorted.forEach((slot) => {
-    const n = Number(slot.slotCode);
-    if (!Number.isFinite(n) || n <= 0) {
-      const fallback = 99;
-      rows.set(fallback, [...(rows.get(fallback) ?? []), slot]);
-      return;
-    }
-
-    let rowIndex: number;
-    if (hasWideTopPattern && n <= 20) {
-      rowIndex = 1;
-    } else if (hasWideTopPattern) {
-      rowIndex = Math.floor((n - 21) / 10) + 2;
-    } else {
-      rowIndex = Math.floor((n - 1) / 10) + 1;
-    }
-    rows.set(rowIndex, [...(rows.get(rowIndex) ?? []), slot]);
-  });
-
-  return Array.from(rows.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([rowIndex, rowSlots]) => ({
-      rowIndex,
-      slots: rowSlots.sort((a, b) => Number(a.slotCode) - Number(b.slotCode)),
-    }));
-}
 
 interface InventoryAdjustmentRow {
   id: string;
