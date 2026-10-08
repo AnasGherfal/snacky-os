@@ -41,6 +41,7 @@ export type MachineQuantityPlanRow = {
   slot_code?: unknown;
   planned_quantity?: unknown;
   slot_allocations?: unknown;
+  original_exact_lane?: boolean;
   product?: { name?: unknown } | { name?: unknown }[] | null;
 };
 
@@ -223,9 +224,12 @@ export function buildMachineQuantitySourcesFromPlan(
     const parsedAllocations = Array.isArray(plan.slot_allocations)
       ? plan.slot_allocations.filter((value): value is MachineQuantityAllocation => Boolean(value && typeof value === "object"))
       : [];
+    // Do not turn an old, unallocated PRODUCT TOTAL into a fake physical
+    // XY selection just because the catalogue knows the first matching SKU.
+    const unspecifiedLane = plan.original_exact_lane === false;
     const fallbackAllocation: MachineQuantityAllocation = {
-      machine_slot_id: clean(plan.machine_slot_id) || null,
-      slot_code: clean(plan.slot_code) || null,
+      machine_slot_id: unspecifiedLane ? null : clean(plan.machine_slot_id) || null,
+      slot_code: unspecifiedLane ? null : clean(plan.slot_code) || null,
       current_qty: 0,
       final_take_qty: unitQuantity(plan.planned_quantity),
     };
