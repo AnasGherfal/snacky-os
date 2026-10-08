@@ -21,19 +21,4 @@ values
   ('448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid,'040','Elite School: absent from physical/XY operator layout')
 on conflict (machine_id,slot_code) do nothing;
 
--- A lane price edit can be sent without changing physical stock.
-alter table public.xy_stop_quantity_syncs
-  add column if not exists expected_price_lyd numeric(12,2),
-  add column if not exists target_price_lyd numeric(12,2),
-  add column if not exists update_stock boolean not null default true;
-
-alter table public.xy_stop_quantity_syncs
-  drop constraint if exists xy_stop_quantity_syncs_price_positive;
-alter table public.xy_stop_quantity_syncs
-  add constraint xy_stop_quantity_syncs_price_positive check (
-    (expected_price_lyd is null or expected_price_lyd > 0)
-    and (target_price_lyd is null or target_price_lyd > 0)
-    and (update_stock or target_price_lyd is not null)
-  );
-
 select pg_notify('pgrst','reload schema');
