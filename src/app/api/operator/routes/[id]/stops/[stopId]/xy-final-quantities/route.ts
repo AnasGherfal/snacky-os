@@ -4,7 +4,7 @@ import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
-type SlotInput = { slotCode?: unknown; finalQty?: unknown };
+type SlotInput = { slotCode?: unknown; finalQty?: unknown; priceLyd?: unknown };
 const clean = (value: unknown) => String(value ?? "").trim();
 const whole = (value: unknown) => Number.isSafeInteger(Number(value)) ? Number(value) : -1;
 const uuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value));
@@ -41,47 +41,77 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Too many machine selections." }, { status: 400 });
   }
   const selections = payload.selections as SlotInput[];
-  const requested = new Map<string, number>();
+  const requested = new Map<string, { finalQty: number | null; priceLyd: number | null }>();
   for (const value of selections) {
     const slotCode = clean(value?.slotCode);
-    const finalQty = whole(value?.finalQty);
-    if (!/^\d{3,4}$/.test(slotCode) || finalQty < 0 || requested.has(slotCode)) {
-      return NextResponse.json({ error: "Machine selections need unique XY lane codes and nonnegative whole quantities." }, { status: 400 });
+    const hasStock = value?.finalQty !== undefined && value?.finalQty !== null;
+    const hasPrice = value?.priceLyd !== undefined && value?.priceLyd !== null;
+    const finalQty = hasStock ? whole(value?.finalQty) : null;
+    const priceLyd = hasPrice ? Number(value?.priceLyd) : null;
+    if (!/^\d{3,4}$/.test(slotCode) || requested.has(slotCode)
+      || (!hasStock && !hasPrice)
+      || (hasStock && (finalQty === null || finalQty < 0))
+      || (hasPrice && (priceLyd === null || !Number.isFinite(priceLyd)
+        || priceLyd <= 0 || priceLyd > 1000
+        || Math.abs(priceLyd * 100 - Math.round(priceLyd * 100)) > 0.0001))) {
+      return NextResponse.json({ error: "Each selection must have a valid final quantity and/or price in LYD." }, { status: 400 });
     }
-    requested.set(slotCode, finalQty);
+    requested.set(slotCode, { finalQty, priceLyd });
   }
   if (requested.size === 0) return NextResponse.json({ ok: true, queued: 0 });
 
   const admin = getSupabaseAdminClient();
   if (!admin) return NextResponse.json({ error: "Protected XY synchronization is unavailable." }, { status: 500 });
-  const [{ data: machine, error: machineError }, { data: stock, error: stockError }, { data: relabels, error: relabelError }] = await Promise.all([
+  const [{ data: machine, error: machineError }, { data: stock, error: stockError }, { data: relabels, error: relabelError }, { data: hidden, error: hiddenError }] = await Promise.all([
     admin.from("machines").select("id,vms_machine_id").eq("id", stop.machine_id).maybeSingle(),
-    admin.from("latest_vms_stock_by_slot").select("slot_code,vms_product_id,current_qty,capacity,captured_at")
+    admin.from("latest_vms_stock_by_slot").select("slot_code,vms_product_id,current_qty,capacity,captured_at,import_batch_id")
       .eq("machine_id", stop.machine_id).in("slot_code", Array.from(requested.keys())),
     admin.from("xy_pending_slot_changes").select("slot_code")
       .eq("machine_id", stop.machine_id).eq("status", "pending").in("slot_code", Array.from(requested.keys())),
+    admin.from("xy_hidden_machine_selections").select("slot_code")
+      .eq("machine_id", stop.machine_id).in("slot_code", Array.from(requested.keys())),
   ]);
-  if (machineError || stockError || relabelError || !machine?.vms_machine_id) {
+  if (machineError || stockError || relabelError || hiddenError || !machine?.vms_machine_id) {
     return NextResponse.json({ error: "Could not verify the machine and its XY selections." }, { status: 500 });
+  }
+  if ((hidden ?? []).length) {
+    return NextResponse.json({ error: "A selected lane is hidden because it is not physically present." }, { status: 409 });
   }
   if ((relabels ?? []).length) {
     return NextResponse.json({ error: "A selected lane has a pending product change. Wait until its product is verified before setting its sellable stock." }, { status: 409 });
   }
+  const batchId = clean((stock ?? [])[0]?.import_batch_id);
+  const { data: priceRows, error: priceError } = batchId
+    ? await admin.from("vms_stock_snapshots").select("slot_code,vms_selling_price_lyd")
+        .eq("machine_id", stop.machine_id).eq("import_batch_id", batchId)
+        .eq("source_provider", "xy").in("slot_code", Array.from(requested.keys()))
+    : { data: [], error: null };
+  if (priceError) return NextResponse.json({ error: "Could not verify XY prices. No quantities were queued." }, { status: 503 });
+  const priceBySlot = new Map((priceRows ?? []).map((row: any) =>
+    [clean(row.slot_code), Number(row.vms_selling_price_lyd)] as const));
   const bySlot = new Map((stock ?? []).map((s: any) => [clean(s.slot_code), s]));
   const prepared = [];
-  for (const [slotCode, finalQty] of requested) {
+  for (const [slotCode, selection] of requested) {
+    const { finalQty, priceLyd } = selection;
     const slot = bySlot.get(slotCode);
     const baselineQty = whole(slot?.current_qty);
     const capacity = whole(slot?.capacity);
     const vmsProductId = clean(slot?.vms_product_id);
-    if (!slot || !vmsProductId || baselineQty < 0 || capacity <= 0 || finalQty > capacity) {
+    if (!slot || !vmsProductId || baselineQty < 0 || capacity <= 0 || (finalQty !== null && finalQty > capacity)) {
       return NextResponse.json({ error: `Selection ${slotCode} is missing XY mapping, reliable stock/capacity, or exceeds its capacity.` }, { status: 409 });
+    }
+    const originalPrice = priceBySlot.get(slotCode);
+    if (priceLyd !== null && (!originalPrice || !Number.isFinite(originalPrice) || originalPrice <= 0)) {
+      return NextResponse.json({ error: `Selection ${slotCode} has no reliable previous XY price; retry after refreshing XY.` }, { status: 409 });
     }
     prepared.push({
       route_id: routeId, route_stop_id: stopId, machine_id: stop.machine_id,
       vms_machine_id: String(machine.vms_machine_id), slot_code: slotCode,
       expected_vms_product_id: vmsProductId,
-      expected_xy_qty: baselineQty, target_qty: finalQty, max_capacity: capacity,
+      expected_xy_qty: baselineQty, target_qty: finalQty ?? baselineQty, max_capacity: capacity,
+      expected_price_lyd: priceLyd === null ? null : originalPrice,
+      target_price_lyd: priceLyd,
+      update_stock: finalQty !== null,
       status: "pending", attempt_count: 0, next_attempt_at: new Date().toISOString(),
       last_error: null, verified_at: null, last_attempt_at: null,
       created_by_user_id: profile.id, updated_at: new Date().toISOString(),
