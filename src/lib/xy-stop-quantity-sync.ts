@@ -13,6 +13,9 @@ type SyncRow = {
   expected_xy_qty: number;
   target_qty: number;
   max_capacity: number;
+  expected_price_lyd: number | null;
+  target_price_lyd: number | null;
+  update_stock: boolean;
   attempt_count: number;
   created_at: string;
 };
@@ -25,7 +28,7 @@ export async function retryPendingStopXyQuantities() {
   const db = getSupabaseAdminClient();
   if (!db) throw new Error("Protected XY sync queue is not configured.");
   const { data, error } = await db.from("xy_stop_quantity_syncs")
-    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,expected_vms_product_id,expected_xy_qty,target_qty,max_capacity,attempt_count,created_at")
+    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,expected_vms_product_id,expected_xy_qty,target_qty,max_capacity,expected_price_lyd,target_price_lyd,update_stock,attempt_count,created_at")
     .eq("status", "pending").lte("next_attempt_at", new Date().toISOString())
     .order("created_at", { ascending: true }).limit(5);
   if (error) throw error;
@@ -85,17 +88,30 @@ export async function retryPendingStopXyQuantities() {
         summary.conflict++; continue;
       }
       if (current.vmsProductId !== row.expected_vms_product_id
-          || (current.capacity !== null && row.target_qty > current.capacity)
-          || row.target_qty > row.max_capacity) {
+          || (row.update_stock && current.capacity !== null && row.target_qty > current.capacity)
+          || (row.update_stock && row.target_qty > row.max_capacity)) {
         await settle("conflict", "XY product or lane capacity has changed; old quantity request was not sent.");
         summary.conflict++; continue;
       }
-      if (current.currentQty === row.target_qty) {
+      const needsPriceUpdate = row.target_price_lyd !== null;
+      const targetPrice = needsPriceUpdate ? Number(row.target_price_lyd) : current.priceLyd;
+      const targetStock = row.update_stock ? row.target_qty : current.currentQty;
+      const qtyMatches = !row.update_stock || current.currentQty === targetStock;
+      const priceMatches = !needsPriceUpdate || Math.abs(current.priceLyd - targetPrice) < 0.001;
+
+      if (qtyMatches && priceMatches) {
         await settle("verified", null);
         summary.verified++; continue;
       }
-      if (current.currentQty !== row.expected_xy_qty) {
-        await settle("conflict", "XY stock changed since the operator saved the quantity. Recheck; no stale overwrite.");
+      if (row.update_stock && current.currentQty !== row.expected_xy_qty) {
+        await settle("conflict", "XY stock changed since the refill was recorded. Recheck before overwriting it.");
+        summary.conflict++; continue;
+      }
+      if (needsPriceUpdate && !priceMatches && (
+        row.expected_price_lyd === null
+        || Math.abs(current.priceLyd - Number(row.expected_price_lyd)) >= 0.001
+      )) {
+        await settle("conflict", "XY price changed since the edit; not overwriting another update.");
         summary.conflict++; continue;
       }
 
@@ -103,8 +119,8 @@ export async function retryPendingStopXyQuantities() {
         vmsMachineId: row.vms_machine_id,
         slotCode: row.slot_code,
         vmsProductId: row.expected_vms_product_id,
-        priceLyd: current.priceLyd,
-        stockQty: row.target_qty,
+        priceLyd: targetPrice,
+        stockQty: targetStock,
       });
       if (!result.accepted) {
         if (isOffline(String(result.message ?? ""))) {
@@ -121,8 +137,8 @@ export async function retryPendingStopXyQuantities() {
         vmsMachineId: row.vms_machine_id,
         slotCode: row.slot_code,
         expectedVmsProductId: row.expected_vms_product_id,
-        expectedPriceLyd: current.priceLyd,
-        expectedStockQty: row.target_qty,
+        expectedPriceLyd: targetPrice,
+        expectedStockQty: targetStock,
       });
       if (!verified.verified) {
         await settle("pending", "XY accepted the stock value; readback pending.");
