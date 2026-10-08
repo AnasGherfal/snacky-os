@@ -576,6 +576,7 @@ async function callPlannerAI(tasks: PlanTask[]) {
 
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
+      signal: AbortSignal.timeout(9_000),
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1316,17 +1317,28 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const aiResults: Array<Awaited<ReturnType<typeof callPlannerAI>>> = [];
   const proposed: AiDecision[] = [];
   const AI_TASK_BATCH_SIZE = 40;
-
-  for (let offset = 0; offset < tasks.length; offset += AI_TASK_BATCH_SIZE) {
-    const batch = tasks.slice(offset, offset + AI_TASK_BATCH_SIZE);
-    const result = await callPlannerAI(batch);
+  const MAX_AI_BATCHES = 2;
+  const aiBatches: PlanTask[][] = [];
+  for (let offset = 0; offset < tasks.length && aiBatches.length < MAX_AI_BATCHES; offset += AI_TASK_BATCH_SIZE) {
+    aiBatches.push(tasks.slice(offset, offset + AI_TASK_BATCH_SIZE));
+  }
+  // AI may explain up to 80 top-priority lanes in parallel; all other lanes
+  // still use the deterministic commercial optimizer. Never block the whole
+  // route on a slow or unavailable language-model request.
+  const batchResults = await Promise.all(aiBatches.map((batch) => callPlannerAI(batch)));
+  batchResults.forEach((result, index) => {
+    const batch = aiBatches[index];
     aiResults.push(result);
-    if (result.warning) warnings.push(result.warning);
+    if (result.warning) warnings.push("AI explanations were temporarily unavailable; the safe Smart Route optimizer completed the plan.");
     if (result.ok) {
       proposed.push(...result.decisions);
     } else {
       proposed.push(...batch.map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
     }
+  });
+  const coveredByAI = aiBatches.length * AI_TASK_BATCH_SIZE;
+  if (tasks.length > coveredByAI) {
+    proposed.push(...tasks.slice(coveredByAI).map(fallbackDecision).filter((row): row is AiDecision => Boolean(row)));
   }
 
   const decisions = validateDecisions(tasks, proposed, availableByProduct, warnings);
