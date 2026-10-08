@@ -30,6 +30,14 @@ test("Standard ten-lane rows follow machine selection numbers", () => {
     [[1,"001","010"],[2,"011","020"],[3,"021","030"],[4,"031","040"]]);
 });
 
+test("Sparse machines use visible rows 001–009, 021–030, 031–040", () => {
+  const slots = ["001","003","005","007","009","021","023","025","027","029","030","031","032","033","034","035","036","037","038","039","040"]
+    .map(slotCode => ({ slotCode }));
+  const rows = groupMachineLayoutRows(slots);
+  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]),
+    [[1,"001","009"],[2,"021","030"],[3,"031","040"]]);
+});
+
 test("Operator can fill an entire XY row then override a single selection", () => {
   const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
   assert.match(editor, /setWholeRow/);
