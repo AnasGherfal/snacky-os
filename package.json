@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs scripts/test-route-machine-catalog.mjs scripts/test-refill-forecast.mjs scripts/test-inventory-read-reliability.mjs scripts/test-machine-quantity-confirmation.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && npm run test:route-ledger-core && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs && npm run test:smart-route-planner && npm run test:xy-stop-quantity-editor && npm run test:xy-live-sales",
+    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs scripts/test-route-machine-catalog.mjs scripts/test-refill-forecast.mjs scripts/test-inventory-read-reliability.mjs scripts/test-machine-quantity-confirmation.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && npm run test:route-ledger-core && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs && npm run test:smart-route-planner && npm run test:smart-route-unified-editor && npm run test:xy-stop-quantity-editor && npm run test:xy-live-sales",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -73,6 +73,7 @@
     "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs",
     "audit:performance": "node scripts/audit-performance-baseline.mjs",
     "test:smart-route-planner": "node --experimental-strip-types --test scripts/test-smart-route-planner.mjs scripts/test-smart-route-execution-hardening.mjs",
+    "test:smart-route-unified-editor": "node --experimental-strip-types --test scripts/test-smart-route-unified-editor.mjs",
     "test:xy-stop-quantity-editor": "node --experimental-strip-types --test scripts/test-xy-stop-quantity-editor.mjs",
     "test:xy-live-sales": "node --experimental-strip-types --test scripts/test-xy-live-sales.mjs"
   },
