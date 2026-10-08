@@ -409,6 +409,14 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     console.warn("[routes:detail] Pending XY changes unavailable", { id, error: queuedXyError });
   }
   const xyQueueRows = queuedXyError ? [] : (queuedXyChanges ?? []);
+  const { data: xyQuantityRows, error: xyQuantityError } = await supportClient
+    .from("xy_stop_quantity_syncs")
+    .select("id,machine_id,slot_code,expected_xy_qty,target_qty,status,attempt_count,last_error,verified_at,created_at")
+    .eq("route_id", id).order("slot_code", { ascending: true }).limit(150);
+  if (xyQuantityError && !isMissingTable(xyQuantityError, "xy_stop_quantity_syncs")) {
+    console.warn("[routes:detail] XY selection syncs unavailable", { id, error: xyQuantityError });
+  }
+  const xyFinalQtyRows = xyQuantityError ? [] : (xyQuantityRows ?? []);
   const completionImageStopDescriptors = routeStops.map((stop: any) => ({
     id: String(stop.id),
     title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
@@ -1010,6 +1018,38 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+        {xyFinalQtyRows.length ? (
+          <section className="surface-card border-emerald-200 p-4">
+            <h2 className="text-lg font-semibold">{tr(locale, "Machine selection stock sync", "مزامنة كميات خانات الجهاز")}</h2>
+            <p className="mt-1 text-sm text-slate-600">{tr(locale,
+              "Exact final quantities entered on the physical vending layout. Saved separately from refill inventory. Background XY updates do not delay operators and never overwrite a changed product/stock baseline.",
+              "الكميات النهائية لكل خانة حسب الجهاز الفعلي. تُحفظ منفصلة عن مخزون التعبئة، وتُرسل إلى XY في الخلفية دون تعطيل المشغل أو الكتابة فوق منتج أو كمية تغيّرت.",
+            )}</p>
+            <DataTable headers={[
+              tr(locale, "Machine", "الجهاز"),
+              tr(locale, "Selection", "الخانة"),
+              tr(locale, "Last XY → Actual", "آخر XY ← الفعلي"),
+              tr(locale, "Status", "الحالة"),
+              tr(locale, "Attempts / notes", "المحاولات / الملاحظات"),
+            ]}>
+              {xyFinalQtyRows.map((row: any) => (
+                <tr key={row.id}>
+                  <td>{formatMachineDisplayName(machineById.get(row.machine_id) ?? null, { includeArea: true })}</td>
+                  <td className="font-mono font-bold">{row.slot_code}</td>
+                  <td>{row.expected_xy_qty} → <strong>{row.target_qty}</strong></td>
+                  <td><StatusBadge status={row.status === "verified" ? "complete" : "needs_review"}
+                    label={row.status === "verified"
+                      ? tr(locale, "XY verified", "تم التحقق عبر XY")
+                      : row.status === "conflict"
+                        ? tr(locale, "Needs review", "تحتاج مراجعة")
+                        : tr(locale, "Sync pending", "بانتظار المزامنة")} /></td>
+                  <td>{row.attempt_count ?? 0}{row.last_error ? <p className="text-xs text-rose-700">{row.last_error}</p> : null}</td>
+                </tr>
+              ))}
+            </DataTable>
+          </section>
+        ) : null}
 
         {xyQueueRows.length ? (
           <section className="surface-card border-amber-200 p-4">
