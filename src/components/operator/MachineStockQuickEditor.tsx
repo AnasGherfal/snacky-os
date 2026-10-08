@@ -42,6 +42,8 @@ export function MachineStockQuickEditor({
   onSelectProduct,
   onSaveSelection,
   saveStatuses = {},
+  onLoadAllProducts,
+  productCatalogLoading = false,
 }: {
   rows: QuickMachineRow[];
   values: Record<string, number>;
@@ -57,6 +59,8 @@ export function MachineStockQuickEditor({
   onSelectProduct?: (slotCode: string, productId: string) => void;
   onSaveSelection?: (slotCode: string) => void;
   saveStatuses?: Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>;
+  onLoadAllProducts?: () => void;
+  productCatalogLoading?: boolean;
 }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -203,6 +207,12 @@ export function MachineStockQuickEditor({
                               <option value="">{slot.productName || tr("Unmapped XY product", "منتج XY غير مربوط")}</option>
                               {productOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
+                            {onLoadAllProducts ? <button type="button" onClick={onLoadAllProducts}
+                              disabled={productCatalogLoading}
+                              className="mt-1 text-xs font-semibold text-emerald-800 underline disabled:opacity-50">
+                              {productCatalogLoading ? tr("Loading products…", "جارٍ تحميل المنتجات…")
+                                : tr("Load all products", "عرض كل المنتجات")}
+                            </button> : null}
                           </label>
                         ) : null>
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
@@ -266,8 +276,8 @@ export function MachineStockQuickEditor({
       ) : null}
             {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
-        "Only edited selections are saved at Complete Stop. A background worker tries up to 5 updates per minute. Check the admin route audit for verified or pending status.",
-        "تُحفظ الخانات المعدلة فقط عند إنهاء الموقع. ينفّذ النظام في الخلفية حتى 5 تحديثات في الدقيقة، ويمكن للإدارة متابعة حالة المزامنة.",
+        "Press Save Selection to queue that selection immediately; Complete Stop also saves any remaining stock/price edits. Background sync retries without holding the operator.",
+        "اضغط حفظ الخانة لتسجيل التغيير فوراً؛ وإنهاء الموقع يحفظ باقي تعديلات السعر والكمية. تُجرى المزامنة في الخلفية دون تعطيل المشغل.",
       )}</p>
     </section>
   );
