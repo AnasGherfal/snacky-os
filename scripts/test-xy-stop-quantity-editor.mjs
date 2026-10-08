@@ -91,3 +91,26 @@ test("Background sync checks stop completion, original product and stock before 
   assert.match(admin, /xy_stop_quantity_syncs/);
   assert.match(admin, /Machine selection stock sync/);
 });
+
+
+test("Row action visibly confirms staged selections; hidden physical lanes are reversible", () => {
+  const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
+  const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+  const visibilityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-visibility/route.ts");
+  const stopPage = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const migration = read("supabase/migrations/20261008094500_xy_physical_slots_and_price_edits.sql");
+  assert.match(editor, /role="status"/);
+  assert.match(editor, /aria-live="polite"/);
+  assert.match(editor, /setFeedback/);
+  assert.match(editor, /Press Complete Stop to sync/);
+  assert.match(editor, /hiddenSelections/);
+  assert.match(editor, /onRestoreSelection/);
+  assert.match(editor, /onChangeProduct/);
+  assert.match(stopApi, /xy_hidden_machine_selections/);
+  assert.match(stopApi, /hiddenSlotCodes/);
+  assert.match(stopPage, /toggleSelectionVisibility/);
+  assert.match(visibilityApi, /xy_hidden_machine_selections/);
+  assert.match(migration, /'002'/);
+  assert.match(migration, /'036'/);
+  assert.match(migration, /'040'/);
+});
