@@ -197,10 +197,25 @@ export function MachineStockQuickEditor({
           );
         })}
       </div>
-      {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
+      {hiddenSelections.length ? (
+        <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-amber-950">
+            {tr(`${hiddenSelections.length} physically absent selections hidden · Manage`,
+              `${hiddenSelections.length} خانات غير موجودة فعلياً مخفية · إدارة`)}
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {hiddenSelections.map((row) => <button key={row.slot_code} type="button"
+              className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900"
+              onClick={() => onRestoreSelection?.(row.slot_code)}>
+              {row.slot_code} · {tr("Restore", "إظهار")}
+            </button>)}
+          </div>
+        </details>
+      ) : null}
+            {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
-        "Only selections you set will be synchronized. An untouched selection is left alone. Changes are queued securely at Complete Stop—no waiting for XY here.",
-        "ستتم مزامنة الخانات التي حددتها فقط، ولن تتغير الخانات التي لم تلمسها. تُحفظ التغييرات عند إنهاء الموقع دون انتظار اتصال XY.",
+        "Only edited selections are saved at Complete Stop. A background worker tries up to 5 updates per minute. Check the admin route audit for verified or pending status.",
+        "تُحفظ الخانات المعدلة فقط عند إنهاء الموقع. ينفّذ النظام في الخلفية حتى 5 تحديثات في الدقيقة، ويمكن للإدارة متابعة حالة المزامنة.",
       )}</p>
     </section>
   );
