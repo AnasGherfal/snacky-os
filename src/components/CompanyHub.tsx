@@ -290,6 +290,18 @@ export async function CompanyHub({
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
+              <article className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4">
+                <div className="rounded-lg bg-white p-4 text-emerald-950">
+                  <span className="text-xs font-semibold text-orange-600">SNACKY · PDF</span>
+                  <p className="mt-2 text-lg font-semibold">{tr('Arabic vending service proposal', 'مقترح سناكي لخدمات البيع الذاتي')}</p>
+                </div>
+                <h3 className="mt-3 font-semibold">{tr('General proposal · Real photos', 'المقترح العام · صور حقيقية')}</h3>
+                <p className="mt-1 text-sm text-slate-700">{tr('10-page Arabic RTL proposal with real machine photographs. Approved for external presentation.', 'مقترح عربي من 10 صفحات مع صور ماكينات حقيقية وتنسيق من اليمين إلى اليسار، مناسب للمشاركة مع الجهات.')}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a className="btn-primary" href="/documents/snacky-general-proposal-ar.pdf" target="_blank" rel="noopener noreferrer">{tr('Open PDF', 'فتح PDF')}</a>
+                  <a className="btn-secondary" href="/documents/snacky-general-proposal-ar.pdf" download>{tr('Download', 'تنزيل')}</a>
+                </div>
+              </article>
               <article className="rounded-xl border border-slate-200 p-4">
                 <div className="flex h-24 items-center justify-center rounded-lg bg-[#fff8f2] p-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -437,6 +449,14 @@ export async function CompanyHub({
       ) : null}
       {section === 'start' && !record && !isNew ? (
         <>
+          <section className="surface-card space-y-3 border-2 border-emerald-200 bg-emerald-50 p-4">
+            <h2 className="text-lg font-semibold text-emerald-950">{tr('Snacky vending service proposal', 'مقترح سناكي لخدمات البيع الذاتي')}</h2>
+            <p className="text-sm text-slate-700">{tr('The current Arabic company-wide proposal with real Snacky machine photographs. Ready to present to prospective locations.', 'المقترح العام الحالي بالعربية مع صور حقيقية لماكينات سناكي، جاهز للعرض على الجهات والمواقع المحتملة.')}</p>
+            <div className="flex flex-wrap gap-2">
+              <a className="btn-primary" href="/documents/snacky-general-proposal-ar.pdf" target="_blank" rel="noopener noreferrer">{tr('Open proposal (PDF)', 'فتح المقترح (PDF)')}</a>
+              <a className="btn-secondary" href="/documents/snacky-general-proposal-ar.pdf" download>{tr('Download proposal', 'تنزيل المقترح')}</a>
+            </div>
+          </section>
           <section className="surface-card space-y-3">
             <h2 className="text-lg font-semibold">
               {tr('Start with your work', 'ابدأ بعملك')}

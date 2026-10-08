@@ -69,6 +69,14 @@ export async function CompanyDocuments({ searchParams = {} }: { searchParams?: P
 
   return <div className="company-hub company-document-library" dir={ar ? 'rtl' : 'ltr'}>
     <PageHeader title={tr('Documents & Brand', 'الوثائق والهوية')} subtitle={tr('Current files. Clear approval. One trusted library.', 'الملفات الحالية، واعتماد واضح، ومكتبة واحدة موثوقة.')} action={manager ? <Link className="btn-primary" href="/company/new?section=documents">{tr('Add a material', 'إضافة مادة')}</Link> : undefined} />
+    <section className="surface-card mb-4 space-y-3 border-2 border-emerald-200 bg-emerald-50 p-4" aria-label={tr('Featured published proposal', 'المقترح العام المنشور')}>
+      <h2 className="text-lg font-semibold text-emerald-950">{tr('Snacky general vending service proposal', 'المقترح العام لخدمات البيع الذاتي من سناكي')}</h2>
+      <p className="text-sm text-slate-700">{tr('Current Arabic RTL PDF with actual Snacky machine photographs; ready to open, download and send to prospective locations. This public commercial proposal does not contain internal financial data.', 'نسخة عربية بتنسيق RTL وصور حقيقية لماكينات سناكي؛ جاهزة للفتح والتنزيل والإرسال للجهات والمواقع المحتملة. لا تتضمن بيانات مالية داخلية.')}</p>
+      <div className="flex flex-wrap gap-2">
+        <a className="btn-primary" href="/documents/snacky-general-proposal-ar.pdf" target="_blank" rel="noopener noreferrer">{tr('Open PDF', 'فتح PDF')}</a>
+        <a className="btn-secondary" href="/documents/snacky-general-proposal-ar.pdf" download>{tr('Download PDF', 'تنزيل PDF')}</a>
+      </div>
+    </section>
     <form method="get" action="/company/documents" className="doc-search" role="search">
       <label htmlFor="company-doc-search">{tr('Find a file, guide or template', 'ابحث عن ملف أو دليل أو قالب')}</label>
       <div className="doc-search-controls"><input id="company-doc-search" name="q" type="search" maxLength={200} defaultValue={q} className="field-input" placeholder={tr('Search titles and descriptions…', 'ابحث في العناوين والأوصاف…')} /><button className="btn-primary" type="submit">{tr('Search', 'بحث')}</button>{q || offset ? <Link className="btn-secondary" href="/company/documents">{tr('Clear', 'مسح')}</Link> : null}</div>
