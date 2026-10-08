@@ -1,0 +1,25 @@
+name: Verify Smart Route & Unified XY
+on:
+  push:
+    branches:
+      - fix/smart-route-stability-unified-lane-editor
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Smart Route regression
+        run: npm run test:smart-route-planner
+      - name: Unified editor regression
+        run: npm run test:smart-route-unified-editor
+      - name: Machine editor regression
+        run: npm run test:xy-stop-quantity-editor
+      - name: TypeScript
+        run: npm run typecheck
