@@ -2,8 +2,7 @@ import "server-only";
 
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
-import { ensureFreshXyLiveSales } from "@/lib/xy-live-sales-sync";
+import { summarizeSmartRouteWarnings } from "@/lib/smart-route-warnings";
 
 type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 
@@ -554,6 +553,7 @@ async function callPlannerAI(tasks: PlanTask[]) {
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
@@ -862,8 +862,11 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const machineIds = Array.from(new Set(input.machineIds.map(String).filter(Boolean)));
   if (!machineIds.length) throw new Error("Choose at least one machine before generating a smart plan.");
 
-  const xyRefresh = await ensureFreshXyRoutePlanningData();
-  const salesRefresh = await ensureFreshXyLiveSales({ maxAgeMs: 90 * 60 * 1000 });
+  // The secured XY/transaction sync runs on its own schedule.
+  // Do NOT block generating a route (or fail the whole route) by making live
+  // vendor API calls here. The latest imported XY snapshot is a read-only input.
+  const xyRefresh = { outcome: "background_snapshot" as const };
+  const salesRefresh = { outcome: "background_snapshot" as const, reason: null };
   const now = new Date();
   const recentFillSince = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -909,19 +912,21 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     ["storage", storageResult.error],
     ["reservations", reservationsResult.error],
     ["reserving route statuses", reservingRoutesResult.error],
-    ["product profiles", profilesResult.error],
-    ["machine context", machineContextResult.error],
-    ["slot rules", slotRulesResult.error],
-    ["location rules", locationRulesResult.error],
-    ["demand signals", demandResult.error],
-    ["fit history", fitHistoryResult.error],
+    // These signals enrich ranking but must not break all machines if unavailable.
+    // Hard constraints still apply to whatever verified rules are available.
   ].filter((entry) => entry[1]);
 
   if (failures.length) {
-    throw new Error(`Smart planning data is incomplete: ${failures.map(([label, error]) => `${label}: ${(error as { message?: string })?.message ?? "unknown error"}`).join("; ")}`);
+    console.error("[smart-route] Required planning sources failed", failures);
+    throw new Error("Smart Route cannot verify machine stock or storage right now. Try again shortly; no inventory was changed.");
   }
 
   const warnings: string[] = [];
+  if (profilesResult.error) warnings.push("Product fit profiles unavailable; using product names and categories.");
+  if (machineContextResult.error) warnings.push("Machine venue context unavailable; using the machine location.");
+  if (slotRulesResult.error) warnings.push("Custom lane rules unavailable; only verified compatibility will be used.");
+  if (locationRulesResult.error) warnings.push("Location restrictions unavailable; product substitutions are blocked for safety.");
+  if (demandResult.error) warnings.push("Demand history unavailable; ranking uses recent refill history and stock.");
   if (refillHistoryResult.error) warnings.push("Past route-fill history could not be loaded.");
   if (salesSignalResult.error) warnings.push("True transaction-sales signals could not be loaded; ranking fell back to XY stock depletion.");
   if (salesRefresh.outcome === "failed" || salesRefresh.outcome === "unavailable") {
@@ -1072,6 +1077,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
         const historicallySeen = fitSeen.has(`${machine.id}:${stock.slot_code}:${candidate.id}`);
 
         if (!original) {
+          if (locationRulesResult.error || slotRulesResult.error) return null;
           if (!preliminaryAllowSubstitution) return null;
           if (currentGroup && candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen) return null;
           if (!explicitAllowed && !historicallySeen && candidateFit !== currentFit) return null;
@@ -1252,7 +1258,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       manualStopItems: [],
       slotAssignments: [],
       substitutions: [],
-      warnings,
+      warnings: summarizeSmartRouteWarnings(warnings),
       freshness: {
         xyOutcome: xyRefresh.outcome,
         latestStockAt,
@@ -1349,7 +1355,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     manualStopItems,
     slotAssignments,
     substitutions,
-    warnings: Array.from(new Set(warnings)),
+    warnings: summarizeSmartRouteWarnings(warnings),
     freshness: {
       xyOutcome: xyRefresh.outcome,
       latestStockAt,
