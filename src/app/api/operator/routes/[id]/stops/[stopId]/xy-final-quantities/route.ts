@@ -3,6 +3,7 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { readXyMachineLayout } from "@/lib/xy-vms-control";
 
 type SlotInput = { slotCode?: unknown; finalQty?: unknown; priceLyd?: unknown };
 const clean = (value: unknown) => String(value ?? "").trim();
@@ -40,6 +41,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!Array.isArray(payload.selections) || payload.selections.length > 120) {
     return NextResponse.json({ error: "Too many machine selections." }, { status: 400 });
   }
+  const applyImmediately = payload.applyImmediately === true;
   const selections = payload.selections as SlotInput[];
   const requested = new Map<string, { finalQty: number | null; priceLyd: number | null }>();
   for (const value of selections) {
@@ -90,17 +92,35 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const priceBySlot = new Map((priceRows ?? []).map((row: any) =>
     [clean(row.slot_code), Number(row.vms_selling_price_lyd)] as const));
   const bySlot = new Map((stock ?? []).map((s: any) => [clean(s.slot_code), s]));
+  // A confirmed selection edit should compare against a direct XY read, not
+  // pretend the most recent import is current. If XY is offline, use the
+  // explicit cached baseline and let the async worker detect any conflict.
+  let directSlots: Awaited<ReturnType<typeof readXyMachineLayout>> | null = null;
+  if (applyImmediately && payload.preferCachedBaseline !== true) {
+    try {
+      directSlots = await readXyMachineLayout(String(machine.vms_machine_id));
+    } catch (error) {
+      console.warn("[operator:save-selection] XY unreachable; queued with imported baseline", {
+        routeId, stopId, error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  const directBySlot = new Map((directSlots ?? []).map((slot) => [slot.slotCode, slot]));
   const prepared = [];
   for (const [slotCode, selection] of requested) {
     const { finalQty, priceLyd } = selection;
     const slot = bySlot.get(slotCode);
-    const baselineQty = whole(slot?.current_qty);
-    const capacity = whole(slot?.capacity);
-    const vmsProductId = clean(slot?.vms_product_id);
+    const liveSlot = directBySlot.get(slotCode);
+    if (applyImmediately && directSlots && !liveSlot) {
+      return NextResponse.json({ error: `Selection ${slotCode} is not present in XY's current layout.` }, { status: 409 });
+    }
+    const baselineQty = whole(liveSlot?.currentQty ?? slot?.current_qty);
+    const capacity = whole(liveSlot?.capacity ?? slot?.capacity);
+    const vmsProductId = clean(liveSlot?.vmsProductId ?? slot?.vms_product_id);
     if (!slot || !vmsProductId || baselineQty < 0 || capacity <= 0 || (finalQty !== null && finalQty > capacity)) {
       return NextResponse.json({ error: `Selection ${slotCode} is missing XY mapping, reliable stock/capacity, or exceeds its capacity.` }, { status: 409 });
     }
-    const originalPrice = priceBySlot.get(slotCode);
+    const originalPrice = liveSlot?.priceLyd ?? priceBySlot.get(slotCode);
     if (priceLyd !== null && (!originalPrice || !Number.isFinite(originalPrice) || originalPrice <= 0)) {
       return NextResponse.json({ error: `Selection ${slotCode} has no reliable previous XY price; retry after refreshing XY.` }, { status: 409 });
     }
@@ -112,6 +132,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       expected_price_lyd: priceLyd === null ? null : originalPrice,
       target_price_lyd: priceLyd,
       update_stock: finalQty !== null,
+      apply_immediately: applyImmediately,
       status: "pending", attempt_count: 0, next_attempt_at: new Date().toISOString(),
       last_error: null, verified_at: null, last_attempt_at: null,
       created_by_user_id: profile.id, updated_at: new Date().toISOString(),
@@ -125,5 +146,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     console.error("[operator:XY-quantity-queue] Save failed", { routeId, stopId, error: saveError });
     return NextResponse.json({ error: "Could not save XY selection changes. The route has not been completed; retry." }, { status: 409 });
   }
-  return NextResponse.json({ ok: true, queued: saved?.length ?? prepared.length });
+  return NextResponse.json({
+    ok: true, queued: saved?.length ?? prepared.length,
+    syncStatus: "pending",
+    baselineSource: directSlots ? "xy_live" : "last_import",
+    message: "Saved in Snacky. XY synchronization will run in the background.",
+  });
 }

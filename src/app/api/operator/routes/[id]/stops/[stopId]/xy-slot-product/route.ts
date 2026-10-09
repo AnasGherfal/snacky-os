@@ -30,7 +30,7 @@ export async function POST(
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
   }
 
-  let body: { slotCode?: unknown; productId?: unknown; smartRouteSwap?: unknown; queueOnOffline?: unknown; physicalChangeConfirmed?: unknown; laneDisabledConfirmed?: unknown; actualSlotQty?: unknown };
+  let body: { slotCode?: unknown; productId?: unknown; smartRouteSwap?: unknown; queueOnOffline?: unknown; physicalChangeConfirmed?: unknown; laneDisabledConfirmed?: unknown; actualSlotQty?: unknown; priceLyd?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -39,6 +39,13 @@ export async function POST(
 
   const slotCode = String(body.slotCode ?? "").trim();
   const productId = String(body.productId ?? "").trim();
+  const requestedPrice = body.priceLyd === undefined || body.priceLyd === null
+    ? null : Number(body.priceLyd);
+  if (requestedPrice !== null && (!Number.isFinite(requestedPrice)
+    || requestedPrice <= 0 || requestedPrice > 1000
+    || Math.abs(requestedPrice * 100 - Math.round(requestedPrice * 100)) > 0.0001)) {
+    return NextResponse.json({ success: false, error: "Enter a positive LYD selling price with up to two decimals." }, { status: 400 });
+  }
   const smartRouteSwapRequested = body.smartRouteSwap === true;
   // A normal change is a *desired catalogue selection*, not evidence that
   // somebody physically emptied/refilled a lane. To keep it one tap, retry
@@ -233,7 +240,7 @@ export async function POST(
       .map((slot) => Number(slot.priceLyd)),
   ));
 
-  if (machinePrices.length > 1) {
+  if (machinePrices.length > 1 && requestedPrice === null) {
     return NextResponse.json({
       success: false,
       error: `${product.name} currently has more than one XY price on this machine. Snacky will not guess which price to use.`,
@@ -242,7 +249,7 @@ export async function POST(
     }, { status: 409 });
   }
 
-  let priceLyd: number | null = machinePrices.length > 0 ? machinePrices[0] : null;
+  let priceLyd: number | null = requestedPrice ?? (machinePrices.length > 0 ? machinePrices[0] : null);
   if (!priceLyd) {
     const { data: catalog } = await admin
       .from("vms_product_catalog_snapshots")

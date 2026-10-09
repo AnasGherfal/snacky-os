@@ -16,6 +16,7 @@ type SyncRow = {
   expected_price_lyd: number | null;
   target_price_lyd: number | null;
   update_stock: boolean;
+  apply_immediately: boolean;
   attempt_count: number;
   created_at: string;
 };
@@ -28,7 +29,7 @@ export async function retryPendingStopXyQuantities() {
   const db = getSupabaseAdminClient();
   if (!db) throw new Error("Protected XY sync queue is not configured.");
   const { data, error } = await db.from("xy_stop_quantity_syncs")
-    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,expected_vms_product_id,expected_xy_qty,target_qty,max_capacity,expected_price_lyd,target_price_lyd,update_stock,attempt_count,created_at")
+    .select("id,route_id,route_stop_id,machine_id,vms_machine_id,slot_code,expected_vms_product_id,expected_xy_qty,target_qty,max_capacity,expected_price_lyd,target_price_lyd,update_stock,apply_immediately,attempt_count,created_at")
     .eq("status", "pending").lte("next_attempt_at", new Date().toISOString())
     .order("created_at", { ascending: true }).limit(5);
   if (error) throw error;
@@ -67,7 +68,7 @@ export async function retryPendingStopXyQuantities() {
         await settle("conflict", "Stop cancelled/skipped before machine stock confirmation.");
         summary.conflict++; continue;
       }
-      if (stop.status !== "completed") { summary.waiting++; continue; }
+      if (!row.apply_immediately && stop.status !== "completed") { summary.waiting++; continue; }
       // Keep retrying through lengthy power/network outages. A pending request
       // can only be applied when XY still reports the exact original product
       // AND original stock baseline; any interim sale/change stops the write.
