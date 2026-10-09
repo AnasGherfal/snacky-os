@@ -194,6 +194,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     mappedMachinesResult,
     liveStockMachinesResult,
     currentUnmappedRowsResult,
+    pendingSlotChangesResult,
+    stopSelectionSyncResult,
   ] = await Promise.all([
     supabase
       .from("vms_sync_runs")
@@ -214,6 +216,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("machines").select("id,name,machine_code,vms_machine_id,status,vms_last_synced_at,vms_online_status").not("vms_machine_id","is",null).order("name"),
     supabase.from("latest_vms_stock_by_slot").select("machine_id,slot_code,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
     supabase.from("latest_vms_stock_by_slot").select("vms_product_id").eq("source_provider","xy").not("vms_product_id","is",null).limit(5000),
+    supabase.from("xy_pending_slot_changes").select("machine_id,slot_code,status,last_error,updated_at,verified_at").order("updated_at",{ascending:false}).limit(200),
+    supabase.from("xy_stop_quantity_syncs").select("machine_id,slot_code,status,last_error,updated_at,verified_at").order("updated_at",{ascending:false}).limit(200),
   ]);
 
   const loadError =
@@ -225,7 +229,9 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     needsReviewCount.error ??
     mappedMachinesResult.error ??
     liveStockMachinesResult.error ??
-    currentUnmappedRowsResult.error;
+    currentUnmappedRowsResult.error ??
+    pendingSlotChangesResult.error ??
+    stopSelectionSyncResult.error;
 
   if (loadError) {
     console.error("[xy-vms-admin] Failed to load XY sync dashboard", loadError);
@@ -268,6 +274,15 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const currentXyProductIds=Array.from(new Set((currentUnmappedRowsResult.data??[]).map((row:any)=>String(row.vms_product_id??"").trim()).filter(Boolean)));
   const {count:currentUnmappedCount}=currentXyProductIds.length?await supabase.from("vms_product_mappings").select("id",{count:"exact",head:true}).eq("match_status","needs_review").in("vms_product_id",currentXyProductIds):{count:0};
   const machineCoverageLabel=`${liveStockMachineIds.size}/${mappedMachines.length}`;
+  const xySlotChangeRows=(pendingSlotChangesResult.data??[]) as Array<{machine_id:string|null;slot_code:string|null;status:string|null;last_error:string|null;updated_at:string|null;verified_at:string|null}>;
+  const xyStopWriteRows=(stopSelectionSyncResult.data??[]) as Array<{machine_id:string|null;slot_code:string|null;status:string|null;last_error:string|null;updated_at:string|null;verified_at:string|null}>;
+  const xyWriteRows=[...xySlotChangeRows.map(row=>({...row,kind:"Product/price"})),...xyStopWriteRows.map(row=>({...row,kind:"Price/stock"}))];
+  const xyPendingWrites=xyWriteRows.filter(row=>row.status==="pending");
+  const xyWriteConflicts=xyWriteRows.filter(row=>!["pending","verified"].includes(String(row.status??"")));
+  const xyVerifiedWrites=xyWriteRows.filter(row=>row.status==="verified");
+  const stalePendingWrites=xyPendingWrites.filter(row=>Date.now()-Date.parse(String(row.updated_at??""))>30*60*1000);
+  const xyWriteIssues=[...xyWriteConflicts,...stalePendingWrites].sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??""))).slice(0,10);
+  const xyMachineNameById=new Map(mappedMachines.map(machine=>[machine.id,machine.name]));
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
   const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
 
@@ -365,6 +380,30 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <p className="mt-3 text-xs text-amber-800">Check whether these machines are newly added/empty, no longer present in XY, or returning only unconfigured lanes before changing their Snacky status.</p>
         </div>:null}
         {(currentUnmappedCount??0)>0?<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><strong>XY products need mapping: {currentUnmappedCount} current XY lane product{currentUnmappedCount===1?"":"s"}</strong><p className="mt-1 text-xs text-amber-800">{Math.max(0,(needsReviewCount.count??0)-(currentUnmappedCount??0))} catalog-only/unused mapping entries are not blocking current operations.</p></div><a className="btn-secondary" href="/vms-mappings?status=needs_review">Review current mappings</a></div>:null}
+      </section>
+
+      <section className="surface-card mb-6">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">XY Route Write Verification</h2>
+            <p className="mt-1 text-sm text-slate-500">A saved selection is only queued until XY confirms it by read-back. Counts cover the latest 200 records from each queue.</p>
+          </div>
+          <StatusBadge status={xyWriteIssues.length ? "needs_review" : xyWriteRows.length ? "completed" : "needs_review"} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Pending XY writes</div><strong className="text-xl">{xyPendingWrites.length}</strong></div>
+          <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Verified by XY read-back</div><strong className="text-xl">{xyVerifiedWrites.length}</strong></div>
+          <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Conflicts / rejected</div><strong className="text-xl">{xyWriteConflicts.length}</strong></div>
+        </div>
+        {!xyWriteRows.length ? <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">No route writes have been recorded yet. Bidirectional XY writes are implemented but not production-verified.</p> : null}
+        {xyWriteIssues.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <strong className="text-amber-950">XY selection writes needing review</strong>
+          <div className="mt-2 space-y-2">{xyWriteIssues.map((row,index)=><div key={index} className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+            <div className="font-medium">{xyMachineNameById.get(String(row.machine_id??""))??"Unknown machine"} · Selection {row.slot_code??"-"} · {row.kind} · {row.status??"unknown"}</div>
+            <div className="mt-1 text-xs text-slate-600">{formatDate(row.updated_at)}</div>
+            <div className="mt-1 text-xs text-amber-900">{row.last_error??"Queued for over 30 minutes without XY read-back verification."}</div>
+          </div>)}</div>
+        </div> : null}
       </section>
 
       {!config.ready ? (
