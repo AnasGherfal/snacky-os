@@ -25,42 +25,48 @@ function safeUrl(value: string, base: string) {
   }
 }
 
-function discoverBootstrapUrls(source: string, base: string) {
+/** Vendor's production HTML has unquoted src attributes, so quoted-only
+ * scanners silently skip every JavaScript bundle. Discover only same-domain
+ * static JS files and never request account-gated APIs during this scan.
+ */
+export function discoverXyDashboardAssets(source: string, base: string) {
   const urls = new Set<string>();
-  const patterns = [
-    /<(?:script|link|iframe)[^>]+(?:src|href)=["']([^"']+)["']/gi,
-    /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>;]+)[^"']*["']/gi,
-    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/gi,
-    /(https?:\/\/[A-Za-z0-9._:-]*xynetweb\.com[^"'\s<]*)/gi,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const resolved = safeUrl(String(match[1] || "").trim(), base);
+  for (const element of source.matchAll(/<(?:script|link|iframe)\\b[^>]*>/gi)) {
+    for (const attribute of element[0].matchAll(/\\b(?:src|href)\\s*=\\s*(?:"([^"]+)"|'([^']+)'|([^\\s>]+))/gi)) {
+      const raw = attribute[1] ?? attribute[2] ?? attribute[3] ?? "";
+      const resolved = safeUrl(raw.replace(/&amp;/g, "&"), base);
       if (!resolved) continue;
       const path = new URL(resolved).pathname.toLowerCase();
-      if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|css)(?:$|\?)/i.test(path)) continue;
+      if (!/\\.js$/i.test(path)) continue;
       urls.add(resolved);
     }
   }
-  return Array.from(urls);
+  return [...urls];
 }
 
-function discoverJsUrls(source: string, base: string) {
-  const urls = new Set<string>();
+function discoverBootstrapUrls(source: string, base: string) {
+  const urls = new Set(discoverXyDashboardAssets(source, base));
   const patterns = [
-    /<script[^>]+src=["']([^"']+\.js(?:\?[^"']*)?)["']/gi,
-    /["']([^"']+\.js(?:\?[^"']*)?)["']/g,
-    /(https?:\/\/[^"'\s)]+\.js(?:\?[^"'\s)]*)?)/g,
+    /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>;]+)[^"']*["']/gi,
+    /(?:window\\.)?location(?:\\.href)?\\s*=\\s*["']([^"']+)["']/gi,
+    /(https?:\\/\\/[A-Za-z0-9._:-]*xynetweb\\.com[^"'\\s<]*)/gi,
   ];
-
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
-      const resolved = safeUrl(String(match[1] || ""), base);
+      const resolved = safeUrl(String(match[1] ?? "").trim(), base);
       if (resolved) urls.add(resolved);
     }
   }
-  return Array.from(urls);
+  return [...urls];
+}
+
+function discoverJsUrls(source: string, base: string) {
+  const urls = new Set(discoverXyDashboardAssets(source, base));
+  for (const match of source.matchAll(/["']([^"'\\s]+\\.js(?:\\?[^"'\\s]*)?)["']/g)) {
+    const resolved = safeUrl(String(match[1] ?? ""), base);
+    if (resolved) urls.add(resolved);
+  }
+  return [...urls];
 }
 
 function snippet(source: string, index: number) {
