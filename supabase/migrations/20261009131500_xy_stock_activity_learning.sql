@@ -1,5 +1,7 @@
 -- Server-side XY inventory-depletion history for conservative in-app activity alerts.
 -- No new sales transactions are inferred; only observed same-product slot decreases.
+-- Include individually validated rows from otherwise partial XY batches in the
+-- HISTORICAL trend only; current alerting still requires an active fresh batch.
 -- Read permissions are service_role-only; no direct user, anonymous or browser access.
 create or replace function public.snacky_xy_stock_activity_history(p_days integer default 29)
 returns table (
@@ -24,7 +26,7 @@ with source_rows as (
   where s.source_provider='xy'
     and s.import_row_status='imported'
     and s.captured_at >= now() - make_interval(days => least(greatest(p_days,7),35))
-    and b.status in ('imported','imported_with_warnings')
+    and b.status in ('imported','imported_with_warnings','partially_imported')
     and b.deleted_at is null
     and m.status='active'
     and m.vms_machine_id is not null
