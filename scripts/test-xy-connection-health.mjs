@@ -40,3 +40,18 @@ test('owner XY health distinguishes saved queue entries from verified vendor wri
  assert.match(admin,/Bidirectional XY writes are implemented but not production-verified/);
  assert.match(admin,/Conflicts \/ rejected/);
 });
+
+test('owner can test direct XY vendor stock safely without sending writes',()=>{
+ const route=fs.readFileSync('src/app/api/admin/xy-live-layout/route.ts','utf8');
+ const page=fs.readFileSync('src/app/admin/vms-api/page.tsx','utf8');
+ const component=fs.readFileSync('src/components/XyAdminLiveProbe.tsx','utf8');
+ assert.match(route,/getCurrentProfile/);
+ assert.match(route,/isOwnerAdminRole/);
+ assert.match(route,/readXyMachineLayout/);
+ assert.doesNotMatch(route,/setXySlotProduct|verifyXySlot|update\(/);
+ assert.match(route,/xy_live_direct/);
+ assert.match(route,/Cache-Control.*private, no-store/);
+ assert.match(page,/XyAdminLiveProbe/);
+ assert.match(component,/Check Live XY/);
+ assert.match(component,/Quantity exceeds capacity|problematicSelections/);
+});
