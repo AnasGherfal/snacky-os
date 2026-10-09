@@ -214,7 +214,7 @@ export function MachineStockQuickEditor({
                                 : tr("Load all products", "عرض كل المنتجات")}
                             </button> : null}
                           </label>
-                        ) : null>
+                        ) : null}
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
                           value={Object.hasOwn(values, slot.slotCode) ? values[slot.slotCode] : ""}
                           onChange={(e) => updateOne(slot, e.target.value)}
