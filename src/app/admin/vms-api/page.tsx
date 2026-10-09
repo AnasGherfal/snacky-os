@@ -438,7 +438,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             const base=XY_MACHINE_ACTIVITY_PROFILES[String(machine.vms_machine_id)];
             const override=xyActivityOverrideByMachine.get(machine.id);
             const hourDescription=Object.entries(base.open)
-              .map(([day,hours])=>`${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][Number(day)]} ${hours[0]}–${hours[1]}`)
+              .map(([day,hours])=>hours?`${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][Number(day)]} ${hours[0]}–${hours[1]}`:"")
               .join(" · ");
             return <form action={saveXyActivitySiteOverridesAction} key={machine.id}
               className="rounded-xl border border-slate-200 bg-white p-4">
