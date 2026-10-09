@@ -31,3 +31,12 @@ test('admin copy reflects the real cooldown and route freshness behavior',()=>{
  assert.match(admin,/shared 20-minute browser cooldown across tabs/);
  assert.match(admin,/Route creation still performs its own freshness check/);
 });
+
+test('owner XY health distinguishes saved queue entries from verified vendor writes',()=>{
+ assert.match(admin,/XY Route Write Verification/);
+ assert.match(admin,/xy_stop_quantity_syncs/);
+ assert.match(admin,/xy_pending_slot_changes/);
+ assert.match(admin,/Verified by XY read-back/);
+ assert.match(admin,/Bidirectional XY writes are implemented but not production-verified/);
+ assert.match(admin,/Conflicts \/ rejected/);
+});
