@@ -1,0 +1,21 @@
+name: XY site activity regression
+on:
+  pull_request:
+    paths:
+      - "src/lib/xy-stock-activity-alert-rules.ts"
+      - "src/lib/xy-stock-activity-alerts.ts"
+      - "scripts/test-xy-stock-activity-alerts.mjs"
+      - ".github/workflows/xy-stock-activity-regression.yml"
+  workflow_dispatch:
+jobs:
+  stock-inactivity-policies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --experimental-strip-types --test scripts/test-xy-stock-activity-alerts.mjs
