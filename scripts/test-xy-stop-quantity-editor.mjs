@@ -45,7 +45,7 @@ test("Operator can fill an entire XY row then override a single selection", () =
   assert.match(editor, /next\[slot.slotCode\] = parsed/);
   assert.match(editor, /updateOne\(slot, e.target.value\)/);
   assert.match(editor, /parsed > slot.capacity/);
-  assert.match(editor, /Only edited selections are saved at Complete Stop/);
+  assert.match(editor, /Press Save Selection to queue that selection immediately/);
   assert.match(editor, /FINAL quantity physically inside each selection/);
   assert.doesNotMatch(editor, /capacity - currentQty/);
 });
@@ -104,7 +104,7 @@ test("Row action visibly confirms staged selections; hidden physical lanes are r
   assert.match(editor, /role="status"/);
   assert.match(editor, /aria-live="polite"/);
   assert.match(editor, /setFeedback/);
-  assert.match(editor, /Press Complete Stop to sync/);
+  assert.match(editor, /Save Selection for each edited lane/);
   assert.match(editor, /hiddenSelections/);
   assert.match(editor, /onRestoreSelection/);
   assert.match(editor, /onChangeProduct/);
