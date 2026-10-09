@@ -123,3 +123,28 @@ test("Cron path stores only conservative in-app inventory inactivity warnings, n
   assert.doesNotMatch(alerts,/sendPush|sendEmail|webpush/);
   assert.match(alerts,/snacky_xy_stock_activity_history/);
 });
+
+test("Owner-managed XY activity closures and pauses are honored",()=>{
+  const now=Date.parse("2026-10-09T13:05:00Z");
+  const history=buildHistory(now);
+  const hospital=XY_MACHINE_ACTIVITY_PROFILES["2509000369"];
+  const paused={...hospital,pausedThrough:"2026-10-09"};
+  assert.equal(assessXyMachineActivity({nowMs:now,profile:paused,history}).reason,"paused");
+  assert.equal(assessXyMachineActivity({nowMs:now,profile:{...hospital,closedDates:["2026-10-09"]},history}).reason,"closed");
+});
+
+test("XY owner settings are server-authorized, provider-linked and RLS protected",()=>{
+  const action=fs.readFileSync("src/lib/xy-stock-activity-actions.ts","utf8");
+  const reader=fs.readFileSync("src/lib/xy-stock-activity-alerts.ts","utf8");
+  const admin=fs.readFileSync("src/app/admin/vms-api/page.tsx","utf8");
+  const ddl=fs.readFileSync("supabase/migrations/20261009133500_xy_activity_site_overrides.sql","utf8");
+  assert.match(action,/isOwnerAdminRole/);
+  assert.match(action,/XY_MACHINE_ACTIVITY_PROFILES\[machine\.vms_machine_id\]/);
+  assert.match(action,/xy_stock_activity_site_overrides/);
+  assert.match(reader,/excluded_dates/);
+  assert.match(reader,/pause_through/);
+  assert.match(admin,/Machine-specific Activity Warnings/);
+  assert.match(admin,/Save activity warning rules/);
+  assert.match(ddl,/enable row level security/);
+  assert.match(ddl,/revoke all on public\.xy_stock_activity_site_overrides from public,anon,authenticated/);
+});
