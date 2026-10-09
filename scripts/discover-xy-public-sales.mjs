@@ -81,6 +81,13 @@ async function main() {
   for (const asset of chunks.slice(0, 9)) {
     try {
       const page = await get(asset);
+      for (const keyword of ["queryJqjymx","selectJqddjytj2","queryDdxxV2","getCheckCode","onLoginSSO","session_key"]) {
+        const at = page.body.indexOf(keyword);
+        if (at >= 0) {
+          console.log("PUBLIC_KEYWORD_CONTEXT", keyword,
+            page.body.slice(Math.max(0,at-130), Math.min(page.body.length,at+160)).replace(/\\s+/g," ").slice(0,290));
+        }
+      }
       const found = candidatePaths(page.body);
       console.log("PUBLIC_ASYNC_CHUNK", new URL(asset).pathname, page.body.length, found.length);
       for (const path of found.slice(0, 100)) {
