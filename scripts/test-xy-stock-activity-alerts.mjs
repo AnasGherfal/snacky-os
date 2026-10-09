@@ -57,7 +57,7 @@ test("Hospital: unreliable stock, unavailable capacity and recent activity suppr
   assert.equal(assessXyMachineActivity({nowMs:now,profile,history:changed}).reason,"recent_inventory_change");
 });
 
-test("Universities and schools: Fridays, Saturdays and after-class evenings are ignored",()=>{
+test("Campuses close Fridays and after-class hours; schools also close Saturdays",()=>{
   const friday=Date.parse("2026-10-09T13:05:00Z");
   const history=buildHistory(friday);
   for(const machineId of ["2509000370","2510001719","2511001702"]) {
@@ -65,6 +65,13 @@ test("Universities and schools: Fridays, Saturdays and after-class evenings are 
     assert.equal(assessXyMachineActivity({nowMs:friday,profile,history}).reason,"closed");
     assert.equal(assessXyMachineActivity({nowMs:friday+5*3600000,profile,history}).reason,"closed");
   }
+  const saturday=Date.parse("2026-10-10T10:05:00Z");
+  assert.equal(assessXyMachineActivity({
+    nowMs:saturday,profile:XY_MACHINE_ACTIVITY_PROFILES["2511001702"],history,
+  }).reason,"closed");
+  // University Saturday hours are open by default *only* if actual historical
+  // Saturday demand subsequently supports an alert.
+  assert.ok(XY_MACHINE_ACTIVITY_PROFILES["2510001719"].open[6]);
 });
 
 test("University weekdays alert when same weekday historically had busy classroom hours",()=>{
