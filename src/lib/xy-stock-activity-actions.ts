@@ -36,7 +36,7 @@ export async function saveXyActivitySiteOverridesAction(form: FormData) {
   const dateList=String(form.get("closed_dates")??"")
     .split(/[\s,;]+/).map(item=>item.trim()).filter(Boolean);
   if(dateList.length>45) throw new Error("Maximum 45 special closure dates.");
-  const excluded_dates=[...new Set(dateList.map(maybeDate))];
+  const excluded_dates=[...new Set(dateList.map(maybeDate).filter((value):value is string=>value!==null))];
   const pause_through=maybeDate(form.get("pause_through"));
   const hourText=String(form.get("minimum_hours")??"").trim();
   const expectedText=String(form.get("minimum_expected_units")??"").trim();
