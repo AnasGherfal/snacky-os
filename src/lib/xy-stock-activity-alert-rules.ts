@@ -46,7 +46,9 @@ const always: XyActivityProfile["open"] = {
   0:[0,24],1:[0,24],2:[0,24],3:[0,24],4:[0,24],5:[0,24],6:[0,24],
 };
 const campus: XyActivityProfile["open"] = {
-  0:[8,18],1:[8,18],2:[8,18],3:[8,18],4:[8,18],
+  // Real XY history shows Saturday daytime activity at both universities.
+  // Friday is quiet; on Saturdays still require learned demand evidence.
+  0:[8,18],1:[8,18],2:[8,18],3:[8,18],4:[8,18],6:[8,18],
 };
 const school: XyActivityProfile["open"] = {
   0:[8,16],1:[8,16],2:[8,16],3:[8,16],4:[8,16],
