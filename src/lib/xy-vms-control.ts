@@ -1,6 +1,7 @@
 import "server-only";
 import { buildXySign, callXyApi, getXyVmsConfig, normalizeXyApiResponse } from "@/lib/xy-vms-api";
 import { buildXySlotProductWriteParams, XY_SLOT_PRODUCT_WRITE_ENDPOINT } from "@/lib/xy-slot-write-contract";
+import { normalizeXyLiveSelection } from "@/lib/xy-vms-data";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -32,17 +33,7 @@ export async function readXyMachineLayout(vmsMachineId: string): Promise<XySlotS
   });
 
   return rowsFromData(response.data)
-    .map((row) => {
-      const rawPrice = Number(row.spjg ?? row.price ?? row.sellingPrice ?? 0);
-      return {
-        slotCode: String(row.hdbh ?? row.slotCode ?? "").trim(),
-        vmsProductId: String(row.spbh ?? row.productId ?? "").trim() || null,
-        productName: String(row.spmc ?? row.productName ?? "").trim() || null,
-        priceLyd: Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice / 100 : null,
-        currentQty: Number.isFinite(Number(row.hdkc ?? row.currentQty)) ? Number(row.hdkc ?? row.currentQty) : null,
-        capacity: Number.isFinite(Number(row.hdrl ?? row.capacity)) ? Number(row.hdrl ?? row.capacity) : null,
-      } satisfies XySlotState;
-    })
+    .map(normalizeXyLiveSelection)
     .filter((row) => row.slotCode);
 }
 
