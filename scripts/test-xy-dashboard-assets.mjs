@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { discoverXyDashboardAssets } from "../src/lib/xy-dashboard-discovery.ts";
+import { discoverXyDashboardAssets } from "../src/lib/xy-public-asset-paths.ts";
 
 test("XY production index's unquoted script src attributes are discovered", () => {
   const html = '<script type=text/javascript src=./static/js/app.32bcd15e13b8e85ca349.js></script>'
