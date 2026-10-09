@@ -6,7 +6,7 @@ import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
 import { classifyXyLane, xyProductIdentity } from "@/lib/xy-vms-data";
-import { assessXyLaneSnapshot } from "@/lib/xy-vms-safety";
+import { assessXyLaneSnapshot, canCarryForwardVerifiedXyLane } from "@/lib/xy-vms-safety";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
@@ -1020,12 +1020,17 @@ async function syncMachineGoodsWork(context: SyncContext) {
   const resolver = await loadProductResolver(context.supabase);
   const { data: displayedStockRows, error: displayedStockError } = await context.supabase
     .from("latest_vms_stock_by_slot")
-    .select("machine_id")
+    .select("machine_id,slot_code,vms_product_id,vms_product_name,product_id,current_qty,capacity,captured_at")
     .eq("source_provider", "xy")
     .limit(1000);
   if (displayedStockError) throw new Error(`Could not verify the currently displayed XY machine coverage: ${displayedStockError.message}`);
   const previouslyDisplayedMachineIds = new Set(
     (displayedStockRows ?? []).map((row) => String(row.machine_id ?? "")).filter(Boolean),
+  );
+  const verifiedSlotByKey = new Map(
+    (displayedStockRows ?? []).map((row) => [
+      `${String(row.machine_id ?? "")}:${String(row.slot_code ?? "")}`, row,
+    ]),
   );
   const batchId = await createStockImportBatch(context);
   const snapshots: JsonRecord[] = [];
@@ -1035,6 +1040,8 @@ async function syncMachineGoodsWork(context: SyncContext) {
   let rowNumber = 0;
   let placeholderRows = 0;
   let invalidLaneRows = 0;
+  let verifiedFallbackLaneRows = 0;
+  const verifiedFallbackLanes: Array<{ machine: string; slot: string; verified_at: string | null }> = [];
   let successfulMachineFetches = 0;
   const failedMachineIds: string[] = [];
 
@@ -1067,9 +1074,55 @@ async function syncMachineGoodsWork(context: SyncContext) {
           continue;
         }
         if (lane.kind === "invalid") {
+          // Vendor quantities can briefly exceed a reported capacity. Do not
+          // invent a corrected quantity or freeze all other machines. A known
+          // good value may be carried forward ONLY for the same product and
+          // same capacity; its original timestamp remains visible as stale.
+          const previous = verifiedSlotByKey.get(`${machine.id}:${lane.slotCode}`);
+          if (canCarryForwardVerifiedXyLane({
+            invalidReason: lane.reason,
+            vmsProductId: lane.identity.vmsProductId,
+            reportedCapacity: lane.capacity,
+            previous,
+          }) && previous) {
+            verifiedFallbackLaneRows += 1;
+            verifiedFallbackLanes.push({
+              machine: machine.vms_machine_id,
+              slot: lane.slotCode,
+              verified_at: previous.captured_at,
+            });
+            stats.errors.push(`Machine ${machine.vms_machine_id} lane ${lane.slotCode}: XY reported impossible stock; retained an older verified value (NOT live).`);
+            snapshots.push({
+              import_batch_id: batchId,
+              import_row_number: rowNumber,
+              import_row_status: "imported",
+              sync_run_id: context.syncRunId,
+              source_provider: "xy",
+              machine_id: machine.id,
+              vms_machine_id: machine.vms_machine_id,
+              slot_code: lane.slotCode,
+              vms_product_id: previous.vms_product_id,
+              vms_product_name: previous.vms_product_name,
+              product_id: previous.product_id,
+              current_qty: previous.current_qty,
+              capacity: previous.capacity,
+              captured_at: previous.captured_at,
+              vms_selling_price_lyd: lane.identity.sellingPrice,
+              metadata: {
+                provider: "xy",
+                freshness: "stale_verified_fallback",
+                reason: lane.reason,
+                xy_observed_quantity: lane.currentQty,
+                xy_observed_capacity: lane.capacity,
+                last_verified_at: previous.captured_at,
+              },
+            });
+            snapshotMachineIds.add(machine.id);
+            continue;
+          }
           invalidLaneRows += 1;
           stats.rowsSkipped += 1;
-          stats.errors.push(`Machine ${machine.vms_machine_id} lane ${lane.slotCode || rowNumber}: ${lane.reason}.`);
+          stats.errors.push(`Machine ${machine.vms_machine_id} lane ${lane.slotCode || rowNumber}: ${lane.reason}. No safe verified fallback exists.`);
           continue;
         }
 
@@ -1191,6 +1244,8 @@ async function syncMachineGoodsWork(context: SyncContext) {
     planogram_rows_updated: activationEligible ? machineSlotUpserts.length : 0,
     placeholder_rows_skipped: placeholderRows,
     invalid_rows_skipped: invalidLaneRows,
+    stale_verified_fallback_lanes: verifiedFallbackLaneRows,
+    stale_verified_fallback_details: verifiedFallbackLanes,
     machine_fetches_expected: machines.length,
     machine_fetches_succeeded: successfulMachineFetches,
     machine_fetches_failed: failedMachineIds,
@@ -1212,65 +1267,73 @@ async function syncMachineGoodsWork(context: SyncContext) {
 async function syncMachineStatusWork(context: SyncContext) {
   const stats = emptyStats();
   const machines = await loadXyMachines(context.supabase);
+  const machinesByVmsId = new Map(machines.map((machine) => [machine.vms_machine_id, machine]));
   const snapshots: JsonRecord[] = [];
 
-  for (const machine of machines) {
-    try {
-      const response = await callXyApi("queryMachineState", {
-        shbh: context.config.merchantId,
-        jqbh: machine.vms_machine_id,
-      });
-      const stateRows = arrayify(response.data);
-      if (!stateRows.length) {
-        stats.rowsSkipped += 1;
-        stats.responseSummary[machine.vms_machine_id] = { message: response.message, rows: 0, skipped: "XY returned no status data" };
-        continue;
-      }
-      const state = stateRows[0];
-      stats.rowCount += 1;
+  // XY's queryMachineState currently returns "success" with an empty list
+  // for every owned machine. The merchant-scoped queryMachine endpoint DOES
+  // return live wlzt; use it as the authoritative online/offline signal,
+  // never claim that unsupported temperature/humidity data is live.
+  const response = await callXyApi("queryMachine", { shbh: context.config.merchantId });
+  const rows = arrayify(response.data);
+  stats.rowCount = rows.length;
+  if (!rows.length) {
+    stats.errors.push("XY returned an empty merchant machine list; no status was overwritten.");
+    return stats;
+  }
 
-      const networkStatus = text(state, "wlzt");
-      const temperatureRaw = text(state, "wd");
-      const humidityRaw = text(state, "sd");
-      snapshots.push({
-        sync_run_id: context.syncRunId,
-        machine_id: machine.id,
-        vms_machine_id: machine.vms_machine_id,
-        network_status: networkStatus || null,
-        temperature_raw: temperatureRaw || null,
-        humidity_raw: humidityRaw || null,
-        raw_data: state,
-        captured_at: context.capturedAt,
-      });
-
-      const machineUpdate: Record<string, unknown> = {
-        vms_online_status: networkStatus || null,
-        vms_temperature_raw: temperatureRaw || null,
-        vms_humidity_raw: humidityRaw || null,
-        last_vms_status_at: context.capturedAt,
-        vms_last_synced_at: context.capturedAt,
-        updated_at: new Date().toISOString(),
-      };
-      const numericTemperature = singleNumericText(temperatureRaw);
-      if (numericTemperature !== null) machineUpdate.vms_temperature_c = numericTemperature;
-
-      const { error: updateError } = await context.supabase.from("machines").update(machineUpdate).eq("id", machine.id);
-      if (updateError) {
-        stats.errors.push(`Machine ${machine.vms_machine_id} status update failed: ${updateError.message}`);
-      } else {
-        stats.rowsUpdated += 1;
-      }
-      stats.responseSummary[machine.vms_machine_id] = { message: response.message, network_status: networkStatus || null };
-    } catch (error) {
-      stats.errors.push(`Machine ${machine.vms_machine_id}: ${safeErrorMessage(error)}`);
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const vmsMachineId = text(row, "jqbh");
+    const machine = machinesByVmsId.get(vmsMachineId);
+    if (!machine) continue;
+    seen.add(vmsMachineId);
+    const networkStatus = text(row, "wlzt");
+    if (!networkStatus) {
+      stats.rowsSkipped += 1;
+      stats.errors.push(`Machine ${vmsMachineId}: XY did not return an online/offline status.`);
+      continue;
     }
+
+    snapshots.push({
+      sync_run_id: context.syncRunId,
+      machine_id: machine.id,
+      vms_machine_id: vmsMachineId,
+      network_status: networkStatus,
+      temperature_raw: null,
+      humidity_raw: null,
+      raw_data: row,
+      captured_at: context.capturedAt,
+    });
+    const { error } = await context.supabase.from("machines").update({
+      vms_online_status: networkStatus,
+      vms_temperature_raw: null,
+      vms_humidity_raw: null,
+      vms_temperature_c: null,
+      last_vms_status_at: context.capturedAt,
+      vms_last_synced_at: context.capturedAt,
+      updated_at: new Date().toISOString(),
+    }).eq("id", machine.id);
+    if (error) {
+      stats.errors.push(`Machine ${vmsMachineId} status update failed: ${error.message}`);
+    } else {
+      stats.rowsUpdated += 1;
+    }
+    stats.responseSummary[vmsMachineId] = { network_status: networkStatus, source: "queryMachine" };
+  }
+
+  for (const machine of machines) {
+    if (seen.has(machine.vms_machine_id)) continue;
+    stats.rowsSkipped += 1;
+    stats.errors.push(
+      `Machine ${machine.vms_machine_id} is linked in Snacky but missing from the current XY merchant; verify ownership or unlink it.`,
+    );
   }
 
   if (snapshots.length) {
     await insertChunks(context.supabase, "vms_machine_status_snapshots", snapshots);
     stats.rowsImported += snapshots.length;
   }
-
   return stats;
 }
 

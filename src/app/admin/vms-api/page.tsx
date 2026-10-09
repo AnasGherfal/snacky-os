@@ -212,7 +212,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("vms_machine_status_snapshots").select("id", { count: "exact", head: true }),
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
     supabase.from("machines").select("id,name,machine_code,vms_machine_id,status,vms_last_synced_at,vms_online_status").not("vms_machine_id","is",null).order("name"),
-    supabase.from("latest_vms_stock_by_slot").select("machine_id,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
+    supabase.from("latest_vms_stock_by_slot").select("machine_id,slot_code,captured_at").eq("source_provider","xy").order("captured_at",{ascending:false}).limit(5000),
     supabase.from("latest_vms_stock_by_slot").select("vms_product_id").eq("source_provider","xy").not("vms_product_id","is",null).limit(5000),
   ]);
 
@@ -247,7 +247,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const syncDisabled = !config.ready || !officialTestPassed;
   const syncDisabledTitle = !config.ready ? "Complete the server-side official XY configuration first." : "Run a successful official queryMachine test first.";
   const mappedMachines=(mappedMachinesResult.data??[]) as Array<{id:string;name:string;machine_code:string;vms_machine_id:string|null;status:string|null;vms_last_synced_at:string|null;vms_online_status:string|null}>;
-  const liveStockRows=(liveStockMachinesResult.data??[]) as Array<{machine_id:string|null;captured_at:string|null}>;
+  const liveStockRows=(liveStockMachinesResult.data??[]) as Array<{machine_id:string|null;slot_code:string|null;captured_at:string|null}>;
   const liveStockMachineIds=new Set(liveStockRows.map(row=>String(row.machine_id??"")).filter(Boolean));
   const machinesMissingLiveStock=mappedMachines.filter(machine=>!liveStockMachineIds.has(machine.id));
   const diagnoseMissingStock=(machine:(typeof mappedMachines)[number])=>{
@@ -256,6 +256,15 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     return "Returned by XY but no usable configured stock lanes were present in the active snapshot.";
   };
   const latestXyStockAt=liveStockRows[0]?.captured_at??null;
+  // A current active batch can safely preserve a previously verified selection
+  // when XY reports impossible values. It MUST remain visibly stale.
+  const stockFreshnessCutoff=Date.now()-60*60*1000;
+  const staleStockRows=liveStockRows.filter(row=>{
+    const timestamp=Date.parse(String(row.captured_at??""));
+    return !Number.isFinite(timestamp)||timestamp<stockFreshnessCutoff;
+  });
+  const staleStockMachines=new Set(staleStockRows.map(row=>String(row.machine_id??"")).filter(Boolean));
+  const staleStockNames=mappedMachines.filter(machine=>staleStockMachines.has(machine.id)).map(machine=>machine.name);
   const currentXyProductIds=Array.from(new Set((currentUnmappedRowsResult.data??[]).map((row:any)=>String(row.vms_product_id??"").trim()).filter(Boolean)));
   const {count:currentUnmappedCount}=currentXyProductIds.length?await supabase.from("vms_product_mappings").select("id",{count:"exact",head:true}).eq("match_status","needs_review").in("vms_product_id",currentXyProductIds):{count:0};
   const machineCoverageLabel=`${liveStockMachineIds.size}/${mappedMachines.length}`;
@@ -339,13 +348,17 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             <h2 className="text-base font-semibold text-slate-900">Live XY Connection Health</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">Operational coverage from the active verified XY stock snapshot. This does not trigger a sync.</p>
           </div>
-          <StatusBadge status={machinesMissingLiveStock.length ? "needs_review" : "completed"} />
+          <StatusBadge status={machinesMissingLiveStock.length || staleStockRows.length ? "needs_review" : "completed"} />
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">XY-linked machines</div><strong className="mt-1 block text-2xl">{mappedMachines.length}</strong></div>
           <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">Live stock coverage</div><strong className="mt-1 block text-2xl">{machineCoverageLabel}</strong></div>
           <div className="rounded-xl border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">Latest verified stock</div><strong className="mt-1 block text-sm">{formatDate(latestXyStockAt)}</strong></div>
         </div>
+        {staleStockRows.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <strong className="text-amber-950">Stale XY selections: {staleStockRows.length}</strong>
+          <p className="mt-1 text-sm text-amber-900">The following machines include values older than one hour. These are last-verified readings, NOT current XY inventory. Inspect the actual XY lane quantities and capacities before using them for refill decisions: {staleStockNames.join(", ") || "Unknown machine"}.</p>
+        </div> : null}
         {machinesMissingLiveStock.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="font-semibold text-amber-950">Machines without usable stock in the active XY snapshot</div>
           <div className="mt-3 grid gap-2 md:grid-cols-2">{machinesMissingLiveStock.map(machine=><div key={machine.id} className="rounded-lg border border-amber-200 bg-white p-3"><div className="font-medium">{machine.name}</div><div className="text-xs text-slate-500">{machine.machine_code} · XY {machine.vms_machine_id??"-"} · {machine.status??"-"}</div><div className="mt-2 text-xs font-medium text-amber-800">{diagnoseMissingStock(machine)}</div></div>)}</div>
