@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureFreshXyRoutePlanningData, syncXyMachineStatus } from "@/lib/xy-vms-sync";
 import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
 import { retryPendingXySlotChanges } from "@/lib/xy-pending-slot-changes";
+import { scanXyOperationalAlerts } from "@/lib/xy-operational-alerts";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,14 @@ async function refreshXy(request: NextRequest) {
       ? await runRefillRouteAutomation()
       : { skipped: true, reason: `XY planning data is ${result.outcome}.` };
 
+    // In-app owner bell alerts must never block live XY synchronization.
+    // This runs with the protected server scheduler, not ChatGPT automations.
+    let operationalAlerts: unknown = { unavailable: true };
+    try {
+      operationalAlerts = await scanXyOperationalAlerts();
+    } catch (error) {
+      console.error("[xy-cron] In-app XY operational alert scan failed", error);
+    }
     const status = result.outcome === "in_progress"
       ? 202
       : result.outcome === "failed"
@@ -86,11 +95,16 @@ async function refreshXy(request: NextRequest) {
       refillRouteAutomation: automation,
       machineStatusSync,
       pendingSlotChanges,
+      operationalAlerts,
     }, {
       status,
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    // A failed vendor refresh is exactly when the owner needs a durable in-app
+    // stale-data alert; the alert check must remain independent of XY success.
+    try { await scanXyOperationalAlerts(); }
+    catch (alertError) { console.error("[xy-cron] In-app alert scan failed after XY error", alertError); }
     console.error("[xy-cron] Automatic XY refresh failed.", error);
     return NextResponse.json({ ok: false, outcome: "failed", error: "Automatic XY refresh failed." }, {
       status: 502,
