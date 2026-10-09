@@ -13,11 +13,14 @@ const valid = {
   range_end: "2026-10-09T09:15:00Z",
   fetched_rows: 250,
   mapped_machine_rows: 250,
+  coverage_complete: true,
 };
 
 test("24h no-sale notification is blocked without live, complete XY transaction coverage", () => {
   assert.equal(verifiedSalesCoverage(valid, now), true);
   assert.equal(verifiedSalesCoverage(null, now), false);
+  assert.equal(verifiedSalesCoverage({ ...valid, coverage_complete: false }, now), false);
+  assert.equal(verifiedSalesCoverage({ ...valid, coverage_complete: null }, now), false);
   assert.equal(verifiedSalesCoverage({ ...valid, status: "failed" }, now), false);
   assert.equal(verifiedSalesCoverage({ ...valid, completed_at: "2026-10-09T05:00:00Z" }, now), false);
   assert.equal(verifiedSalesCoverage({ ...valid, range_start: "2026-10-09T03:00:00Z" }, now), false);

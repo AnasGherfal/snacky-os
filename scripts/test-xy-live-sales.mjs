@@ -325,3 +325,11 @@ test("XY auth bridge probes documented VDM header auth without exposing credenti
   assert.match(authBridgeSource, /vdm_pair_secret_key/);
   assert.doesNotMatch(authBridgeSource, /response_summary:[\s\S]{0,1000}candidate\.headers/);
 });
+
+test("XY transaction pagination must finish before it becomes trusted sales coverage", () => {
+  assert.match(syncSource, /let paginationComplete = false/);
+  assert.match(syncSource, /extractedRows\.length < config\.pageSize/);
+  assert.match(syncSource, /if \(!paginationComplete\)/);
+  assert.match(syncSource, /coverage_complete: paginationComplete && rejectedUnverifiedRows === 0/);
+  assert.match(syncSource, /rejectedUnverifiedRows \+= extractedRows\.length - rows\.length/);
+});

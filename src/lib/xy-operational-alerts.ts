@@ -176,6 +176,7 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     range_end: typeof summary.range_end === "string" ? summary.range_end : null,
     fetched_rows: Number(summary.fetched_rows ?? 0),
     mapped_machine_rows: Number(summary.mapped_machine_rows ?? 0),
+    coverage_complete: summary.coverage_complete === true,
   }, nowMs);
 
   if (!salesReady) {

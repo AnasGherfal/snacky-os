@@ -526,6 +526,9 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
     importBatchId = await createImportBatch(supabase, options.profile, config, start, now);
     const { machineByKey, productByKey, mappedProductByKey } = await loadResolvers(supabase);
     const allRawRows: XyLiveSalesRawRow[] = [];
+    let rejectedUnverifiedRows = 0;
+    let pagesRead = 0;
+    let paginationComplete = false;
 
     for (let page = 1; page <= config.maxPages; page += 1) {
       const body = renderXyLiveSalesRequestTemplate(
@@ -534,11 +537,23 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
       );
       const result = await callXyWebApi(config.path, body);
       const extractedRows = extractXyLiveSalesRows(result.response, config.responseRowsPath);
+      pagesRead += 1;
       const rows = extractedRows.filter(isVerifiedXyTransactionRow);
+      rejectedUnverifiedRows += extractedRows.length - rows.length;
       allRawRows.push(...rows);
-      if (extractedRows.length < config.pageSize) break;
+      // A partial final page proves the requested window was completely read.
+      // Reaching the page limit with a full page does NOT prove completeness.
+      if (extractedRows.length < config.pageSize) {
+        paginationComplete = true;
+        break;
+      }
     }
 
+    if (!paginationComplete) {
+      throw new Error(
+        `XY sales pagination reached the configured limit of ${config.maxPages} page(s) without a final partial page. Refusing to publish partial data as complete sales coverage.`,
+      );
+    }
     const normalizedRows = allRawRows.map(normalizeXyLiveSalesRow);
     const dbRows = normalizedRows.map((normalized, index) => {
       const machine = resolveMachine(normalized, machineByKey);
@@ -566,6 +581,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
     ), 0);
     const rowDates = normalizedRows.map((row) => row.businessDate).filter((value): value is string => Boolean(value)).sort();
     const errors: string[] = [];
+    if (rejectedUnverifiedRows) errors.push(`${rejectedUnverifiedRows} XY sales row(s) lacked a reliable machine, product or transaction time/number.`);
     if (needsReviewRows) errors.push(`${needsReviewRows} live sales row(s) need status review.`);
     if (dbRows.some((row) => !row.mapped_machine_id)) errors.push("Some live sales rows could not be mapped to a Snacky machine.");
     if (dbRows.some((row) => !row.mapped_product_id)) errors.push("Some live sales rows could not be mapped to a Snacky product.");
@@ -607,6 +623,11 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
           duplicate_rows: duplicateRows,
           mapped_machine_rows: mappedMachineRows,
           mapped_product_rows: mappedProductRows,
+          pages_read: pagesRead,
+          pagination_complete: paginationComplete,
+          rejected_unverified_rows: rejectedUnverifiedRows,
+          coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
+            && mappedMachineRows === allRawRows.length,
         },
         updated_at: new Date().toISOString(),
       })
@@ -618,6 +639,11 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
       range_start: start.toISOString(),
       range_end: now.toISOString(),
       fetched_rows: allRawRows.length,
+      pages_read: pagesRead,
+      pagination_complete: paginationComplete,
+      rejected_unverified_rows: rejectedUnverifiedRows,
+      coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
+        && mappedMachineRows === allRawRows.length,
       inserted_rows: insertedRows,
       duplicate_rows: duplicateRows,
       mapped_machine_rows: mappedMachineRows,

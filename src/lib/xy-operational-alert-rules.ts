@@ -9,10 +9,12 @@ export type XySalesCoverage = {
   range_end: string | null;
   fetched_rows: number | null;
   mapped_machine_rows: number | null;
+  coverage_complete: boolean | null;
 };
 
 export function verifiedSalesCoverage(coverage: XySalesCoverage | null, nowMs: number): boolean {
-  if (!coverage || !["completed", "completed_with_warnings"].includes(String(coverage.status))) return false;
+  if (!coverage || coverage.coverage_complete !== true
+    || !["completed", "completed_with_warnings"].includes(String(coverage.status))) return false;
   const completed = Date.parse(String(coverage.completed_at ?? ""));
   const start = Date.parse(String(coverage.range_start ?? ""));
   const end = Date.parse(String(coverage.range_end ?? ""));

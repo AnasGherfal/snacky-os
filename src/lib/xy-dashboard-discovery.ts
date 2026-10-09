@@ -1,11 +1,12 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { discoverXyDashboardAssets } from "@/lib/xy-public-asset-paths";
 
 const ROOT_URL = "https://www.xynetweb.com/";
-const MAX_FILES = 100;
-const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const TIMEOUT_MS = 20000;
+const MAX_FILES = 16;
+const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+const TIMEOUT_MS = 12000;
 
 type Candidate = {
   value: string;
@@ -26,41 +27,28 @@ function safeUrl(value: string, base: string) {
 }
 
 function discoverBootstrapUrls(source: string, base: string) {
-  const urls = new Set<string>();
+  const urls = new Set(discoverXyDashboardAssets(source, base));
   const patterns = [
-    /<(?:script|link|iframe)[^>]+(?:src|href)=["']([^"']+)["']/gi,
     /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>;]+)[^"']*["']/gi,
     /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/gi,
     /(https?:\/\/[A-Za-z0-9._:-]*xynetweb\.com[^"'\s<]*)/gi,
   ];
-
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
-      const resolved = safeUrl(String(match[1] || "").trim(), base);
-      if (!resolved) continue;
-      const path = new URL(resolved).pathname.toLowerCase();
-      if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|css)(?:$|\?)/i.test(path)) continue;
-      urls.add(resolved);
-    }
-  }
-  return Array.from(urls);
-}
-
-function discoverJsUrls(source: string, base: string) {
-  const urls = new Set<string>();
-  const patterns = [
-    /<script[^>]+src=["']([^"']+\.js(?:\?[^"']*)?)["']/gi,
-    /["']([^"']+\.js(?:\?[^"']*)?)["']/g,
-    /(https?:\/\/[^"'\s)]+\.js(?:\?[^"'\s)]*)?)/g,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const resolved = safeUrl(String(match[1] || ""), base);
+      const resolved = safeUrl(String(match[1] ?? "").trim(), base);
       if (resolved) urls.add(resolved);
     }
   }
-  return Array.from(urls);
+  return [...urls];
+}
+
+function discoverJsUrls(source: string, base: string) {
+  const urls = new Set(discoverXyDashboardAssets(source, base));
+  for (const match of source.matchAll(/["']([^"'\\s]+\\.js(?:\\?[^"'\\s]*)?)["']/g)) {
+    const resolved = safeUrl(String(match[1] ?? ""), base);
+    if (resolved) urls.add(resolved);
+  }
+  return [...urls];
 }
 
 function snippet(source: string, index: number) {
@@ -224,7 +212,15 @@ export async function discoverXyDashboardSalesApi() {
           ...(requested === ROOT_URL || /text\/html/i.test(response.contentType)
             ? discoverBootstrapUrls(response.text, response.finalUrl)
             : []),
-        ];
+        ].sort((left, right) => {
+          const weight = (url: string) => {
+            const path = new URL(url).pathname.toLowerCase();
+            if (/\/(?:app|main)\.[a-z0-9]+\.js$/.test(path)) return 0;
+            if (path.includes("manifest")) return 1;
+            return 2;
+          };
+          return weight(left) - weight(right);
+        });
         for (const url of discoveredUrls) {
           if (!visited.has(url) && queue.length < MAX_FILES * 2) queue.push(url);
         }
