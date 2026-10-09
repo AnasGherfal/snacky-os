@@ -32,12 +32,15 @@ export async function getXyStockActivityNotices(input: {
   machines: Machine[];
   now: Date;
   activeStockMachineIds: Set<string>;
+  activeStockImportedAt: string | null;
 }): Promise<XyStockActivityNotice[]> {
-  const {db,machines,now,activeStockMachineIds}=input;
+  const {db,machines,now,activeStockMachineIds,activeStockImportedAt}=input;
   // The official XY worker runs every 10 minutes. Hourly anomaly checks
   // reduce repetitive heavy 29-day historical SQL computation.
   if(now.getUTCMinutes()>=10) return [];
   const nowMs=now.getTime();
+  const activeAt=Date.parse(String(activeStockImportedAt??""));
+  if(!Number.isFinite(activeAt) || nowMs-activeAt>25*60*1000) return [];
   const {data,error}=await db.rpc("snacky_xy_stock_activity_history",{p_days:29});
   if(error) {
     console.error("[xy-activity] Unable to assess historical inventory signals",error.message);
