@@ -30,6 +30,26 @@ function candidatePaths(source) {
   return [...found].sort();
 }
 
+
+// Webpack's public runtime declares numeric chunk names and content hashes.
+// Inspect only named sale/report/login chunks, never private APIs.
+function publicSalesChunks(manifest) {
+  const maps = manifest.match(/\{(?:\d+:"[^"]+",?)+\}/g) || [];
+  if (maps.length < 2) return [];
+  const parse = (map) => new Map([...map.matchAll(/(\d+):"([^"]+)"/g)]
+    .map((item) => [item[1], item[2]]));
+  const names = parse(maps[0]);
+  const hashes = parse(maps[1]);
+  const interesting = new Set([
+    "jygl", "jyglBase", "tjfx", "tjfxBase",
+    "dwjytjtj", "k12fzjytj", "login", "ssologin", "loginXy",
+  ]);
+  return [...names.entries()]
+    .filter(([id, name]) => interesting.has(name) && /^[a-z0-9_-]+$/i.test(name)
+      && /^[a-f0-9]{12,40}$/i.test(hashes.get(id) || ""))
+    .map(([id, name]) => origin + "static/js/" + name + "." + hashes.get(id) + ".js");
+}
+
 async function main() {
   const root = await get(origin);
   const assets = discoverXyDashboardAssets(root.body, origin);
@@ -39,11 +59,13 @@ async function main() {
   console.log("Public XY dashboard JavaScript assets:", assets.length);
   if (!assets.length) throw new Error("XY dashboard bootstrap assets not found.");
   let results = 0;
+  const chunks = [];
   for (const asset of assets.slice(0, MAX_ASSETS)) {
     try {
       const page = await get(asset);
       if (new URL(asset).pathname.includes("/manifest.")) {
-        console.log("PUBLIC_WEBPACK_MANIFEST", page.body.slice(0, 5000));
+        chunks.push(...publicSalesChunks(page.body));
+        console.log("PUBLIC_SALES_CHUNKS", chunks.map((url) => new URL(url).pathname));
       }
       const found = candidatePaths(page.body);
       console.log("Asset", new URL(asset).pathname, "bytes", page.body.length, "candidatePaths", found.length);
@@ -55,6 +77,19 @@ async function main() {
       console.log("Asset skipped", new URL(asset).pathname, String(error?.message || error));
     }
     await sleep(100);
+  }
+  for (const asset of chunks.slice(0, 9)) {
+    try {
+      const page = await get(asset);
+      const found = candidatePaths(page.body);
+      console.log("PUBLIC_ASYNC_CHUNK", new URL(asset).pathname, page.body.length, found.length);
+      for (const path of found.slice(0, 100)) {
+        console.log("PUBLIC_PATH", path);
+        results++;
+      }
+    } catch (error) {
+      console.log("Async chunk skipped", new URL(asset).pathname, String(error?.message || error));
+    }
   }
   console.log("TOTAL_PUBLIC_PATHS", results);
 }
