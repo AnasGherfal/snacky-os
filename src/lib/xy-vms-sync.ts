@@ -1267,65 +1267,73 @@ async function syncMachineGoodsWork(context: SyncContext) {
 async function syncMachineStatusWork(context: SyncContext) {
   const stats = emptyStats();
   const machines = await loadXyMachines(context.supabase);
+  const machinesByVmsId = new Map(machines.map((machine) => [machine.vms_machine_id, machine]));
   const snapshots: JsonRecord[] = [];
 
-  for (const machine of machines) {
-    try {
-      const response = await callXyApi("queryMachineState", {
-        shbh: context.config.merchantId,
-        jqbh: machine.vms_machine_id,
-      });
-      const stateRows = arrayify(response.data);
-      if (!stateRows.length) {
-        stats.rowsSkipped += 1;
-        stats.responseSummary[machine.vms_machine_id] = { message: response.message, rows: 0, skipped: "XY returned no status data" };
-        continue;
-      }
-      const state = stateRows[0];
-      stats.rowCount += 1;
+  // XY's queryMachineState currently returns "success" with an empty list
+  // for every owned machine. The merchant-scoped queryMachine endpoint DOES
+  // return live wlzt; use it as the authoritative online/offline signal,
+  // never claim that unsupported temperature/humidity data is live.
+  const response = await callXyApi("queryMachine", { shbh: context.config.merchantId });
+  const rows = arrayify(response.data);
+  stats.rowCount = rows.length;
+  if (!rows.length) {
+    stats.errors.push("XY returned an empty merchant machine list; no status was overwritten.");
+    return stats;
+  }
 
-      const networkStatus = text(state, "wlzt");
-      const temperatureRaw = text(state, "wd");
-      const humidityRaw = text(state, "sd");
-      snapshots.push({
-        sync_run_id: context.syncRunId,
-        machine_id: machine.id,
-        vms_machine_id: machine.vms_machine_id,
-        network_status: networkStatus || null,
-        temperature_raw: temperatureRaw || null,
-        humidity_raw: humidityRaw || null,
-        raw_data: state,
-        captured_at: context.capturedAt,
-      });
-
-      const machineUpdate: Record<string, unknown> = {
-        vms_online_status: networkStatus || null,
-        vms_temperature_raw: temperatureRaw || null,
-        vms_humidity_raw: humidityRaw || null,
-        last_vms_status_at: context.capturedAt,
-        vms_last_synced_at: context.capturedAt,
-        updated_at: new Date().toISOString(),
-      };
-      const numericTemperature = singleNumericText(temperatureRaw);
-      if (numericTemperature !== null) machineUpdate.vms_temperature_c = numericTemperature;
-
-      const { error: updateError } = await context.supabase.from("machines").update(machineUpdate).eq("id", machine.id);
-      if (updateError) {
-        stats.errors.push(`Machine ${machine.vms_machine_id} status update failed: ${updateError.message}`);
-      } else {
-        stats.rowsUpdated += 1;
-      }
-      stats.responseSummary[machine.vms_machine_id] = { message: response.message, network_status: networkStatus || null };
-    } catch (error) {
-      stats.errors.push(`Machine ${machine.vms_machine_id}: ${safeErrorMessage(error)}`);
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const vmsMachineId = text(row, "jqbh");
+    const machine = machinesByVmsId.get(vmsMachineId);
+    if (!machine) continue;
+    seen.add(vmsMachineId);
+    const networkStatus = text(row, "wlzt");
+    if (!networkStatus) {
+      stats.rowsSkipped += 1;
+      stats.errors.push(`Machine ${vmsMachineId}: XY did not return an online/offline status.`);
+      continue;
     }
+
+    snapshots.push({
+      sync_run_id: context.syncRunId,
+      machine_id: machine.id,
+      vms_machine_id: vmsMachineId,
+      network_status: networkStatus,
+      temperature_raw: null,
+      humidity_raw: null,
+      raw_data: row,
+      captured_at: context.capturedAt,
+    });
+    const { error } = await context.supabase.from("machines").update({
+      vms_online_status: networkStatus,
+      vms_temperature_raw: null,
+      vms_humidity_raw: null,
+      vms_temperature_c: null,
+      last_vms_status_at: context.capturedAt,
+      vms_last_synced_at: context.capturedAt,
+      updated_at: new Date().toISOString(),
+    }).eq("id", machine.id);
+    if (error) {
+      stats.errors.push(`Machine ${vmsMachineId} status update failed: ${error.message}`);
+    } else {
+      stats.rowsUpdated += 1;
+    }
+    stats.responseSummary[vmsMachineId] = { network_status: networkStatus, source: "queryMachine" };
+  }
+
+  for (const machine of machines) {
+    if (seen.has(machine.vms_machine_id)) continue;
+    stats.rowsSkipped += 1;
+    stats.errors.push(
+      `Machine ${machine.vms_machine_id} is linked in Snacky but missing from the current XY merchant; verify ownership or unlink it.`,
+    );
   }
 
   if (snapshots.length) {
     await insertChunks(context.supabase, "vms_machine_status_snapshots", snapshots);
     stats.rowsImported += snapshots.length;
   }
-
   return stats;
 }
 
