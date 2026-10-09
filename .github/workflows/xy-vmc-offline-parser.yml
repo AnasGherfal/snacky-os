@@ -1,0 +1,20 @@
+name: XY VMC offline protocol regression
+on:
+  pull_request:
+    paths:
+      - "src/lib/xy-vmc-sales-offline.ts"
+      - "scripts/test-xy-vmc-sales-offline.mjs"
+      - ".github/workflows/xy-vmc-offline-parser.yml"
+  workflow_dispatch:
+jobs:
+  offline-read-only-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --experimental-strip-types --test scripts/test-xy-vmc-sales-offline.mjs
