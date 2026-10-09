@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { discoverXyDashboardAssets } from "@/lib/xy-public-asset-paths";
 
 const ROOT_URL = "https://www.xynetweb.com/";
 const MAX_FILES = 100;
@@ -23,25 +24,6 @@ function safeUrl(value: string, base: string) {
   } catch {
     return null;
   }
-}
-
-/** Vendor's production HTML has unquoted src attributes, so quoted-only
- * scanners silently skip every JavaScript bundle. Discover only same-domain
- * static JS files and never request account-gated APIs during this scan.
- */
-export function discoverXyDashboardAssets(source: string, base: string) {
-  const urls = new Set<string>();
-  for (const element of source.matchAll(/<(?:script|link|iframe)\\b[^>]*>/gi)) {
-    for (const attribute of element[0].matchAll(/\\b(?:src|href)\\s*=\\s*(?:"([^"]+)"|'([^']+)'|([^\\s>]+))/gi)) {
-      const raw = attribute[1] ?? attribute[2] ?? attribute[3] ?? "";
-      const resolved = safeUrl(raw.replace(/&amp;/g, "&"), base);
-      if (!resolved) continue;
-      const path = new URL(resolved).pathname.toLowerCase();
-      if (!/\\.js$/i.test(path)) continue;
-      urls.add(resolved);
-    }
-  }
-  return [...urls];
 }
 
 function discoverBootstrapUrls(source: string, base: string) {
