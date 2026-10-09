@@ -171,6 +171,7 @@ interface MachineLayoutSlot {
   plannedProductId: string | null;
   plannedProductName: string | null;
   mismatch: boolean;
+  liveStockKnown?: boolean;
 }
 
 
@@ -853,6 +854,7 @@ export default function MachineStopPage() {
             productName: slot.productName,
             imageUrl: existing?.imageUrl ?? null,
             currentQty: slot.currentQty === null ? (existing?.currentQty ?? 0) : slot.currentQty,
+            liveStockKnown: slot.currentQty !== null,
             capacity: slot.capacity === null ? (existing?.capacity ?? 0) : slot.capacity,
             priceLyd: slot.priceLyd,
             capturedAt: data.fetchedAt ?? new Date().toISOString(),
@@ -1980,6 +1982,7 @@ export default function MachineStopPage() {
           saveStatuses={selectionSaveStatuses}
           onLoadAllProducts={() => void loadFullProductCatalog()}
           productCatalogLoading={productCatalogLoading}
+          isLiveXy={xyLiveState.state === "live"}
           hiddenSelections={stopData.hiddenSelections ?? []}
           onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
           onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
