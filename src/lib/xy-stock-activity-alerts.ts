@@ -41,16 +41,39 @@ export async function getXyStockActivityNotices(input: {
   const nowMs=now.getTime();
   const activeAt=Date.parse(String(activeStockImportedAt??""));
   if(!Number.isFinite(activeAt) || nowMs-activeAt>25*60*1000) return [];
-  const {data,error}=await db.rpc("snacky_xy_stock_activity_history",{p_days:29});
-  if(error) {
-    console.error("[xy-activity] Unable to assess historical inventory signals",error.message);
+  const [historyResult,overrideResult]=await Promise.all([
+    db.rpc("snacky_xy_stock_activity_history",{p_days:29}),
+    db.from("xy_stock_activity_site_overrides")
+      .select("machine_id,excluded_dates,pause_through,min_window_hours,min_expected_units"),
+  ]);
+  if(historyResult.error || overrideResult.error) {
+    console.error("[xy-activity] Unable to assess historical inventory signals",
+      historyResult.error?.message??overrideResult.error?.message);
     return [];
   }
+  const data=historyResult.data;
+  type Override = {
+    machine_id:string;
+    excluded_dates:string[]|null;
+    pause_through:string|null;
+    min_window_hours:number|null;
+    min_expected_units:number|null;
+  };
+  const overrideById=new Map(((overrideResult.data??[]) as Override[])
+    .map(row=>[row.machine_id,row]));
   const byId=new Map(((data??[]) as XyActivityHistory[]).map(row=>[row.machine_id,row]));
   const result:XyStockActivityNotice[]=[];
   for(const machine of machines) {
     if(!machine.vms_machine_id || !activeStockMachineIds.has(machine.id)) continue;
-    const profile=XY_MACHINE_ACTIVITY_PROFILES[machine.vms_machine_id];
+    const base=XY_MACHINE_ACTIVITY_PROFILES[machine.vms_machine_id];
+    const override=overrideById.get(machine.id);
+    const profile=base && override ? {
+      ...base,
+      closedDates:[...(base.closedDates??[]),...(override.excluded_dates??[])],
+      pausedThrough:override.pause_through,
+      minimumHours:Math.max(2,Math.min(base.maximumHours,Number(override.min_window_hours??base.minimumHours))),
+      minTypicalUnits:Math.max(1,Math.min(100,Number(override.min_expected_units??base.minTypicalUnits))),
+    } : base;
     const history=byId.get(machine.id);
     if(!profile || !history || machine.vms_online_status!=="1") continue;
     const statusAt=Date.parse(String(machine.last_vms_status_at??""));
