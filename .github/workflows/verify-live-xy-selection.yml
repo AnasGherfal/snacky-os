@@ -19,5 +19,7 @@ jobs:
         run: npm run test:xy-stop-quantity-editor
       - name: Smart Route regression
         run: npm run test:smart-route-planner
+      - name: Full prebuild regression gate
+        run: npm run prebuild
       - name: TypeScript check
         run: npm run typecheck
