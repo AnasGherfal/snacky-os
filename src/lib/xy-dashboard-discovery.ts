@@ -30,8 +30,8 @@ function discoverBootstrapUrls(source: string, base: string) {
   const urls = new Set(discoverXyDashboardAssets(source, base));
   const patterns = [
     /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'>;]+)[^"']*["']/gi,
-    /(?:window\\.)?location(?:\\.href)?\\s*=\\s*["']([^"']+)["']/gi,
-    /(https?:\\/\\/[A-Za-z0-9._:-]*xynetweb\\.com[^"'\\s<]*)/gi,
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/gi,
+    /(https?:\/\/[A-Za-z0-9._:-]*xynetweb\.com[^"'\s<]*)/gi,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
