@@ -65,10 +65,8 @@ export function canCarryForwardVerifiedXyLane(args: {
   return Boolean(
     args.vmsProductId
     && args.vmsProductId === previous.vms_product_id
-    && Number.isSafeInteger(qty)
-    && qty !== null && qty >= 0
-    && Number.isSafeInteger(capacity)
-    && capacity !== null && capacity > 0
+    && qty !== null && Number.isSafeInteger(qty) && qty >= 0
+    && capacity !== null && Number.isSafeInteger(capacity) && capacity > 0
     && qty <= capacity
     && args.reportedCapacity === capacity
     && Number.isFinite(ageMs) && ageMs >= 0
