@@ -67,13 +67,6 @@ async function main() {
         chunks.push(...publicSalesChunks(page.body));
         console.log("PUBLIC_SALES_CHUNKS", chunks.map((url) => new URL(url).pathname));
       }
-      if (new URL(asset).pathname.includes("/app.")) {
-        for (const keyword of ["getCheckCode","onLoginSSO","session_key","onLogin"]) {
-          const at = page.body.indexOf(keyword);
-          if (at >= 0) console.log("PUBLIC_LOGIN_SOURCE", keyword,
-            page.body.slice(Math.max(0,at-400), at+200).replace(/\\s+/g," "));
-        }
-      }
       const found = candidatePaths(page.body);
       console.log("Asset", new URL(asset).pathname, "bytes", page.body.length, "candidatePaths", found.length);
       for (const path of found.slice(0, 100)) {
@@ -88,13 +81,6 @@ async function main() {
   for (const asset of chunks.slice(0, 9)) {
     try {
       const page = await get(asset);
-      for (const keyword of ["queryJqjymx","selectJqddjytj2","queryDdxxV2","getCheckCode","onLoginSSO","session_key","checkCode","md5"]) {
-        const at = page.body.indexOf(keyword);
-        if (at >= 0) {
-          console.log("PUBLIC_KEYWORD_CONTEXT", keyword,
-            page.body.slice(Math.max(0,at-650), Math.min(page.body.length,at+160)).replace(/\\s+/g," ").slice(0,290));
-        }
-      }
       const found = candidatePaths(page.body);
       console.log("PUBLIC_ASYNC_CHUNK", new URL(asset).pathname, page.body.length, found.length);
       for (const path of found.slice(0, 100)) {
