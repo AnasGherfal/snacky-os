@@ -1,0 +1,23 @@
+name: Verify live XY selection
+on:
+  push:
+    branches:
+      - fix/live-xy-selection-save
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Machine XY regression
+        run: npm run test:xy-stop-quantity-editor
+      - name: Smart Route regression
+        run: npm run test:smart-route-planner
+      - name: TypeScript check
+        run: npm run typecheck
