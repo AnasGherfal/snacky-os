@@ -9,6 +9,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
 import { getXyLiveSalesConfig, latestXyLiveSalesHealth } from "@/lib/xy-live-sales-sync";
+import { XY_MACHINE_ACTIVITY_PROFILES } from "@/lib/xy-stock-activity-alert-rules";
+import { saveXyActivitySiteOverridesAction } from "@/lib/xy-stock-activity-actions";
 import {
   syncXyAllAction,
   syncXyMachineGoodsAction,
@@ -197,6 +199,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     currentUnmappedRowsResult,
     pendingSlotChangesResult,
     stopSelectionSyncResult,
+    xyActivityOverridesResult,
   ] = await Promise.all([
     supabase
       .from("vms_sync_runs")
@@ -219,6 +222,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("latest_vms_stock_by_slot").select("vms_product_id").eq("source_provider","xy").not("vms_product_id","is",null).limit(5000),
     supabase.from("xy_pending_slot_changes").select("machine_id,slot_code,status,last_error,updated_at,verified_at").order("updated_at",{ascending:false}).limit(200),
     supabase.from("xy_stop_quantity_syncs").select("machine_id,slot_code,status,last_error,updated_at,verified_at").order("updated_at",{ascending:false}).limit(200),
+    supabase.from("xy_stock_activity_site_overrides").select("machine_id,excluded_dates,pause_through,min_window_hours,min_expected_units"),
   ]);
 
   const loadError =
@@ -232,7 +236,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     liveStockMachinesResult.error ??
     currentUnmappedRowsResult.error ??
     pendingSlotChangesResult.error ??
-    stopSelectionSyncResult.error;
+    stopSelectionSyncResult.error ??
+    xyActivityOverridesResult.error;
 
   if (loadError) {
     console.error("[xy-vms-admin] Failed to load XY sync dashboard", loadError);
@@ -284,6 +289,17 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const stalePendingWrites=xyPendingWrites.filter(row=>Date.now()-Date.parse(String(row.updated_at??""))>30*60*1000);
   const xyWriteIssues=[...xyWriteConflicts,...stalePendingWrites].sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??""))).slice(0,10);
   const xyMachineNameById=new Map(mappedMachines.map(machine=>[machine.id,machine.name]));
+  type XyActivityOverride = {
+    machine_id:string;
+    excluded_dates:string[]|null;
+    pause_through:string|null;
+    min_window_hours:number|null;
+    min_expected_units:number|null;
+  };
+  const xyActivityOverrideByMachine=new Map(((xyActivityOverridesResult.data??[]) as XyActivityOverride[])
+    .map(row=>[row.machine_id,row]));
+  const xyActivityConfiguredMachines=mappedMachines
+    .filter(machine=>Boolean(machine.vms_machine_id && XY_MACHINE_ACTIVITY_PROFILES[machine.vms_machine_id]));
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
   const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
 
@@ -408,6 +424,62 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
       </section>
 
       <XyAdminLiveProbe machines={mappedMachines.map(machine=>({id:machine.id,name:machine.name,machineCode:machine.machine_code}))} />
+
+      <section className="surface-card mb-6">
+        <h2 className="text-base font-semibold text-slate-900">Machine-specific Activity Warnings</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-600">
+          These alerts infer unusual inactivity from verified XY inventory decreases, NOT confirmed transactions.
+          Hospitals are monitored more urgently. Campus warnings respect daytime and usual active weekdays;
+          shopping sites are compared with historical same-weekday demand. You can tune each machine,
+          exclude holidays, or pause warnings without affecting any machine settings.
+        </p>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {xyActivityConfiguredMachines.map(machine=>{
+            const base=XY_MACHINE_ACTIVITY_PROFILES[String(machine.vms_machine_id)];
+            const override=xyActivityOverrideByMachine.get(machine.id);
+            const hourDescription=Object.entries(base.open)
+              .map(([day,hours])=>`${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][Number(day)]} ${hours[0]}–${hours[1]}`)
+              .join(" · ");
+            return <form action={saveXyActivitySiteOverridesAction} key={machine.id}
+              className="rounded-xl border border-slate-200 bg-white p-4">
+              <input type="hidden" name="machine_id" value={machine.id} />
+              <div className="font-semibold text-slate-900">{machine.name}</div>
+              <div className="mt-1 text-xs text-slate-500">{base.kind} · Local Tripoli time</div>
+              <p className="mt-2 text-xs leading-5 text-slate-600">{hourDescription}</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label className="text-xs font-medium text-slate-700">
+                  No movement for (open hours)
+                  <input className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    name="minimum_hours" type="number" min="2" max={base.maximumHours} step="1"
+                    defaultValue={override?.min_window_hours??base.minimumHours} />
+                </label>
+                <label className="text-xs font-medium text-slate-700">
+                  Minimum typical decreases (units)
+                  <input className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    name="minimum_expected_units" type="number" min="1" max="100" step="1"
+                    defaultValue={override?.min_expected_units??base.minTypicalUnits} />
+                </label>
+                <label className="col-span-2 text-xs font-medium text-slate-700">
+                  Pause through (inclusive)
+                  <input className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    name="pause_through" type="date" defaultValue={override?.pause_through??""} />
+                </label>
+                <label className="col-span-2 text-xs font-medium text-slate-700">
+                  Holiday / closed dates (comma-separated YYYY-MM-DD)
+                  <textarea className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    name="closed_dates" rows={2} placeholder="2026-10-12, 2026-10-13"
+                    defaultValue={(override?.excluded_dates??[]).join(", ")} />
+                </label>
+              </div>
+              <button type="submit" className="btn-secondary mt-3 w-full">Save activity warning rules</button>
+            </form>;
+          })}
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          If XY sales authentication becomes available, confirmed no-sales alerts remain separate from these inventory-only warnings.
+          The time windows shown here are initial operating assumptions, not verified venue schedules.
+        </p>
+      </section>
 
       {!config.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
