@@ -71,7 +71,7 @@ async function main() {
         for (const keyword of ["getCheckCode","onLoginSSO","session_key","onLogin"]) {
           const at = page.body.indexOf(keyword);
           if (at >= 0) console.log("PUBLIC_LOGIN_SOURCE", keyword,
-            page.body.slice(Math.max(0,at-190), at+200).replace(/\\s+/g," "));
+            page.body.slice(Math.max(0,at-400), at+200).replace(/\\s+/g," "));
         }
       }
       const found = candidatePaths(page.body);
@@ -92,7 +92,7 @@ async function main() {
         const at = page.body.indexOf(keyword);
         if (at >= 0) {
           console.log("PUBLIC_KEYWORD_CONTEXT", keyword,
-            page.body.slice(Math.max(0,at-130), Math.min(page.body.length,at+160)).replace(/\\s+/g," ").slice(0,290));
+            page.body.slice(Math.max(0,at-650), Math.min(page.body.length,at+160)).replace(/\\s+/g," ").slice(0,290));
         }
       }
       const found = candidatePaths(page.body);
