@@ -11,6 +11,7 @@ export type QuickMachineSlot = {
   vmsProductId: string | null;
   priceLyd?: number | null;
   productId?: string | null;
+  liveStockKnown?: boolean;
 };
 
 export type QuickMachineRow = {
@@ -44,6 +45,7 @@ export function MachineStockQuickEditor({
   saveStatuses = {},
   onLoadAllProducts,
   productCatalogLoading = false,
+  isLiveXy = false,
 }: {
   rows: QuickMachineRow[];
   values: Record<string, number>;
@@ -61,6 +63,7 @@ export function MachineStockQuickEditor({
   saveStatuses?: Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>;
   onLoadAllProducts?: () => void;
   productCatalogLoading?: boolean;
+  isLiveXy?: boolean;
 }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -194,7 +197,9 @@ export function MachineStockQuickEditor({
                         <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
                         <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
                         <span className="mt-1 block text-xs font-semibold text-slate-600">
-                          {tr("Current in XY", "الموجود حالياً في XY")}: <strong className="text-slate-950">{units(slot.currentQty)}</strong>
+                          {isLiveXy
+                            ? tr("Current in XY", "الموجود حالياً في XY")
+                            : tr("Last imported stock (not live)", "آخر كمية مستوردة (ليست مباشرة)")}: <strong className="text-slate-950">{slot.liveStockKnown === false ? "—" : units(slot.currentQty)}</strong>
                           {" · "}{tr("Capacity", "السعة")}: {slot.capacity}
                         </span>
                         {onSelectProduct ? (
@@ -205,6 +210,8 @@ export function MachineStockQuickEditor({
                               aria-label={tr(`Selection ${slot.slotCode} product`, `منتج الخانة ${slot.slotCode}`)}
                               className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-950">
                               <option value="">{slot.productName || tr("Unmapped XY product", "منتج XY غير مربوط")}</option>
+                              {slot.productId && !productOptions.some((p) => p.id === slot.productId)
+                                ? <option value={slot.productId}>{slot.productName}</option> : null}
                               {productOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                             {onLoadAllProducts ? <button type="button" onClick={onLoadAllProducts}
