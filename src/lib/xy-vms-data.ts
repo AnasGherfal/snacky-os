@@ -47,8 +47,31 @@ export function xyProductIdentity(row: XyDataRow) {
     barcode: xyFirstText(row, ["sptxm", "barcode", "bar_code"]),
     imageUrl: xyFirstText(row, ["fjlj", "sptp", "image_url", "image"]),
     // XY's native price fields are integer minor units: 300 means 3.00 LYD.
-    sellingPrice: xyNativeMoney(row, ["spjg", "spsj"], ["selling_price"]),
+    sellingPrice: xyNativeMoney(row, ["spjg", "spsj"], ["selling_price", "sellingPrice", "price"]),
     costPrice: xyNativeMoney(row, ["spjj"], ["cost_price", "purchase_price"]),
+  };
+}
+
+
+/** Direct XY selection reads must never turn missing, negative or fractional
+ * quantities into zero. XY native prices (spjg) are minor units, while
+ * normalized fallback prices are already in LYD.
+ */
+function strictXySelectionQuantity(value: unknown): number | null {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+export function normalizeXyLiveSelection(row: XyDataRow) {
+  const identity = xyProductIdentity(row);
+  return {
+    slotCode: xyFirstText(row, ["hdbh", "slotCode"]),
+    vmsProductId: identity.vmsProductId || null,
+    productName: identity.productName || xyFirstText(row, ["productName"]) || null,
+    priceLyd: identity.sellingPrice !== null && identity.sellingPrice > 0 ? identity.sellingPrice : null,
+    currentQty: strictXySelectionQuantity(row.hdkc ?? row.currentQty),
+    capacity: strictXySelectionQuantity(row.hdrl ?? row.capacity),
   };
 }
 
