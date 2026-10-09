@@ -136,6 +136,15 @@ export function assessXyMachineActivity(input: {
     return {outcome:"skip",reason:"no_reliable_stock"};
   }
 
+  // The current hour is not yet a completed historical bucket. A vend-like
+  // decrease just seen within it MUST suppress any apparent older gap.
+  const currentHourStart=Math.floor(nowMs/HOUR)*HOUR;
+  const lastObservedDecrease=Date.parse(String(history.last_decrease_at??""));
+  if(Number.isFinite(lastObservedDecrease)
+    && lastObservedDecrease>=currentHourStart
+    && lastObservedDecrease<=nowMs) {
+    return {outcome:"skip",reason:"recent_inventory_change"};
+  }
   const byHour=new Map(history.hourly.map(hour=>[hour.day+":"+hour.hour,hour]));
   const completedHourMs=Math.floor(nowMs/HOUR)*HOUR-HOUR;
   const pastHours: Array<{day:string;hour:number;dateOffset:number;data:XyActivityHour}>=[];
