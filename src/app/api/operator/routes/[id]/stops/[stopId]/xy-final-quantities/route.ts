@@ -96,7 +96,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // pretend the most recent import is current. If XY is offline, use the
   // explicit cached baseline and let the async worker detect any conflict.
   let directSlots: Awaited<ReturnType<typeof readXyMachineLayout>> | null = null;
-  if (applyImmediately) {
+  if (applyImmediately && payload.preferCachedBaseline !== true) {
     try {
       directSlots = await readXyMachineLayout(String(machine.vms_machine_id));
     } catch (error) {
