@@ -226,6 +226,7 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
   // malls need strong same-weekday historical evidence.
   const activityAlerts=await getXyStockActivityNotices({
     db,machines,now,activeStockMachineIds:stockedMachineIds,
+    activeStockImportedAt:active?.imported_at??null,
   });
   notices.push(...activityAlerts);
 
