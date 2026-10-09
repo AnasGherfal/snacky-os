@@ -35,6 +35,7 @@ export type XyActivityProfile = {
   // Owner-supplied exceptional closure dates (YYYY-MM-DD).
   closedDates?: readonly string[];
   pausedUntil?: string | null;
+  pausedThrough?: string | null;
 };
 export type XyActivityDecision =
   | { outcome: "attention"; hours: number; usualUnits: number; evidenceDays: number; activeDayRatio: number; lastDecreaseAt: string | null; kind: XySiteKind }
@@ -130,6 +131,7 @@ export function assessXyMachineActivity(input: {
   const {nowMs,profile,history}=input;
   if(!profile) return {outcome:"skip",reason:"not_configured"};
   if(profile.pausedUntil && Date.parse(profile.pausedUntil)>nowMs) return {outcome:"skip",reason:"paused"};
+  if(profile.pausedThrough && localTime(nowMs).day<=profile.pausedThrough) return {outcome:"skip",reason:"paused"};
   if(!scheduled(profile,localTime(nowMs))) return {outcome:"skip",reason:"closed"};
   const latest=Date.parse(String(history.last_observed_at??""));
   if(!Number.isFinite(latest) || latest>nowMs+5*60*1000
