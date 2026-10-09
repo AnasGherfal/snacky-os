@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
+import { XyAdminLiveProbe } from "@/components/XyAdminLiveProbe";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -405,6 +406,8 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           </div>)}</div>
         </div> : null}
       </section>
+
+      <XyAdminLiveProbe machines={mappedMachines.map(machine=>({id:machine.id,name:machine.name,machineCode:machine.machine_code}))} />
 
       {!config.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
