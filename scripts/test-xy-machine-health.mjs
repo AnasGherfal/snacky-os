@@ -33,3 +33,15 @@ test('machine dashboard includes XY health while hiding zero health cards',()=>{
  assert.match(dashboard,/XY offline/);
  assert.match(dashboard,/filter\(\(\[,value\]\)=>Number\(value\)>0\)/);
 });
+
+test('XY machine health uses merchant-scoped live machine list when detail API returns empty',()=>{
+ const sync=fs.readFileSync('src/lib/xy-vms-sync.ts','utf8');
+ const begin=sync.indexOf('async function syncMachineStatusWork');
+ const end=sync.indexOf('async function testOfficialEndpoint',begin);
+ const block=sync.slice(begin,end);
+ assert.match(block,/callXyApi\("queryMachine", \{ shbh: context\.config\.merchantId \}\)/);
+ assert.doesNotMatch(block,/callXyApi\("queryMachineState"/);
+ assert.match(block,/last_vms_status_at: context\.capturedAt/);
+ assert.match(block,/missing from the current XY merchant/);
+ assert.match(block,/vms_temperature_raw: null/);
+});
