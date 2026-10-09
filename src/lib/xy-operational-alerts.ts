@@ -1,6 +1,7 @@
 import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyLiveSalesConfig } from "@/lib/xy-live-sales-sync";
+import { getXyStockActivityNotices } from "@/lib/xy-stock-activity-alerts";
 import { lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
 
 type Db = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
@@ -219,6 +220,14 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
       ));
     }
   }
+
+  // Machine-specific independent inventory-activity warnings. Hospitals use
+  // shorter active-hour windows; campus weekends / closing hours are suppressed;
+  // malls need strong same-weekday historical evidence.
+  const activityAlerts=await getXyStockActivityNotices({
+    db,machines,now,activeStockMachineIds:stockedMachineIds,
+  });
+  notices.push(...activityAlerts);
 
   let created = 0;
   let existing = 0;
