@@ -153,7 +153,12 @@ export function assessXyMachineActivity(input: {
     const local=localTime(completedHourMs-offset*HOUR);
     if(!scheduled(profile,local)) break;
     const data=byHour.get(local.day+":"+local.hour);
-    if(!reliable(data)) return {outcome:"skip",reason:"no_reliable_stock"};
+    if(!reliable(data)) {
+      // An older incomplete hour must not invalidate a recent, fully covered
+      // 4-hour hospital window. Only truncate the available longer windows.
+      if(pastHours.length>=profile.minimumHours) break;
+      return {outcome:"skip",reason:"no_reliable_stock"};
+    }
     if(!baselineKey) baselineKey=local.day;
     pastHours.push({
       ...local,dateOffset:Math.round((utcDateMs(local.day)-utcDateMs(baselineKey))/DAY),
