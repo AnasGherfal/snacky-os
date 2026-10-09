@@ -4,9 +4,9 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { discoverXyDashboardAssets } from "@/lib/xy-public-asset-paths";
 
 const ROOT_URL = "https://www.xynetweb.com/";
-const MAX_FILES = 100;
-const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const TIMEOUT_MS = 20000;
+const MAX_FILES = 16;
+const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+const TIMEOUT_MS = 12000;
 
 type Candidate = {
   value: string;
@@ -212,7 +212,15 @@ export async function discoverXyDashboardSalesApi() {
           ...(requested === ROOT_URL || /text\/html/i.test(response.contentType)
             ? discoverBootstrapUrls(response.text, response.finalUrl)
             : []),
-        ];
+        ].sort((left, right) => {
+          const weight = (url: string) => {
+            const path = new URL(url).pathname.toLowerCase();
+            if (/\/(?:app|main)\.[a-z0-9]+\.js$/.test(path)) return 0;
+            if (path.includes("manifest")) return 1;
+            return 2;
+          };
+          return weight(left) - weight(right);
+        });
         for (const url of discoveredUrls) {
           if (!visited.has(url) && queue.length < MAX_FILES * 2) queue.push(url);
         }
