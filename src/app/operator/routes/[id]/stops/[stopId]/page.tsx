@@ -1483,6 +1483,7 @@ export default function MachineStopPage() {
           ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
         }],
         applyImmediately: true,
+        preferCachedBaseline: xyLiveState.state !== "live",
       };
       const response = await fetchWithTimeout(endpoint, {
         method: "POST",
