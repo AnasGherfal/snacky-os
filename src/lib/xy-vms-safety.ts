@@ -37,3 +37,41 @@ export function assessXyLaneSnapshot(input: XyLaneActivationInput) {
   };
 }
 
+/**
+ * Use a previously verified XY value only when the vendor reports an
+ * impossible quantity for the SAME product and physical capacity.
+ *
+ * The caller MUST retain the original captured_at and mark the selection
+ * as stale: a fallback is not a fresh XY measurement.
+ */
+export function canCarryForwardVerifiedXyLane(args: {
+  invalidReason: string;
+  vmsProductId: string;
+  reportedCapacity: number | null;
+  previous: {
+    vms_product_id: string | null;
+    current_qty: number | null;
+    capacity: number | null;
+    captured_at: string | null;
+  } | null | undefined;
+  nowMs?: number;
+}): boolean {
+  if (args.invalidReason !== "current quantity exceeds capacity" || !args.previous) return false;
+  const previous = args.previous;
+  const previouslyVerifiedAt = Date.parse(String(previous.captured_at ?? ""));
+  const qty = previous.current_qty;
+  const capacity = previous.capacity;
+  const ageMs = (args.nowMs ?? Date.now()) - previouslyVerifiedAt;
+  return Boolean(
+    args.vmsProductId
+    && args.vmsProductId === previous.vms_product_id
+    && Number.isSafeInteger(qty)
+    && qty !== null && qty >= 0
+    && Number.isSafeInteger(capacity)
+    && capacity !== null && capacity > 0
+    && qty <= capacity
+    && args.reportedCapacity === capacity
+    && Number.isFinite(ageMs) && ageMs >= 0
+    && ageMs <= 48 * 60 * 60 * 1000
+  );
+}
