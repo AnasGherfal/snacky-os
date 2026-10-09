@@ -42,6 +42,9 @@ async function main() {
   for (const asset of assets.slice(0, MAX_ASSETS)) {
     try {
       const page = await get(asset);
+      if (new URL(asset).pathname.includes("/manifest.")) {
+        console.log("PUBLIC_WEBPACK_MANIFEST", page.body.slice(0, 5000));
+      }
       const found = candidatePaths(page.body);
       console.log("Asset", new URL(asset).pathname, "bytes", page.body.length, "candidatePaths", found.length);
       for (const path of found.slice(0, 100)) {
