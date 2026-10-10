@@ -34,13 +34,32 @@ export function MachinePhotoRecognitionCard({
   const [applied, setApplied] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState("");
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const reset = () => { setScan(null); setRows({}); setApplied({}); setError(""); };
+    let active = true;
+    const loadPreview = async () => {
+      if (!photoSaved) { if (active) setPhotoPreview(null); return; }
+      try {
+        const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/completion-photo`, {
+          cache: "no-store", headers: { Accept: "application/json" },
+        });
+        const data = await response.json().catch(() => null) as { photoUrl?: string; saved?: boolean } | null;
+        if (active) setPhotoPreview(
+          response.ok && data?.saved && data.photoUrl?.startsWith("/api/storage/refill-photos/")
+            ? data.photoUrl : null,
+        );
+      } catch { if (active) setPhotoPreview(null); }
+    };
+    const reset = () => {
+      setScan(null); setRows({}); setApplied({}); setError("");
+      void loadPreview();
+    };
+    void loadPreview();
     window.addEventListener("snacky:machine-photo-persisted", reset);
-    return () => window.removeEventListener("snacky:machine-photo-persisted", reset);
-  }, []);
+    return () => { active = false; window.removeEventListener("snacky:machine-photo-persisted", reset); };
+  }, [routeId, stopId, photoSaved]);
 
   const suggestions = scan?.suggestions ?? [];
   const changed = suggestions.filter((suggestion) => suggestion.differentFromXy);
@@ -154,6 +173,13 @@ export function MachinePhotoRecognitionCard({
         </p>
       </header>
       <div className="space-y-4 p-4 sm:p-5">
+        {photoPreview ? (
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            {/* Private proof image is served by Snacky's authorized storage route. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={photoPreview} alt={tr("Saved machine photo to review against suggestions", "صورة الماكينة المحفوظة لمقارنتها بالاقتراحات")} className="mx-auto max-h-72 w-full object-contain" loading="lazy" />
+          </div>
+        ) : null}
         <button type="button" className="btn-primary w-full" onClick={() => void scanPhoto()}
           disabled={!photoSaved || photoSaving || scanning || saving}>
           {scanning ? tr("Analyzing photo…", "جارٍ تحليل الصورة…") : tr("Scan saved machine photo", "فحص صورة الماكينة المحفوظة")}
