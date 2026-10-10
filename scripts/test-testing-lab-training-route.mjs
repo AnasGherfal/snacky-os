@@ -42,6 +42,8 @@ test("training route uses real MachineStockQuickEditor and guided camera but can
   assert.match(client, /Confirm pickup/);
   assert.match(client, /Complete Stop/);
   assert.match(client, /Refresh & verify XY/);
+  assert.match(client, /Practice photo AI scan \(simulation\)/);
+  assert.match(client, /Approve product \(simulate\)/);
   assert.match(client, /Operator bag leftovers/);
   assert.match(client, /Cleaning and final check/);
   assert.match(client, /Cash is recorded separately/);
