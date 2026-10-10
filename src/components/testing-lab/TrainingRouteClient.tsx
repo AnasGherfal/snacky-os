@@ -220,9 +220,9 @@ export function TrainingRouteClient() {
     const product = selectedProducts[code] ?? lane.xyProductId;
     // Real XY product-change workflow first protects the new SKU with zero
     // sellable units. The operator refills and updates final stock separately.
+    const switching = product !== lane.xyProductId;
     const requested = switching ? 0 : Object.hasOwn(selectedFinals, code) ? selectedFinals[code] : lane.xyQty;
     const price = Object.hasOwn(selectedPrices, code) ? selectedPrices[code] : lane.priceLyd;
-    const switching = product !== lane.xyProductId;
     if (switching && product !== lane.productId && !lane.oldStockHandled) {
       setFormError(tr("Record and confirm handling of any old products before changing this selection.", "تأكد من سحب وتسجيل المنتجات القديمة قبل تغيير الخانة.")); return;
     }
