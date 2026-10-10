@@ -5,6 +5,7 @@ import { useLanguage } from "@/components/I18nProvider";
 import { GuidedMachineCamera } from "@/components/testing-lab/GuidedMachineCamera";
 import { MachineStockQuickEditor, type QuickMachineRow } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
+import { trainingBagUsed, verifyTrainingSelections } from "@/lib/training-route-simulation";
 
 type Product = { id: string; en: string; ar: string };
 type Lane = {
@@ -42,7 +43,6 @@ type TrainingState = {
   stops: Stop[];
   routeCompleted: boolean;
 };
-type ErrorItem = { slotCode: string; reason: "product_mismatch" | "quantity_mismatch"; expected: number; xy: number };
 
 const PRODUCTS: Product[] = [
   { id: "cola", en: "Coca-Cola", ar: "كوكاكولا" },
@@ -94,29 +94,6 @@ const makeInitial = (): TrainingState => ({
   routeCompleted: false,
 });
 
-const expectedFinal = (lane: Lane) => (lane.productId === lane.originalProductId ? lane.initialQty : 0) + lane.actualAdd;
-const compare = (stop: Stop): ErrorItem[] => stop.lanes.flatMap((lane) => {
-  // Explicit per-lane identity: two Coca-Cola selections cannot cancel each other's mismatch.
-  const expected = expectedFinal(lane);
-  if (lane.xyProductId !== lane.productId) {
-    return [{ slotCode: lane.code, reason: "product_mismatch" as const, expected, xy: lane.xyQty }];
-  }
-  if (lane.xyQty !== expected) {
-    return [{ slotCode: lane.code, reason: "quantity_mismatch" as const, expected, xy: lane.xyQty }];
-  }
-  return [];
-});
-const taken = (state: TrainingState) => {
-  const quantities: Record<string, number> = {};
-  for (const stop of state.stops) {
-    if (stop.status !== "completed") continue;
-    for (const lane of stop.lanes) {
-      quantities[lane.productId] = (quantities[lane.productId] ?? 0) + lane.actualAdd;
-    }
-  }
-  return quantities;
-};
-
 export function TrainingRouteClient() {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -148,12 +125,12 @@ export function TrainingRouteClient() {
     return summary;
   }, [state.stops]);
 
-  const used = useMemo(() => taken(state), [state]);
+  const used = useMemo(() => trainingBagUsed(state.stops), [state.stops]);
   const bagAvailable = (productId: string, includingCurrentDraft = false) =>
     (state.pickup[productId] ?? 0) - (used[productId] ?? 0)
     - (includingCurrentDraft ? activeStop.lanes.filter((lane) => lane.productId === productId)
       .reduce((sum, lane) => sum + lane.actualAdd, 0) : 0);
-  const conflicts = compare(activeStop);
+  const conflicts = verifyTrainingSelections(activeStop.lanes);
   const allFilled = activeStop.lanes.reduce((sum, lane) => sum + lane.actualAdd, 0);
   const shortages = activeStop.lanes.filter((lane) => lane.actualAdd < lane.plannedAdd);
   const trainingRows: QuickMachineRow[] = useMemo(() => {
@@ -247,7 +224,7 @@ export function TrainingRouteClient() {
   };
 
   const verify = () => {
-    const found = compare(activeStop);
+    const found = verifyTrainingSelections(activeStop.lanes);
     if (found.length) {
       setFormError(tr(
         `${found.length} selections still disagree with XY. Correct only those selections or record an explicit pending exception.`,
