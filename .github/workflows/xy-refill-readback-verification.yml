@@ -1,0 +1,46 @@
+name: XY refill readback verification
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/lib/xy-quantity-verification.ts"
+      - "src/components/operator/MachineQuantityConfirmationCard.tsx"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts"
+      - "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"
+      - "src/app/operator/verification-test/page.tsx"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/xy-photo-detect/route.ts"
+      - "src/lib/xy-photo-recognition.ts"
+      - "src/components/operator/MachinePhotoRecognitionCard.tsx"
+      - "src/components/operator/GuidedMachineCamera.tsx"
+      - "src/components/operator/PhotoLibraryAiTest.tsx"
+      - "src/lib/xy-photo-gallery-test.ts"
+      - "src/app/api/admin/xy-photo-gallery-test/route.ts"
+      - "scripts/test-photo-library-ai-test.mjs"
+      - "scripts/test-guided-machine-camera.mjs"
+      - "scripts/test-xy-photo-recognition.mjs"
+      - "scripts/test-xy-refill-readonly-verification.mjs"
+      - "scripts/test-xy-direct-quantity-verification.mjs"
+      - "scripts/test-xy-stop-quantity-editor.mjs"
+      - ".github/workflows/xy-refill-readback-verification.yml"
+  workflow_dispatch:
+jobs:
+  readback-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Selection/readback regressions
+        run: node --experimental-strip-types --test scripts/test-photo-library-ai-test.mjs scripts/test-guided-machine-camera.mjs scripts/test-xy-photo-recognition.mjs scripts/test-xy-refill-readonly-verification.mjs scripts/test-xy-direct-quantity-verification.mjs scripts/test-machine-quantity-confirmation.mjs scripts/test-xy-stop-quantity-editor.mjs
+      - name: Lint guided camera and isolated camera QA
+        run: npx eslint src/components/operator/PhotoLibraryAiTest.tsx src/app/api/admin/xy-photo-gallery-test/route.ts src/components/operator/GuidedMachineCamera.tsx src/app/operator/verification-test/page.tsx
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Next.js production build
+        run: npm run build

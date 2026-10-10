@@ -56,6 +56,7 @@ export function MachineQuantityConfirmationCard({
   const [offlineNote, setOfflineNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [mismatchedSelections, setMismatchedSelections] = useState<Array<{slotCode:string;expectedQty:number;actualQty:number|null;reason:string}>>([]);
   const matchProductTotals = (previous: MachineQuantityRow[], current: MachineQuantityRow[]) => {
     const totals = (values: MachineQuantityRow[]) => {
       const sums = new Map<string, number>();
@@ -114,7 +115,7 @@ export function MachineQuantityConfirmationCard({
     return items.map((item) => ({ productId: item.productId, quantity: item.filledQty, slotQuantities: item.slotQuantities }));
   }
 
-  async function saveMode(mode: "xy_api" | "xy_screenshot" | "machine_offline" | "sync_pending", files: MachineQuantityEvidenceFile[] = []) {
+  async function saveMode(mode: "xy_api" | "xy_readonly" | "xy_screenshot" | "machine_offline" | "sync_pending", files: MachineQuantityEvidenceFile[] = []) {
     const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/quantity-confirmation`, {
       method: "POST",
       cache: "no-store",
@@ -128,8 +129,10 @@ export function MachineQuantityConfirmationCard({
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.success === false) {
+      setMismatchedSelections(Array.isArray(payload?.mismatches) ? payload.mismatches : []);
       throw new Error(payload?.error || tr("Could not save the machine quantity evidence.", "تعذر حفظ إثبات كميات الجهاز."));
     }
+    setMismatchedSelections([]);
     const confirmation = payload?.confirmation;
     const nextKey = String(confirmation?.confirmation_key ?? "");
     const nextRows = Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows as MachineQuantityRow[] : [];
@@ -230,9 +233,9 @@ export function MachineQuantityConfirmationCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">{tr("Machine-system inventory", "مخزون نظام الجهاز")}</div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">{compactEvidenceOnly ? tr("Optional XY evidence", "إثبات XY الاختياري") : tr("Update machine quantities", "حدّث كميات الجهاز")}</h2>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{tr("Refresh & verify refill in XY", "تحديث القراءة والتحقق من التعبئة في XY")}</h2>
           <p className="mt-1 text-sm leading-6 text-slate-700">{compactEvidenceOnly
-            ? tr("Use the row/selection editor above to save final stock at Complete Stop. Photos are optional and are not needed to finish the route.", "استخدم محرر الصفوف والخانات أعلاه لحفظ الكميات النهائية عند إنهاء الموقع. الصور اختيارية وليست مطلوبة لإنهاء الجولة.")
+            ? tr("After updating the selections on the machine, check what XY reports. This check is read-only: it will NOT change machine stock. Photos remain optional.", "بعد تحديث الخانات في الجهاز، افحص الكميات التي يعرضها XY. هذا الفحص للقراءة فقط ولا يغير مخزون الجهاز. الصور اختيارية.")
             : tr("After physically filling the machine, Snacky writes the confirmed lane quantities into XY and reads them back to verify the result. Screenshots remain available as a fallback.", "بعد تعبئة الجهاز فعلياً، يرسل سناكي كميات الخانات المؤكدة إلى XY ثم يقرأها من جديد للتحقق. تبقى صور الشاشة خياراً احتياطياً.")}</p>
         </div>
         <span className={ownerPending ? "shrink-0 rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white" : ready ? "shrink-0 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "shrink-0 rounded-full bg-slate-700 px-3 py-1 text-sm font-semibold text-white"}>
@@ -267,7 +270,7 @@ export function MachineQuantityConfirmationCard({
           {ownerPending
             ? tr("Actual quantities saved. This stop can be finished; XY synchronization is pending. Photos are optional.", "تم حفظ الكميات الفعلية. يمكنك إنهاء الموقع وستتم متابعة تحديث XY. الصور اختيارية.")
             : status==="xy_api_verified"
-              ? tr("Updated and verified directly with XY.", "تم تحديث الكميات والتحقق منها مباشرة عبر XY.")
+              ? tr("Refill verified against XY readback.", "تم التحقق من التعبئة عبر قراءة XY.")
               : tr(`XY screenshot evidence saved (${evidenceFiles.length}).`, `تم حفظ إثبات صور شاشة XY (${evidenceFiles.length}).`)}
           {savedAt ? ` · ${new Date(savedAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}` : ""}
         </div>
@@ -275,22 +278,43 @@ export function MachineQuantityConfirmationCard({
 
       {!ready && savedKey && !savedEvidenceMatches && status !== "offline_pending" ? (
         <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-900">
-          {tr("The filled quantities changed. Upload new XY screenshots for the updated numbers.", "تغيرت كميات التعبئة. ارفع صور شاشة XY جديدة للأرقام المحدثة.")}
+          {tr("The refill quantities changed. Refresh and verify XY again; only use screenshots if live XY is unavailable.", "تغيرت كميات التعبئة. حدّث قراءة XY وتحقق من جديد؛ استخدم الصور فقط عند تعذر الاتصال المباشر.")}
         </div>
       ) : null}
 
-      {!compactEvidenceOnly && !ready && loaded && installed && !completed && !canSyncDirectlyWithXy ? (
+      {!ready && loaded && installed && !completed && !canSyncDirectlyWithXy ? (
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
           <strong>{tr("This route has no exact XY lane assignments.", "هذه الجولة لا تحتوي على تعيينات دقيقة لخانات XY.")}</strong>{" "}
           {tr("It was created with product-level quantities only. Snacky cannot safely split those totals between vending lanes automatically. After updating the machine's real lane quantities, upload current XY screenshots below to confirm this stop. Do not choose the power-off option unless the machine really has no electricity.", "أُنشئت هذه الجولة بكميات إجمالية لكل منتج فقط، ولا يمكن لسناكي توزيعها بأمان على خانات الجهاز دون معرفة الكميات الحقيقية. بعد تحديث كميات الخانات الفعلية في الجهاز، ارفع صور شاشة XY الحالية أدناه لإثبات التعبئة. لا تستخدم خيار انقطاع الكهرباء إلا إذا كان الجهاز دون كهرباء فعلاً.")}
         </div>
       ) : null}
-      {!compactEvidenceOnly && !ready && loaded && installed && !completed && canSyncDirectlyWithXy ? (
-        <button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={() => {setSaving(true);setError("");void saveMode("xy_api").catch((verifyError) => setError(verifyError instanceof Error ? verifyError.message : tr("Could not update and verify quantities with XY.", "تعذر تحديث الكميات والتحقق منها عبر XY."))).finally(() => setSaving(false));}}>
-          {saving ? tr("Updating XY...", "جارٍ تحديث XY...") : tr("Update & verify with XY", "حدّث وتحقق عبر XY")}
+      {loaded && installed && !completed && canSyncDirectlyWithXy ? (
+        <button type="button" className="btn-primary mt-4 w-full" disabled={saving} onClick={() => {setSaving(true);setError("");setMismatchedSelections([]);void saveMode("xy_readonly").catch((verifyError) => setError(verifyError instanceof Error ? verifyError.message : tr("Could not refresh XY.", "تعذر تحديث قراءة XY."))).finally(() => setSaving(false));}}>
+          {saving ? tr("Checking latest XY quantities...", "جارٍ قراءة آخر كميات XY...") : tr("Refresh & verify XY · read only", "تحديث القراءة والتحقق من XY · دون تعديل")}
         </button>
       ) : null}
-
+      {mismatchedSelections.length ? (
+        <div className="mt-3 rounded-xl border border-rose-300 bg-rose-50 p-3" role="alert">
+          <p className="text-sm font-bold text-rose-950">{tr(`${mismatchedSelections.length} selections need attention`, `${mismatchedSelections.length} خانات تحتاج مراجعة`)}</p>
+          <div className="mt-2 space-y-2">
+            {mismatchedSelections.map((issue, index) => (
+              <div key={`${issue.slotCode}:${index}`} className="flex flex-wrap justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-900">
+                <strong>{tr("Selection", "الخانة")} {issue.slotCode}</strong>
+                <span>{tr("Expected", "المتوقع")} {issue.expectedQty} · XY {issue.actualQty ?? "—"}</span>
+                <span className="w-full text-xs text-rose-800">{issue.reason === "product_mismatch"
+                  ? tr("Wrong product assignment in XY", "المنتج في XY لا يطابق الخانة")
+                  : issue.reason === "unmapped_product"
+                    ? tr("XY product is not mapped to Snacky", "منتج XY غير مربوط بسناكي")
+                    : issue.reason === "missing_slot" || issue.reason === "generic_slot"
+                      ? tr("Exact XY selection not available", "الخانة غير محددة أو غير موجودة في XY")
+                      : issue.reason === "duplicate_slot"
+                        ? tr("One selection was assigned twice", "تم تكرار تعيين نفس الخانة")
+                        : tr("Quantity is different; check the machine and retry", "الكمية مختلفة؛ راجع الجهاز وأعد التحقق")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {loaded && installed && !completed && !ready && !saving ? (
         <button type="button" className="btn-secondary mt-3 w-full" onClick={() => {
           setSaving(true);
@@ -299,7 +323,7 @@ export function MachineQuantityConfirmationCard({
             .catch((cause) => setError(cause instanceof Error ? cause.message : tr("Could not save quantities.", "تعذر حفظ الكميات.")))
             .finally(() => setSaving(false));
         }}>
-          {tr("Save quantities & continue (sync later)", "احفظ الكميات وتابع (المزامنة لاحقاً)")}
+          {tr("Continue with XY verification pending", "متابعة مع بقاء تحقق XY معلقاً")}
         </button>
       ) : null}
       <details className="mt-3 rounded-xl border border-slate-200 bg-white p-3">

@@ -243,7 +243,7 @@ export async function POST(
       return NextResponse.json({ success: true, installed: true, confirmed: true, confirmation: data });
     }
 
-    if (!["xy_api","xy_screenshot","machine_offline","sync_pending"].includes(mode)) {
+    if (!["xy_api","xy_readonly","xy_screenshot","machine_offline","sync_pending"].includes(mode)) {
       return NextResponse.json({ success: false, code: "INVALID_MODE", error: "Choose direct XY verification, XY screenshots, or machine power off." }, { status: 400 });
     }
     const filledItemsError = validateFilledItems(payload.filledItems);
@@ -264,7 +264,7 @@ export async function POST(
     const rows = buildMachineQuantityRows(sources);
     const confirmationKey = machineQuantityConfirmationKey(rows);
 
-    if(mode==="xy_api"){
+    if(mode==="xy_api" || mode==="xy_readonly"){
       const missingOriginalAssignments = planRows.filter((plan: MachineQuantityPlanRow & { original_exact_lane?: boolean }) => (
         plan.original_exact_lane !== true
         && (payload.filledItems as MachineQuantityFilledItem[]).some((item) => (
@@ -290,6 +290,45 @@ export async function POST(
         return NextResponse.json({success:false,installed:true,code:"XY_LIVE_UNAVAILABLE",error:"Could not read the machine from XY right now. Wait and retry, upload screenshots, or use the power-off option."},{status:503});
       }
 
+      if (mode === "xy_readonly") {
+        // Operator already updated the physical machine. Read back XY only.
+        // Do not use setXySlotProduct, mutate inventory, or trust a cached import.
+        const vendorProducts = Array.from(new Set(
+          liveLayout.map((slot) => clean(slot.vmsProductId)).filter(Boolean),
+        ));
+        if (!vendorProducts.length) {
+          return NextResponse.json({
+            success: false, installed: true, code: "XY_MAPPING_UNAVAILABLE",
+            error: "XY did not return product identities. Quantities cannot be verified safely.",
+          }, { status: 409 });
+        }
+        const { data: productMappings, error: mappingError } = await context.admin
+          .from("vms_product_mappings")
+          .select("vms_product_id,product_id,snacky_product_id")
+          .in("vms_product_id", vendorProducts);
+        if (mappingError) throw mappingError;
+        const productByVmsId = new Map<string, string>();
+        const conflictingMappings = new Set<string>();
+        for (const mapping of productMappings ?? []) {
+          const vmsId = clean(mapping.vms_product_id);
+          const productId = clean(mapping.product_id || mapping.snacky_product_id);
+          if (!vmsId || !productId) continue;
+          if (productByVmsId.has(vmsId) && productByVmsId.get(vmsId) !== productId) {
+            conflictingMappings.add(vmsId);
+          } else {
+            productByVmsId.set(vmsId, productId);
+          }
+        }
+        conflictingMappings.forEach((id) => productByVmsId.delete(id));
+        const verification = verifyMachineQuantityRowsAgainstXy(rows, liveLayout, productByVmsId);
+        if (!verification.verified) {
+          return NextResponse.json({
+            success: false, installed: true, code: "XY_QUANTITY_MISMATCH",
+            error: "XY does not yet match the refill in every selection. Update only the flagged selections on the machine, then refresh. Snacky has not changed XY.",
+            mismatches: verification.mismatches,
+          }, { status: 409 });
+        }
+      } else {
       const liveBySlot=new Map(liveLayout.map((slot)=>[clean(slot.slotCode),slot]));
       const pendingWrites=rows.filter((row)=>{
         const slotCode=clean(row.slotCode);
@@ -365,6 +404,7 @@ export async function POST(
           mismatches:verification.mismatches,
         },{status:409});
       }
+      } // end write-and-verify mode; read-only mode above cannot write to XY
     }
 
     const record = {
@@ -374,7 +414,7 @@ export async function POST(
       operator_id: context.route.operator_id ?? context.profile.team_member_id ?? null,
       quantity_rows: rows,
       confirmation_key: confirmationKey,
-      verification_status: mode === "xy_api" ? "xy_api_verified" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
+      verification_status: (mode === "xy_api" || mode === "xy_readonly") ? "xy_api_verified" : mode === "xy_screenshot" ? "xy_screenshot_saved" : "offline_pending",
       evidence_files: evidenceFiles,
       offline_reason: offlineReason,
       submitted_at: now,

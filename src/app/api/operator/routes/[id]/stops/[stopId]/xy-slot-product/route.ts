@@ -195,7 +195,7 @@ export async function POST(
       error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
     }, { status: 409 });
   }
-  const targetStockQty = zeroStockRelabel ? 0 : queueOnOffline ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
+  const targetStockQty = zeroStockRelabel ? 0 : verifiedPhysicalSwap ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
   if (targetStockQty > 500 || (beforeSlot.capacity !== null && targetStockQty > beforeSlot.capacity)) {
     return NextResponse.json({ success: false, code: "XY_CAPACITY_EXCEEDED", error: "Actual lane stock exceeds the XY lane capacity." }, { status: 400 });
   }
