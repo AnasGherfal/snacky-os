@@ -7,8 +7,9 @@ import { MachineStockQuickEditor, type QuickMachineRow } from "@/components/oper
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { trainingBagUsed, verifyTrainingSelections } from "@/lib/training-route-simulation";
 
-type Product = { id: string; en: string; ar: string };
-type Lane = {
+export type TrainingProduct = { id: string; en: string; ar: string };
+type Product = TrainingProduct;
+export type TrainingLane = {
   code: string;
   productId: string;
   originalProductId: string;
@@ -21,7 +22,7 @@ type Lane = {
   priceLyd: number;
   oldStockHandled: boolean;
 };
-type Stop = {
+export type TrainingStop = {
   id: string;
   name: string;
   location: string;
@@ -34,13 +35,13 @@ type Stop = {
   note: string;
   verifiedAt: string | null;
   issues: string[];
-  lanes: Lane[];
+  lanes: TrainingLane[];
 };
 type TrainingState = {
   started: boolean;
   pickupConfirmed: boolean;
   pickup: Record<string, number>;
-  stops: Stop[];
+  stops: TrainingStop[];
   routeCompleted: boolean;
 };
 
@@ -51,7 +52,7 @@ const PRODUCTS: Product[] = [
   { id: "pepsi", en: "Pepsi", ar: "بيبسي" },
   { id: "juice", en: "Juice", ar: "عصير" },
 ];
-const START: Stop[] = [
+const START: TrainingStop[] = [
   {
     id: "1", name: "HT Mall", location: "Tripoli", machineCode: "SN-TRAIN-01",
     status: "assigned", xyPending: false, pendingReason: "", cleaningDone: false,
@@ -82,23 +83,25 @@ const START: Stop[] = [
     ],
   },
 ];
-const makeInitial = (): TrainingState => ({
+const makeInitial = (override?: { stops: TrainingStop[]; products: TrainingProduct[] }): TrainingState => ({
   started: false,
   pickupConfirmed: false,
-  pickup: PRODUCTS.reduce<Record<string, number>>((out, product) => {
-    out[product.id] = START.flatMap((stop) => stop.lanes)
+  pickup: (override?.products ?? PRODUCTS).reduce<Record<string, number>>((out, product) => {
+    out[product.id] = (override?.stops ?? START).flatMap((stop) => stop.lanes)
       .filter((lane) => lane.productId === product.id).reduce((sum, lane) => sum + lane.plannedAdd, 0);
     return out;
   }, {}),
-  stops: structuredClone(START),
+  stops: structuredClone(override?.stops ?? START),
   routeCompleted: false,
 });
 
-export function TrainingRouteClient() {
+export function TrainingRouteClient({ realData }: { realData?: { stops: TrainingStop[]; products: TrainingProduct[]; capturedAt: string | null } }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
   const tr = (en: string, arabic: string) => ar ? arabic : en;
-  const [state, setState] = useState<TrainingState>(makeInitial);
+  const [state, setState] = useState<TrainingState>(() => makeInitial(realData));
+  const products = realData?.products ?? PRODUCTS;
+  const isRealSnapshotTraining = Boolean(realData);
   const [screen, setScreen] = useState<"overview" | "pickup" | "stop" | "leftovers">("overview");
   const [index, setIndex] = useState(0);
   const [formError, setFormError] = useState("");
@@ -137,7 +140,7 @@ export function TrainingRouteClient() {
   const trainingRows: QuickMachineRow[] = useMemo(() => {
     const slots = activeStop.lanes.map((lane) => ({
       slotCode: lane.code,
-      productName: PRODUCTS.find((p) => p.id === lane.xyProductId)?.[ar ? "ar" : "en"] ?? lane.xyProductId,
+      productName: products.find((p) => p.id === lane.xyProductId)?.[ar ? "ar" : "en"] ?? lane.xyProductId,
       currentQty: lane.xyQty, capacity: lane.capacity,
       vmsProductId: lane.xyProductId, productId: lane.xyProductId,
       priceLyd: lane.priceLyd, liveStockKnown: true,
@@ -163,19 +166,19 @@ export function TrainingRouteClient() {
     setPhotoUrl(null);
   };
 
-  const reset = () => { setState(makeInitial()); go("overview", 0); };
-  const updateStop = (change: (stop: Stop) => Stop) => setState((prev) => ({
+  const reset = () => { setState(makeInitial(realData)); go("overview", 0); };
+  const updateStop = (change: (stop: TrainingStop) => TrainingStop) => setState((prev) => ({
     ...prev, stops: prev.stops.map((stop, i) => i === index ? change(stop) : stop),
   }));
-  const updateLane = (code: string, patch: Partial<Lane>) =>
+  const updateLane = (code: string, patch: Partial<TrainingLane>) =>
     updateStop((stop) => ({
       ...stop, verifiedAt: null, xyPending: false, lanes: stop.lanes.map((lane) => lane.code === code ? { ...lane, ...patch } : lane),
     }));
-  const label = (productId: string) => PRODUCTS.find((product) => product.id === productId)?.[ar ? "ar" : "en"] ?? productId;
+  const label = (productId: string) => products.find((product) => product.id === productId)?.[ar ? "ar" : "en"] ?? productId;
 
   const startRoute = () => { setState((prev) => ({ ...prev, started: true })); go("pickup"); };
   const confirmPickup = () => {
-    if (!PRODUCTS.every((p) => Number.isSafeInteger(state.pickup[p.id]) && state.pickup[p.id] >= 0)) {
+    if (!products.every((p) => Number.isSafeInteger(state.pickup[p.id]) && state.pickup[p.id] >= 0)) {
       setFormError(tr("Enter valid pickup quantities.", "أدخل كميات استلام صحيحة.")); return;
     }
     setState((prev) => ({ ...prev, pickupConfirmed: true }));
@@ -259,17 +262,25 @@ export function TrainingRouteClient() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-amber-300">SNACKY · OPERATOR TRAINING</p>
-            <h2 className="mt-2 text-xl font-extrabold sm:text-2xl">{tr("Training route — operator experience", "جولة تدريبية — تجربة المشغل")}</h2>
-            <p className="mt-1 text-sm text-emerald-100">{tr("Use the same machine selection editor and camera patterns as Snacky OS. Training data is local to this browser — never a real route.", "استخدم نفس محرر خانات الماكينة والكاميرا. البيانات تجريبية داخل المتصفح فقط ومش جولة حقيقية.")}</p>
+            <h2 className="mt-2 text-xl font-extrabold sm:text-2xl">{isRealSnapshotTraining ? tr("Route · HT Mall & Khalij University", "جولة · HT Mall وجامعة الخليج") : tr("Training route — operator experience", "جولة تدريبية — تجربة المشغل")}</h2>
+            <p className="mt-1 text-sm text-emerald-100">{isRealSnapshotTraining
+              ? tr("REAL machine names, real Snacky products, and recorded XY selection quantities. This is an isolated route copy: updates do NOT affect actual storage, sales, cash, or XY.", "أسماء ماكينات حقيقية ومنتجات سناكي الفعلية وكميات الخانات المسجلة من XY. هذه نسخة تجربة: لا تغيّر المخزن الحقيقي أو المبيعات أو النقدية أو XY.")
+              : tr("Use the same machine selection editor and camera patterns as Snacky OS. Training data is local to this browser — never a real route.", "استخدم نفس محرر خانات الماكينة والكاميرا. البيانات تجريبية داخل المتصفح فقط ومش جولة حقيقية.")}</p>
           </div>
           <span className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-black text-amber-300">{tr("TRAINING ONLY", "تدريب فقط")}</span>
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">3</div><p className="text-xs text-emerald-100">{tr("Stops", "المواقع")}</p></div>
-          <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">{completed}/3</div><p className="text-xs text-emerald-100">{tr("Completed", "مكتملة")}</p></div>
+          <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">{state.stops.length}</div><p className="text-xs text-emerald-100">{tr("Stops", "المواقع")}</p></div>
+          <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">{completed}/{state.stops.length}</div><p className="text-xs text-emerald-100">{tr("Completed", "مكتملة")}</p></div>
           <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">{state.pickupConfirmed ? tr("Picked", "مستلمة") : tr("Pending", "معلقة")}</div><p className="text-xs text-emerald-100">{tr("Route stock", "بضاعة الجولة")}</p></div>
         </div>
       </div>
+      {isRealSnapshotTraining ? (
+        <p className="border-b border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">
+          {tr("Real Snacky machines/products from the last XY import. No Smart AI button in this safe test route. Training numbers are never written to physical machines or storage.", "ماكينات ومنتجات سناكي الحقيقية من آخر استيراد XY. زر Smart AI مش موجود في جولة التجربة. أرقام التدريب ما تتسجلش في الماكينات أو المخزن.")}
+          {realData?.capturedAt ? " · " + new Date(realData.capturedAt).toLocaleString(ar ? "ar-LY" : "en-GB") : ""}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white p-3">
         <button type="button" className="btn-secondary text-sm" onClick={() => go("overview")}>{tr("Route", "الجولة")}</button>
         <button type="button" className="btn-secondary text-sm" onClick={() => go("pickup")}>{tr("Pickup", "الاستلام")}</button>
@@ -285,8 +296,8 @@ export function TrainingRouteClient() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-950">{tr("Today's route", "جولة اليوم")} · TRAIN-001</h3>
-                  <p className="mt-1 text-sm text-slate-600">{tr("Assigned to: Training operator · Tripoli", "مُسندة إلى: مشغل تدريبي · طرابلس")}</p>
+                  <h3 className="text-xl font-bold text-slate-950">{tr("Today's route", "جولة اليوم")} · {isRealSnapshotTraining ? "QA-REAL-DATA" : "TRAIN-001"}</h3>
+                  <p className="mt-1 text-sm text-slate-600">{isRealSnapshotTraining ? tr("Owner real-machine review · imported XY inventory snapshot", "مراجعة المالك للماكينات الحقيقية · لقطة مخزون XY المستوردة") : tr("Assigned to: Training operator · Tripoli", "مُسندة إلى: مشغل تدريبي · طرابلس")}</p>
                 </div>
                 <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-900">{state.routeCompleted ? tr("Completed", "مكتملة") : completed ? tr("In progress", "قيد التنفيذ") : tr("Assigned", "مسندة")}</span>
               </div>
@@ -313,7 +324,7 @@ export function TrainingRouteClient() {
                 </button>
               </div>
             ))}
-            {state.pickupConfirmed && completed === 3 && !state.routeCompleted ? (
+            {state.pickupConfirmed && completed === state.stops.length && !state.routeCompleted ? (
               <button type="button" className="btn-primary w-full" onClick={() => go("leftovers")}>{tr("Finish route — reconcile leftovers", "إنهاء الجولة — مراجعة البواقي")}</button>
             ) : null}
             {state.routeCompleted ? <p className="rounded-xl bg-emerald-100 p-4 text-center font-bold text-emerald-900">{tr("Training route completed successfully", "اكتملت الجولة التدريبية بنجاح")}</p> : null}
@@ -326,7 +337,7 @@ export function TrainingRouteClient() {
             <h3 className="mt-1 text-xl font-bold">{tr("Pickup checklist", "قائمة استلام المنتجات")}</h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">{tr("Count actual items taken from storage. They enter the simulated operator bag only on Confirm Pickup.", "احسب الكمية المستلمة فعلياً من المخزن. تدخل شنطة المشغل التجريبية فقط عند تأكيد الاستلام.")}</p>
             <div className="mt-4 space-y-3">
-              {PRODUCTS.filter((p) => (pickedPlan[p.id] ?? 0) > 0).map((product) => (
+              {products.filter((p) => (pickedPlan[p.id] ?? 0) > 0).map((product) => (
                 <label key={product.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
                   <span className="min-w-0 text-sm font-bold text-slate-900">{product[ar ? "ar" : "en"]}<span className="block text-xs font-normal text-slate-500">{tr("Planned", "المخطط")}: {pickedPlan[product.id]}</span></span>
                   <input type="number" min={0} max={100} inputMode="numeric"
@@ -402,12 +413,12 @@ export function TrainingRouteClient() {
               onChange={setSelectedFinals}
               prices={selectedPrices}
               onPriceChange={setSelectedPrices}
-              productOptions={PRODUCTS.map((product) => ({ id: product.id, name: product[ar ? "ar" : "en"] }))}
+              productOptions={products.map((product) => ({ id: product.id, name: product[ar ? "ar" : "en"] }))}
               productSelections={selectedProducts}
               onSelectProduct={(code, product) => setSelectedProducts((old) => ({ ...old, [code]: product }))}
               onSaveSelection={saveSelection}
               saveStatuses={saveStatuses}
-              isLiveXy
+              isLiveXy={!isRealSnapshotTraining}
             />
             </div>
 
@@ -557,15 +568,15 @@ export function TrainingRouteClient() {
             <h3 className="mt-1 text-xl font-bold">{tr("Operator bag leftovers", "البواقي في شنطة المشغل")}</h3>
             <p className="mt-1 text-sm text-slate-600">{tr("Pickup minus completed-stop fills. Returning items to storage is a separate real ledger operation; this is just a demonstration.", "الكمية المستلمة ناقص التعبئة في المواقع المكتملة. إرجاع المخزون الحقيقي عملية مستقلة؛ هذه محاكاة فقط.")}</p>
             <div className="mt-3 space-y-2">
-              {PRODUCTS.filter((p) => (state.pickup[p.id] ?? 0) > 0).map((product) => (
+              {products.filter((p) => (state.pickup[p.id] ?? 0) > 0).map((product) => (
                 <div key={product.id} className="flex justify-between rounded-xl border border-slate-200 p-3 text-sm">
                   <span className="font-bold">{product[ar ? "ar" : "en"]}</span>
                   <span>{tr("Remaining", "الباقي")}: <strong>{(state.pickup[product.id] ?? 0) - (used[product.id] ?? 0)}</strong></span>
                 </div>
               ))}
             </div>
-            {completed < 3 ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{tr("Complete all three training stops before ending the route.", "أكمل المواقع التدريبية الثلاثة قبل إنهاء الجولة.")}</p> : null}
-            <button type="button" disabled={completed < 3 || state.routeCompleted} className="btn-primary mt-4 w-full disabled:opacity-40"
+            {completed < state.stops.length ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{tr("Complete all three training stops before ending the route.", "أكمل المواقع التدريبية الثلاثة قبل إنهاء الجولة.")}</p> : null}
+            <button type="button" disabled={completed < state.stops.length || state.routeCompleted} className="btn-primary mt-4 w-full disabled:opacity-40"
               onClick={() => { setState((prev) => ({ ...prev, routeCompleted: true })); go("overview"); }}>
               {tr("Complete Route (training)", "إنهاء الجولة (تدريب)")}
             </button>
