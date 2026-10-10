@@ -94,7 +94,7 @@ export function canApplyPhotoChange(args: {
     && oldProductAccounted
     && Number.isSafeInteger(actualQty)
     && actualQty !== null
-    && actualQty >= 0
+    && actualQty > 0
     && suggestion.capacity !== null
     && actualQty <= suggestion.capacity;
 }
