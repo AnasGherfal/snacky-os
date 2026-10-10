@@ -65,7 +65,7 @@ export function PhotoLibraryAiTest() {
   const ar = locale === "ar";
   const tr = (en: string, arabic: string) => ar ? arabic : en;
   const [permission, setPermission] = useState<"loading" | "owner" | "no">("loading");
-  const [configured, setConfigured] = useState(false);
+  const [configured, setConfigured] = useState<boolean | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<VisionResponse | null>(null);
@@ -104,6 +104,10 @@ export function PhotoLibraryAiTest() {
   async function recognize() {
     if (!photo || working) return;
     setError("");
+    if (configured === false) {
+      setError(tr("Photo AI is not connected on this server. Add OPENAI_API_KEY to the Snacky OS production environment and redeploy. Photo preview and all training-route simulations still work without it.", "تحليل الصور بالذكاء الاصطناعي غير مفعّل على الخادم. أضف OPENAI_API_KEY إلى إعدادات بيئة الإنتاج في سناكي وأعد النشر. معاينة الصور والجولة التدريبية تعمل بدون المفتاح."));
+      return;
+    }
     setResult(null);
     setWorking(true);
     try {
@@ -163,13 +167,13 @@ export function PhotoLibraryAiTest() {
           {tr("For this test, the image is sent to the AI provider for analysis only. It is not saved to Snacky storage. Rows and positions are estimates—not verified XY selection codes or quantities.",
             "في هالتجربة، الصورة تُرسل لخدمة الذكاء الاصطناعي للتحليل فقط ولا تُحفظ في تخزين سناكي. مواقع الصفوف تقريبية وليست أرقام خانات XY المؤكدة أو أعداد المخزون.")}
         </div>
-        {!configured ? (
+        {configured === false ? (
           <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
-            {tr("Recognition needs a server-side OpenAI API key. Gallery photo selection and preview still work.",
-              "التعرف يحتاج مفتاح OpenAI على الخادم. اختيار الصورة ومعاينتها يعملان بدون المفتاح.")}
+            {tr("Live AI is not connected: OPENAI_API_KEY is missing from this Snacky OS environment. You can still select a photo and tap Analyze to see setup instructions. The guided camera and training route work independently.", 
+              "تحليل الصور المباشر غير متصل: مفتاح OPENAI_API_KEY غير موجود في بيئة سناكي. تقدر تختار صورة وتضغط تحليل لمشاهدة تعليمات التفعيل. الكاميرا والجولة التدريبية يشتغلن بشكل مستقل.")}
           </p>
         ) : null}
-        <button type="button" onClick={() => void recognize()} disabled={!photo || working || !configured}
+        <button type="button" onClick={() => void recognize()} disabled={!photo || working}
           className="btn-primary min-h-14 w-full text-base disabled:opacity-50">
           {working ? tr("Analyzing photo…", "جارٍ تحليل الصورة…") : tr("Analyze photo with AI (test only)", "تحليل الصورة بالذكاء الاصطناعي (تجربة فقط)")}
         </button>
