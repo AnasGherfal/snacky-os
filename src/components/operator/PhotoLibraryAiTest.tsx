@@ -15,7 +15,7 @@ type VisionResponse = {
 
 async function galleryJpeg(file: File): Promise<File> {
   if (file.size > 18 * 1024 * 1024) throw new Error("Photo is too large. Choose one under 18MB.");
-  if (file.type === "image/jpeg" && file.size <= 5 * 1024 * 1024) return file;
+  if (file.type === "image/jpeg" && file.size <= 3.8 * 1024 * 1024) return file;
   if (!file.type.startsWith("image/")) throw new Error("Choose a picture from your photo library.");
 
   // Browser conversion also handles iPhone HEIC where Safari can decode it.
@@ -30,7 +30,7 @@ async function galleryJpeg(file: File): Promise<File> {
       image.onload = () => resolve();
       image.onerror = () => reject(new Error("This photo could not be opened. Export it as JPEG and try again."));
     });
-    const maxDimension = 2500;
+    const maxDimension = 2200;
     const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -38,8 +38,18 @@ async function galleryJpeg(file: File): Promise<File> {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Could not prepare the selected photo.");
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
-    if (!blob || blob.size > 8 * 1024 * 1024) throw new Error("Photo is still too large. Try a smaller JPEG.");
+    let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.83));
+    if (blob && blob.size > 3.8 * 1024 * 1024) {
+      const lower = document.createElement("canvas");
+      const shrink = Math.min(1, 1600 / Math.max(canvas.width, canvas.height));
+      lower.width = Math.max(1, Math.floor(canvas.width * shrink));
+      lower.height = Math.max(1, Math.floor(canvas.height * shrink));
+      const lowerContext = lower.getContext("2d");
+      if (!lowerContext) throw new Error("Could not compress the photo for analysis.");
+      lowerContext.drawImage(canvas, 0, 0, lower.width, lower.height);
+      blob = await new Promise<Blob | null>((resolve) => lower.toBlob(resolve, "image/jpeg", 0.75));
+    }
+    if (!blob || blob.size > 3.8 * 1024 * 1024) throw new Error("Photo is still too large. Try a smaller JPEG.");
     return new File([blob], "snacky-gallery-photo-test.jpg", { type: "image/jpeg", lastModified: Date.now() });
   } finally {
     URL.revokeObjectURL(url);
