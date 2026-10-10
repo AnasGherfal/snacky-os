@@ -34,6 +34,8 @@ jobs:
       - run: npm ci
       - name: Selection/readback regressions
         run: node --experimental-strip-types --test scripts/test-guided-machine-camera.mjs scripts/test-xy-photo-recognition.mjs scripts/test-xy-refill-readonly-verification.mjs scripts/test-xy-direct-quantity-verification.mjs scripts/test-machine-quantity-confirmation.mjs scripts/test-xy-stop-quantity-editor.mjs
+      - name: Lint guided camera and isolated camera QA
+        run: npx eslint src/components/operator/GuidedMachineCamera.tsx src/app/operator/verification-test/page.tsx
       - name: TypeScript typecheck
         run: npm run typecheck
       - name: Next.js production build
