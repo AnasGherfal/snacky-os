@@ -14,6 +14,10 @@ test("machine proof offers live rear-camera portrait framing, not an unframed up
   assert.match(camera, /BOTTOM VISIBLE/);
   assert.match(camera, /All 4 corners inside the green frame/);
   assert.match(stop, /<GuidedMachineCamera/);
+  const testRoute = fs.readFileSync("src/app/operator/verification-test/page.tsx", "utf8");
+  assert.match(testRoute, /<GuidedMachineCamera/);
+  assert.match(testRoute, /setTestPhotoUrl\(URL.createObjectURL\(file\)\)/);
+  assert.doesNotMatch(testRoute, /uploadRefillProofPhoto|setXySlotProduct/);
 });
 
 test("capture preserves entire original video image; overlay only guides, not crops", () => {
