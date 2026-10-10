@@ -2713,12 +2713,9 @@ export default function MachineStopPage() {
         </section>
 
 
-        <details className="rounded-xl border border-slate-200 bg-white p-3">
-          <summary className="cursor-pointer text-sm font-medium text-slate-500">
-            {tr("Optional XY screenshots / technical verification", "اختياري: صور XY أو التحقق الفني")}
-          </summary>
-          <div className="mt-3">
-          <MachineQuantityConfirmationCard
+        {/* Final selection check is part of the normal refill workflow,
+            not hidden behind an optional technical-details disclosure. */}
+        <MachineQuantityConfirmationCard
             compactEvidenceOnly
             routeId={routeId}
             stopId={stopId}
@@ -2731,8 +2728,6 @@ export default function MachineStopPage() {
               setQuantityVerificationStatus(status);
             }}
           />
-          </div>
-        </details>
 
                 <ManualRouteSalesSection
           routeId={routeId}
