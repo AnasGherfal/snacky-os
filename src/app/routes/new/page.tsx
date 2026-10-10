@@ -101,6 +101,14 @@ type MachineStockAuditRow = {
   product_id: string | null;
 };
 
+type RecentCompletedRefillItem = {
+  machine_id: string;
+  product_id: string;
+  route_stop_id: string;
+  created_at: string;
+  route_stop?: { completed_at: string | null } | { completed_at: string | null }[] | null;
+};
+
 
 
 type SupabaseLikeError = { code?: string | null; message?: string | null; details?: string | null; hint?: string | null };
@@ -267,6 +275,7 @@ export default async function NewRoutePage() {
     batchResult,
     latestStockResult,
     machineSlotsResult,
+    recentCompletedRefillResult,
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase.from("machines").select("*, location:locations(*)").eq("status", "active").order("machine_code"),
@@ -298,7 +307,19 @@ export default async function NewRoutePage() {
       label: "routes.new.machine_slots",
       promise: supabase
         .from("machine_slots")
-        .select("id, machine_id, slot_code, product_id, par_qty, min_qty"),
+        .select("id, machine_id, slot_code, product_id, par_qty, min_qty")
+        .eq("active", true),
+    }),
+    safeSupabaseQuery<RecentCompletedRefillItem>({
+      label: "routes.new.recent_completed_machine_refills",
+      promise: planningReadClient
+        .from("route_stop_items")
+        .select("machine_id, product_id, route_stop_id, created_at, route_stop:route_stops!inner(completed_at, status)")
+        .eq("route_stop.status", "completed")
+        .gt("filled_quantity", 0)
+        .gte("created_at", new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(2500),
     }),
   ]);
   const queryIssues = [
@@ -427,6 +448,39 @@ export default async function NewRoutePage() {
   const productRows = (products ?? []) as ProductRow[];
   const productById = new Map(productRows.map((product) => [product.id, product]));
   const activeProductIds = new Set(productRows.map((product) => product.id));
+  // XY stock is authoritative for mapped live selections; the existing
+  // planogram alone may omit products actually present in a machine.
+  const visibleMachineProductSlots: MachineSlotRow[] = [
+    ...machineSlotRows,
+    ...latestStockRows
+      .filter((row) => Boolean(row.machine_id && row.slot_code && row.product_id && activeProductIds.has(row.product_id)))
+      .map((row) => ({
+        id: row.id,
+        machine_id: String(row.machine_id),
+        slot_code: row.slot_code,
+        product_id: row.product_id,
+        par_qty: row.capacity,
+        min_qty: null,
+      })),
+  ];
+  // The latest *completed* refill provides a conservative fallback when XY
+  // does not currently report a product's selection (e.g. chocolate rolls).
+  // These are picker candidates only; no quantity is inferred from history.
+  const completedRefillRows = (recentCompletedRefillResult.data ?? []) as RecentCompletedRefillItem[];
+  const newestCompletedStop = new Map<string, { stopId: string; completedAt: string }>();
+  for (const item of completedRefillRows) {
+    const stop = Array.isArray(item.route_stop) ? item.route_stop[0] : item.route_stop;
+    const completedAt = String(stop?.completed_at ?? item.created_at ?? "");
+    const current = newestCompletedStop.get(item.machine_id);
+    if (!current || completedAt > current.completedAt) {
+      newestCompletedStop.set(item.machine_id, { stopId: item.route_stop_id, completedAt });
+    }
+  }
+  const machineRecentFillRows = Array.from(new Map(
+    completedRefillRows
+      .filter((item) => item.route_stop_id === newestCompletedStop.get(item.machine_id)?.stopId && activeProductIds.has(item.product_id))
+      .map((item) => [item.machine_id + ":" + item.product_id, { machine_id: item.machine_id, product_id: item.product_id }] as const),
+  ).values());
   const loadedRecommendations = (recommendations ?? []) as RecommendationRow[];
   const activeRecommendations = loadedRecommendations.filter((recommendation) => activeProductIds.has(recommendation.product_id));
   const storageByProduct = new Map<string, { product_id: string; product_name: string; quantity_on_hand: number }>();
@@ -686,7 +740,8 @@ export default async function NewRoutePage() {
           machines={machineCatalog}
           recommendations={activeRecommendations}
           diagnostics={diagnostics}
-          machinePlanogramRows={machineSlotRows}
+          machinePlanogramRows={visibleMachineProductSlots}
+          machineRecentFillRows={machineRecentFillRows}
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}
