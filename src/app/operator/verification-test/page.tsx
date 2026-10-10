@@ -83,7 +83,7 @@ export default function VerificationTestRoute() {
     setChecks((previous) => { const next = { ...previous }; delete next[index]; return next; });
     setFinished(false);
   };
-  const reset = () => { setStops(structuredClone(originals)); setChecks({}); setIndex(0); setFinished(false); };
+  const reset = () => { setStops(structuredClone(originals)); setChecks({}); setIndex(0); setFinished(false); setTestPhotoUrl(null); };
 
   return <main dir={ar ? "rtl" : "ltr"} className="mx-auto max-w-5xl space-y-5 px-3 py-6 sm:px-6">
     <div className="rounded-3xl bg-emerald-950 p-5 text-white sm:p-7">
