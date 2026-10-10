@@ -109,6 +109,7 @@ export function TrainingRouteClient() {
   const [saveStatuses, setSaveStatuses] = useState<Record<string, { status: "verified" | "error"; message: string }>>({});
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [showIssue, setShowIssue] = useState(false);
+  const [photoScanned, setPhotoScanned] = useState(false);
   const [issueText, setIssueText] = useState("");
   const [showCash, setShowCash] = useState(false);
   const [sampleCash, setSampleCash] = useState("");
@@ -154,6 +155,7 @@ export function TrainingRouteClient() {
     setSelectedPrices({});
     setSaveStatuses({});
     setShowIssue(false);
+    setPhotoScanned(false);
     setIssueText("");
     setShowCash(false);
     setSampleCash("");
@@ -393,6 +395,7 @@ export function TrainingRouteClient() {
               ))}
             </div>
 
+            <div id="training-machine-selections">
             <MachineStockQuickEditor
               rows={trainingRows}
               values={selectedFinals}
@@ -406,6 +409,7 @@ export function TrainingRouteClient() {
               saveStatuses={saveStatuses}
               isLiveXy
             />
+            </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4" id="training-xy-verify">
               <div className="flex items-center justify-between gap-2">
@@ -442,6 +446,7 @@ export function TrainingRouteClient() {
               <div className="mt-3">
                 <GuidedMachineCamera disabled={false} selectionRowCount={trainingRows.length || 4} onCaptured={async (file) => {
                   setPhotoUrl(URL.createObjectURL(file));
+                  setPhotoScanned(false);
                   updateStop((stop) => ({ ...stop, photoReady: true }));
                   return true;
                 }} />
@@ -453,6 +458,7 @@ export function TrainingRouteClient() {
                     const file = event.target.files?.[0]; event.target.value = "";
                     if (!file) return;
                     setPhotoUrl(URL.createObjectURL(file));
+                    setPhotoScanned(false);
                     updateStop((stop) => ({ ...stop, photoReady: true }));
                   }} />
               </label>
@@ -463,6 +469,42 @@ export function TrainingRouteClient() {
                   <p className="mt-2 text-sm font-bold text-emerald-900">{tr("Training proof photo saved locally", "تم حفظ صورة التدريب محلياً")}</p>
                 </div>
               ) : activeStop.photoReady ? <p className="mt-2 text-xs text-emerald-900">{tr("Proof recorded for this training stop", "صورة الإثبات محفوظة لهذا الموقع التجريبي")}</p> : null}
+              <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+                <div className="text-xs font-black uppercase tracking-wider text-indigo-900">SNACKY · PHOTO AI TRAINING</div>
+                <p className="mt-1 text-xs leading-5 text-indigo-900">
+                  {tr("Practice the photo-to-XY review steps with known sample products. This button does NOT analyze your uploaded photo; real AI photo testing is in the separate Owner AI Lab below.", "جرّب خطوات مراجعة المنتجات بالصورة مع منتجات تدريبية معروفة. الزر ما يحللش صورتك فعلياً؛ تجربة تحليل الصور الحقيقي موجودة في مختبر صور المالك تحت.")}
+                </p>
+                <button type="button" disabled={!activeStop.photoReady} className="btn-secondary mt-3 w-full disabled:opacity-40"
+                  onClick={() => setPhotoScanned(true)}>{tr("Practice photo AI scan (simulation)", "تجربة كشف المنتجات من الصورة (محاكاة)")}</button>
+                {photoScanned ? (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-bold text-indigo-900">{tr("Sample recognition results — verify each selection", "نتائج التعرف التجريبية — راجع كل خانة")}</p>
+                    {activeStop.lanes.map((lane) => {
+                      const wrong = lane.xyProductId !== lane.productId;
+                      return (
+                        <div key={lane.code} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-3 text-xs">
+                          <div><strong>{lane.code}</strong> · {label(lane.productId)}
+                            <p className={wrong ? "mt-1 text-rose-800" : "mt-1 text-emerald-800"}>{wrong ? tr("XY product differs", "المنتج مختلف في XY") : tr("Already matches XY", "مطابق لـ XY")}</p>
+                          </div>
+                          {wrong ? (
+                            <button type="button" className="rounded-lg border border-indigo-400 px-3 py-2 font-bold text-indigo-900" onClick={() => {
+                              if (lane.initialQty > 0 && lane.productId !== lane.originalProductId && !lane.oldStockHandled) {
+                                setFormError(tr("Confirm old stock handling first.", "أكد التعامل مع المنتج القديم أولاً.")); return;
+                              }
+                              updateLane(lane.code, { xyProductId: lane.productId, xyQty: 0 });
+                              setFormError("");
+                              setNotice(tr("Training XY product changed to the approved sample. Enter the final physical stock quantity separately.", "تم تغيير المنتج في XY التجريبي. أدخل الكمية النهائية داخل الخانة بشكل منفصل."));
+                            }}>{tr("Approve product (simulate)", "اعتماد المنتج (تجريبي)")}</button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    <a href="#training-machine-selections" className="block rounded-lg bg-indigo-900 px-3 py-3 text-center text-xs font-bold text-white">
+                      {tr("Go to Machine selections to update final quantities", "امشي لخانات الماكينة وحدّث الكميات النهائية")}
+                    </a>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
