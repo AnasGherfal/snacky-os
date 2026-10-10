@@ -16,6 +16,10 @@ on:
       - "src/app/api/admin/qa-real-route-snapshot/route.ts"
       - "src/app/operator/routes/qa-real/page.tsx"
       - "src/app/operator/routes/page.tsx"
+      - "src/app/operator/page.tsx"
+      - "src/app/routes/page.tsx"
+      - "src/components/operator/OwnerQaRouteCard.tsx"
+      - "scripts/test-owner-qa-route-discoverability.mjs"
       - "src/components/testing-lab/RealMachineRouteLoader.tsx"
       - "scripts/test-real-machine-qa-route.mjs"
       - ".github/workflows/owner-testing-lab.yml"
@@ -34,9 +38,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Owner-only lab and photo-recognition regression tests
-        run: node --experimental-strip-types --test scripts/test-owner-photo-gallery-lab.mjs scripts/test-owner-testing-lab-camera.mjs scripts/test-testing-lab-training-route.mjs scripts/test-real-machine-qa-route.mjs
+        run: node --experimental-strip-types --test scripts/test-owner-photo-gallery-lab.mjs scripts/test-owner-testing-lab-camera.mjs scripts/test-testing-lab-training-route.mjs scripts/test-real-machine-qa-route.mjs scripts/test-owner-qa-route-discoverability.mjs
       - name: Lint changed UI and API
-        run: npx eslint src/app/admin/testing-lab src/app/operator/routes/qa-real/page.tsx src/app/api/admin/qa-real-route-snapshot/route.ts src/app/api/admin/xy-photo-gallery-test/route.ts src/components/testing-lab/RealMachineRouteLoader.tsx src/components/testing-lab src/components/Sidebar.tsx src/app/admin/page.tsx src/lib/xy-photo-gallery-test.ts
+        run: npx eslint src/app/admin/testing-lab src/app/operator/page.tsx src/app/operator/routes/page.tsx src/components/operator/OwnerQaRouteCard.tsx src/app/operator/routes/qa-real/page.tsx src/app/api/admin/qa-real-route-snapshot/route.ts src/app/api/admin/xy-photo-gallery-test/route.ts src/components/testing-lab/RealMachineRouteLoader.tsx src/components/testing-lab src/components/Sidebar.tsx src/app/admin/page.tsx src/lib/xy-photo-gallery-test.ts
       - name: Typecheck
         run: npm run typecheck
       - name: Production build

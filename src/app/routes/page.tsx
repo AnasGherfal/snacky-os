@@ -3,11 +3,12 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, isAdminRole } from "@/lib/authz";
+import { canAccessPath, hasRole, isAdminRole } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { isActiveRouteStatus, isCompletedRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getServerI18n } from "@/lib/i18n/server";
+import { OwnerQaRouteCard } from "@/components/operator/OwnerQaRouteCard";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { loadRouteListSupport } from "@/lib/route-list-support";
 
@@ -170,6 +171,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
           {canReviewInventory ? <SecondaryButton href="/routes/inventory-review">{locale === "ar" ? "مراجعة فروق المخزون" : "Review inventory differences"}</SecondaryButton> : null}
           <PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>
         </div>} />
+      {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
       {operatorsError || stopsError || stopMachinesError ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         {locale === "ar" ? "بعض تفاصيل ملخص الجولات غير متاحة الآن. ما زالت الجولات محمّلة." : "Some route summary details are unavailable right now. Routes are still loaded."}
       </div> : null}
