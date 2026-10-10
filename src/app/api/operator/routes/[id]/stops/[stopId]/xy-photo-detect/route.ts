@@ -121,6 +121,7 @@ export async function POST(
   const grouped = groupMachineLayoutRows(slots);
   const prompt = [
     "You are reading ONE real vending machine photograph. Match the visible FRONT-FACING product packaging to the correct XY selection code.",
+    "Mark photoQuality good only when the camera is approximately straight-on, the entire machine including top/bottom and its rows are in frame, and product faces are readable. Mark partial for cropped, angled or glare-obscured frames, unreadable when lane alignment is unreliable.",
     "NEVER infer products or quantities hidden behind the first visible item. Never infer sellable stock count, price, expiry or old inventory custody from this photo.",
     "Do not assume the existing XY product assignment is correct: a physical operator may have swapped products.",
     "Only return a selection if the product PACKAGE and its row/column position are visibly identifiable. Omit ambiguous, obscured, empty, reflections and unreadable selections.",
