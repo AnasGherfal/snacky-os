@@ -1,0 +1,36 @@
+name: Owner Testing Lab release checks
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/app/admin/testing-lab/**"
+      - "src/app/api/admin/xy-photo-gallery-test/route.ts"
+      - "src/components/testing-lab/**"
+      - "src/lib/xy-photo-gallery-test.ts"
+      - "src/components/Sidebar.tsx"
+      - "src/app/admin/page.tsx"
+      - "scripts/test-owner-photo-gallery-lab.mjs"
+      - "scripts/test-owner-testing-lab-camera.mjs"
+      - ".github/workflows/owner-testing-lab.yml"
+  workflow_dispatch:
+jobs:
+  testing-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Owner-only lab and photo-recognition regression tests
+        run: node --experimental-strip-types --test scripts/test-owner-photo-gallery-lab.mjs scripts/test-owner-testing-lab-camera.mjs
+      - name: Lint changed UI and API
+        run: npx eslint src/app/admin/testing-lab src/app/api/admin/xy-photo-gallery-test/route.ts src/components/testing-lab src/components/Sidebar.tsx src/app/admin/page.tsx src/lib/xy-photo-gallery-test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
