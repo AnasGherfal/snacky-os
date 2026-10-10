@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OwnerQaRouteCard } from "@/components/operator/OwnerQaRouteCard";
 import { redirect } from "next/navigation";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";
@@ -155,7 +156,7 @@ function RouteCard({
 }
 
 export default async function OperatorRoutesPage() {
-  const { t } = await getServerI18n();
+  const { t, locale } = await getServerI18n();
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
 
@@ -336,22 +337,7 @@ export default async function OperatorRoutesPage() {
         action={headerAction}
       />
 
-      {hasRole(profile, "owner") ? (
-        <Link href="/operator/routes/qa-real"
-          className="block rounded-2xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm transition hover:shadow-md">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-xs font-extrabold tracking-widest text-emerald-800">SNACKY · REAL MACHINE QA</p>
-              <h2 className="mt-1 text-lg font-bold text-slate-950">{t("Test Route — HT Mall & Khalij University", "جولة تجريبية — HT Mall وجامعة الخليج")}</h2>
-              <p className="mt-1 text-sm text-slate-600">{t(
-                "Uses actual machines, products and XY selection snapshots. Practice the route without touching real storage or sending XY changes. Smart AI planning is off.",
-                "تستخدم ماكينات سناكي ومنتجاتها وكميات خانات XY المسجلة. جرّب الجولة بدون خصم مخزون حقيقي أو إرسال تغييرات إلى XY. التخطيط الذكي مغلق."
-              )}</p>
-            </div>
-            <span className="rounded-lg bg-emerald-800 px-4 py-3 text-sm font-bold text-white">{t("Open Test Route", "افتح الجولة التجريبية")} →</span>
-          </div>
-        </Link>
-      ) : null}
+      {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
 
       {assignedRoutesError || availableRoutesError ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
