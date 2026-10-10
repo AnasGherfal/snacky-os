@@ -163,6 +163,7 @@ const adminItem: NavItem = {
   moduleKey: "admin",
 };
 const dataHealthItem: NavItem = { label: { en: "Data Health", ar: "سلامة البيانات" }, href: "/operations-health", icon: AlertCircle, exact: true };
+const ownerTestingLabItem: NavItem = { label: { en: "Testing Lab", ar: "مختبر الاختبارات" }, href: "/admin/testing-lab", icon: ShieldCheck, exact: true };
 
 const cashHandlingItem: NavItem = { label: { en: "Cash handling", ar: "تسليم وعد النقد" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
 const operatorCashItem: NavItem = { label: { en: "Cash", ar: "النقدية" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
@@ -177,7 +178,7 @@ const ownerAdminNav: NavSection[] = [
   { items: [dashboardItem, personalWorkItem] },
   { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
-  { title: sectionTitles.system, items: [dataHealthItem, adminItem, managementNotesItem] },
+  { title: sectionTitles.system, items: [dataHealthItem, adminItem, ownerTestingLabItem, managementNotesItem] },
 ];
 
 const supervisorNav: NavSection[] = [
@@ -217,7 +218,15 @@ function uniqueItems(items: NavItem[]) {
 
 function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[] {
   const context = { id: "sidebar", role, roles };
-  if (isOwnerAdminRole(context)) return ownerAdminNav;
+  if (isOwnerAdminRole(context)) {
+    // Lab is deliberately visible only to the owner, not every admin/supervisor.
+    return hasRole(context, "owner")
+      ? ownerAdminNav
+      : ownerAdminNav.map((section) => ({
+          ...section,
+          items: section.items.filter((item) => item.href !== ownerTestingLabItem.href),
+        }));
+  }
   if (isSupervisorRole(context)) return supervisorNav;
 
   const effectiveRoles = roles?.length ? roles : [role];

@@ -2,9 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { hasRole, isOwnerAdminRole } from "@/lib/authz";
 
 const adminLinks = [
+  {
+    title: "Testing Lab / مختبر الاختبارات",
+    href: "/admin/testing-lab",
+    description: "Owner-only photo library AI testing, guided camera and safe refill simulations. No live XY or inventory writes.",
+  },
   {
     title: "Owner Operations / متابعة العمليات",
     href: "/admin/operations",
@@ -113,7 +118,7 @@ export default async function AdminPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {adminLinks.map((item) => (
+        {adminLinks.filter((item) => item.href !== "/admin/testing-lab" || hasRole(profile, "owner")).map((item) => (
           <Link
             key={item.href}
             href={item.href}
