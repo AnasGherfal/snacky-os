@@ -88,7 +88,8 @@ test("manual product controls display and enforce machine-specific remaining sto
   assert.match(source, /availableStockForMachine/);
   assert.match(source, /Available for this machine/);
   assert.match(source, /Unassigned after route/);
-  assert.match(source, /availableForMachine <= 0/);
+  assert.match(source, /selectedQty < availableForMachine/);
+  assert.match(source, /disabled=\{saving \|\| !canIncrease\}/);
   assert.match(source, /const safeTotal = Math\.min\(unitQuantity\(desiredManual\), maxTotal\)/);
   assert.match(source, /max=\{storageKnown \? available : 0\}/);
 });
