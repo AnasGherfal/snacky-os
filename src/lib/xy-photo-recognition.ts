@@ -68,7 +68,9 @@ export function selectPhotoSuggestions(
       currentProductId: slot.currentProductId,
       currentQty: slot.currentQty,
       capacity: slot.capacity,
-      differentFromXy: candidate.vmsProductId !== slot.currentVmsProductId,
+      differentFromXy: slot.currentProductId
+        ? slot.currentProductId !== candidate.id
+        : candidate.vmsProductId !== slot.currentVmsProductId,
     });
   }
   suggestions.sort((a, b) => a.slotCode.localeCompare(b.slotCode, undefined, { numeric: true }));
