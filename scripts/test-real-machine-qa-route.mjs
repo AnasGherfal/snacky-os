@@ -22,7 +22,9 @@ test("loads actual active Snacky machine and product selections without guessing
 test("owners access route from real Operator Routes page, not testing lab",()=>{
   assert.match(page, /hasRole\(profile, "owner"\)/);
   assert.match(list, /hasRole\(profile, "owner"\)/);
-  assert.match(list, /\/operator\/routes\/qa-real/);
+  assert.match(list, /<OwnerQaRouteCard locale=\{locale\} \/>/);
+  const qaCard = fs.readFileSync("src/components/operator/OwnerQaRouteCard.tsx", "utf8");
+  assert.match(qaCard, /href="\/operator\/routes\/qa-real"/);
   assert.match(loader, /<TrainingRouteClient/);
   assert.match(loader, /<PhotoLibraryAiTest/);
 });
