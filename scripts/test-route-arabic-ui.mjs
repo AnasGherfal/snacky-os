@@ -18,7 +18,7 @@ test("route localization source is valid UTF-8 without mojibake markers", () => 
   const suspiciousPatterns = ["Ãƒ", "Ã¢", "Ã‚", "â€", "Ø", "Ù", "Ùƒ", "Ø§", "�"];
   for (const [name, source] of Object.entries(routeSources)) for (const marker of suspiciousPatterns) assert.equal(source.includes(marker), false, `${name} contains mojibake marker ${marker}`);
 });
-test("quick route actions are explicit language pairs", () => { for (const label of ["Quick stop actions", "Manual sale", "Damaged", "Return"]) hasPair(quick, label); });
+test("quick route actions are explicit language pairs", () => { for (const label of ["More stop actions", "Manual sale", "Damaged", "Return"]) hasPair(quick, label); });
 test("manual sales use locale-aware labels and validation", () => {
   for (const label of ["Manual Route Sales", "Choose a product or enter the product name.", "Manual sale saved.", "Optional context for this sale"]) hasPair(manual, label);
   assert.doesNotMatch(manual, /setError\(\"[^\"]*[\u0600-\u06ff]/);
