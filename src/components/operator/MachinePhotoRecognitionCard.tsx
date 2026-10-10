@@ -50,7 +50,7 @@ export function MachinePhotoRecognitionCard({
   const patch = (code: string, patchRow: Partial<RowState>) =>
     setRows((current) => ({
       ...current,
-      [code]: { reviewed: false, oldAccounted: false, actualQty: "", selectedProductId: "", ...current[code], ...patchRow },
+      [code]: { ...(current[code] ?? { reviewed: false, oldAccounted: false, actualQty: "", selectedProductId: "" }), ...patchRow },
     }));
 
   const selected = changed.filter((suggestion) => {
