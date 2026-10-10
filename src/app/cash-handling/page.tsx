@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canRecordCashRemoval, hasAnyRole } from "@/lib/authz";
+import { canRecordCashRemoval, hasAnyRole, isOperatorRole } from "@/lib/authz";
 import { cashHandlingRoles, cashUuid } from "@/lib/cash-handover";
 import { CashHandlingWorkspace } from "@/components/CashHandlingWorkspace";
 import { CashRemovalForm } from "@/components/CashRemovalForm";
@@ -78,6 +78,7 @@ export default async function CashHandlingPage({
           selectedMachineId={params.machine_id}
           clientSubmissionId={params.submission_id && cashUuid.test(params.submission_id) ? params.submission_id : crypto.randomUUID()}
           cancelHref="/cash-handling"
+          requiresAmounts={!isOperatorRole(context)}
         />
       </div>
     );
