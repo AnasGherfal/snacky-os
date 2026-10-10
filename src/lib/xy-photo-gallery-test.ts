@@ -73,4 +73,4 @@ export function validateGalleryObservations(
 }
 
 export const GALLERY_PHOTO_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-export const GALLERY_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+export const GALLERY_PHOTO_MAX_BYTES = 4 * 1024 * 1024;
