@@ -7,6 +7,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
 import { MachinePhotoRecognitionCard } from "@/components/operator/MachinePhotoRecognitionCard";
+import { GuidedMachineCamera } from "@/components/operator/GuidedMachineCamera";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
@@ -552,22 +553,33 @@ async function prepareProofPhoto(file: File) {
   if (!file.type.startsWith("image/")) {
     throw new Error("Proof photo must be an image.");
   }
-  if (file.size <= PROOF_PHOTO_TARGET_BYTES && SUPPORTED_PROOF_PHOTO_TYPES.has(file.type)) return file;
+  // Photos taken through the guided machine camera retain more detail so
+  // small product labels remain legible for optional AI identification.
+  const guidedMachinePhoto = file.name.startsWith("snacky-guided-");
+  const targetBytes = guidedMachinePhoto ? 2 * 1024 * 1024 : PROOF_PHOTO_TARGET_BYTES;
+  if (file.size <= targetBytes && SUPPORTED_PROOF_PHOTO_TYPES.has(file.type)) return file;
 
   let bestBlob: Blob | null = null;
-  const attempts = [
-    { maxDimension: 1600, quality: 0.82 },
-    { maxDimension: 1280, quality: 0.74 },
-    { maxDimension: 1024, quality: 0.68 },
-    { maxDimension: 900, quality: 0.62 },
-  ];
+  const attempts = guidedMachinePhoto
+    ? [
+        { maxDimension: 2400, quality: 0.88 },
+        { maxDimension: 2048, quality: 0.84 },
+        { maxDimension: 1800, quality: 0.78 },
+        { maxDimension: 1600, quality: 0.74 },
+      ]
+    : [
+        { maxDimension: 1600, quality: 0.82 },
+        { maxDimension: 1280, quality: 0.74 },
+        { maxDimension: 1024, quality: 0.68 },
+        { maxDimension: 900, quality: 0.62 },
+      ];
 
   try {
     for (const attempt of attempts) {
       const blob = await jpegBlobFromImage(file, attempt.maxDimension, attempt.quality);
       if (!blob) continue;
       if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
-      if (blob.size <= PROOF_PHOTO_TARGET_BYTES) break;
+      if (blob.size <= targetBytes) break;
     }
   } catch (error) {
     console.warn("[operator:stop-mobile] Proof photo compression failed", {
@@ -1555,8 +1567,8 @@ export default function MachineStopPage() {
     setMissingReports((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line));
   };
 
-  const saveFinalMachinePhotoImmediately = async (file: File) => {
-    if (!stopData) return;
+  const saveFinalMachinePhotoImmediately = async (file: File): Promise<boolean> => {
+    if (!stopData) return false;
     setFinalPhotoFile(file);
     setFinalPhotoName(file.name);
     setFinalPhotoSaving(true);
@@ -1578,8 +1590,10 @@ export default function MachineStopPage() {
       setStopData((current) => current ? { ...current, hasCompletionPhoto: true } : current);
       setFinalPhotoFile(null);
       window.dispatchEvent(new CustomEvent("snacky:machine-photo-persisted", { detail: { saved: true } }));
+      return true;
     } catch (photoError) {
       setError(photoError instanceof Error ? photoError.message : tr("Could not save machine photo.", "تعذر حفظ صورة الماكينة."));
+      return false;
     } finally {
       setFinalPhotoSaving(false);
     }
@@ -2968,17 +2982,25 @@ export default function MachineStopPage() {
           </div>
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_260px]">
             <div>
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  if (file) void saveFinalMachinePhotoImmediately(file);
-                }}
+              <GuidedMachineCamera
                 disabled={finalPhotoSaving}
-                className="field-input"
+                onCaptured={saveFinalMachinePhotoImmediately}
               />
+              <label className="mt-3 block text-xs font-semibold text-slate-600">
+                {tr("Or upload an existing image / use the phone camera without the guide", "أو ارفع صورة موجودة / استخدم كاميرا الهاتف بدون إطار التوجيه")}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    event.target.value = "";
+                    if (file) void saveFinalMachinePhotoImmediately(file);
+                  }}
+                  disabled={finalPhotoSaving}
+                  className="field-input mt-2"
+                />
+              </label>
               {finalPhotoSaving ? <p className="mt-2 text-sm font-semibold text-amber-700">{tr("Saving photo now... Keep this page open until it says saved.", "جارٍ حفظ الصورة الآن... أبقِ الصفحة مفتوحة حتى يظهر أنها محفوظة.")}</p> : null}
               {!finalPhotoSaving && finalPhotoFile ? <p className="mt-2 text-sm text-rose-700">{tr("Photo not saved yet. Select the same photo again to retry, or Complete Stop to retry safely.", "لم تُحفظ الصورة بعد. اختر نفس الصورة مرة أخرى لإعادة المحاولة، أو أنهِ الموقع لإعادة المحاولة بأمان.")}</p> : null}
               {!finalPhotoSaving && !finalPhotoFile && persistedMachinePhotoReady ? <p className="mt-2 text-sm font-semibold text-emerald-700">{tr("Photo saved. You can close the app and return later.", "تم حفظ الصورة. يمكنك إغلاق التطبيق والعودة لاحقاً.")}</p> : null}
