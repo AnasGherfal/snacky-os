@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, isOwnerAdminRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { isTerminalRouteStatus } from "@/lib/route-workflow";
 import { generateSmartRoutePlan } from "@/lib/smart-route-planner";
@@ -35,6 +35,11 @@ export async function POST(
 
   if (!routeId) return jsonError("Route id is required.");
   if (!supabase || !profile) return jsonError("You must be signed in.", 401);
+  // Operators execute approved routes; only managers may create proposals.
+  // The DB independently blocks overwriting any existing route plan.
+  if (!isOwnerAdminRole(profile)) {
+    return jsonError("Smart Route is prepared during management planning, not during operator pickup.", 403);
+  }
 
   const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const { data: route, error: routeError } = await supabase
