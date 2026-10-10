@@ -1,15 +1,18 @@
 ﻿import Link from "next/link";
+import { OwnerQaRouteCard } from "@/components/operator/OwnerQaRouteCard";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
+import { canExecuteRoutes, canManageOperations, hasRole } from "@/lib/authz";
 import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
+import { getServerI18n } from "@/lib/i18n/server";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export const dynamic = "force-dynamic";
 
 export default async function OperatorPage() {
+  const { locale } = await getServerI18n();
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!supabase) {
@@ -75,6 +78,7 @@ export default async function OperatorPage() {
   return (
     <>
       <div className="space-y-6">
+        {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
         <PageHeader
           title="Operator"
           subtitle="Assigned refill routes and daily execution workflow."
