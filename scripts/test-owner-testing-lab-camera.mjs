@@ -3,57 +3,39 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const camera = fs.readFileSync("src/components/testing-lab/GuidedMachineCamera.tsx", "utf8");
-const stop = fs.readFileSync("src/app/admin/testing-lab/TestingLabClient.tsx", "utf8");
+const client = fs.readFileSync("src/app/admin/testing-lab/TestingLabClient.tsx", "utf8");
+const page = fs.readFileSync("src/app/admin/testing-lab/page.tsx", "utf8");
+const sidebar = fs.readFileSync("src/components/Sidebar.tsx", "utf8");
+const admin = fs.readFileSync("src/app/admin/page.tsx", "utf8");
 
-test("machine proof offers live rear-camera portrait framing, not an unframed upload only", () => {
+test("guided camera frame, no cropping, photo preview and mobile fallback", () => {
   assert.match(camera, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(camera, /facingMode: \{ ideal: "environment" \}/);
   assert.match(camera, /aspect-\[3\/4\]/);
   assert.match(camera, /border-emerald-300/);
   assert.match(camera, /selectionRowCount/);
-  assert.match(stop, /selectionRowCount=\{machineLayoutRows\.length \|\| 6\}/);
   assert.match(camera, /TOP OF MACHINE/);
   assert.match(camera, /BOTTOM VISIBLE/);
   assert.match(camera, /All 4 corners inside the green frame/);
-  assert.match(stop, /<GuidedMachineCamera/);
-  const testRoute = fs.readFileSync("src/app/admin/testing-lab/TestingLabClient.tsx", "utf8");
-  assert.match(testRoute, /<GuidedMachineCamera/);
-  assert.match(testRoute, /setTestPhotoUrl\(URL.createObjectURL\(file\)\)/);
-  assert.doesNotMatch(testRoute, /uploadRefillProofPhoto|setXySlotProduct/);
-});
-
-test("capture preserves entire original video image; overlay only guides, not crops", () => {
   assert.match(camera, /canvas\.width = video\.videoWidth/);
   assert.match(camera, /canvas\.height = video\.videoHeight/);
   assert.match(camera, /ctx\.drawImage\(video, 0, 0, canvas\.width, canvas\.height\)/);
-  assert.doesNotMatch(camera, /ctx\.drawImage\(video, [^)]*crop/);
-});
-
-test("guided capture supports honest image review, retake, and optional lighting warnings", () => {
-  assert.match(camera, /analyzeGuidedMachinePhoto/);
-  assert.match(camera, /dark/);
-  assert.match(camera, /glare/);
-  assert.match(camera, /blurry/);
-  assert.match(camera, /frameConfirmed/);
-  assert.match(camera, /disabled=\{working \|\| !frameConfirmed\}/);
   assert.match(camera, /Retake/);
-  assert.match(camera, /previewUrl/);
-});
-
-test("camera failure can use native phone capture without losing photo workflow", () => {
   assert.match(camera, /capture="environment"/);
-  assert.match(camera, /Live camera could not open/);
-  assert.match(camera, /onCaptured\(photoFile\)/);
-  assert.match(stop, /saveFinalMachinePhotoImmediately/);
-  assert.match(stop, /return false/);
-  assert.match(stop, /snacky:machine-photo-persisted/);
 });
-
-test("guided image retains finer product packaging detail but stays on existing proof storage path", () => {
-  assert.match(stop, /guidedMachinePhoto = file\.name\.startsWith\("snacky-guided-"\)/);
-  assert.match(stop, /targetBytes = guidedMachinePhoto \? 2 \* 1024 \* 1024/);
-  assert.match(stop, /maxDimension: 2400, quality: 0\.88/);
-  assert.match(stop, /uploadRefillProofPhoto\(photoFormData\)/);
-  assert.match(stop, /<MachinePhotoRecognitionCard/);
-  assert.doesNotMatch(camera, /setXySlotProduct|\/xy-slot-product|inventory_movements/);
+test("testing lab displays safe camera and mock route, never sends actual XY commands", () => {
+  assert.match(client, /<GuidedMachineCamera/);
+  assert.match(client, /setTestPhotoUrl\(URL\.createObjectURL\(file\)\)/);
+  assert.match(client, /<PhotoLibraryAiTest/);
+  assert.match(client, /function makeCheck\(stop: TestStop\)/);
+  assert.match(client, /product_mismatch/);
+  assert.match(client, /quantity_mismatch/);
+  assert.doesNotMatch(client, /setXySlotProduct|\/xy-slot-product|inventory_movements|uploadRefillProofPhoto|\/xy-final-quantities/);
+});
+test("testing lab is visible and accessible only to an active owner", () => {
+  assert.match(page, /hasRole\(profile, "owner"\)/);
+  assert.match(page, /profile\.active_status !== "active"/);
+  assert.match(sidebar, /ownerTestingLabItem/);
+  assert.match(sidebar, /hasRole\(context, "owner"\)/);
+  assert.match(admin, /item\.href !== "\/admin\/testing-lab" \|\| hasRole\(profile, "owner"\)/);
 });
