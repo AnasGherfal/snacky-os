@@ -71,6 +71,8 @@ test("AI result cannot independently authorize real XY changes", () => {
   assert.match(card, /physicalChangeConfirmed: true/);
   assert.match(card, /laneDisabledConfirmed: true/);
   assert.match(card, /result.verified !== true/);
+  const productEndpoint = fs.readFileSync("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts", "utf8");
+  assert.match(productEndpoint, /zeroStockRelabel \? 0 : verifiedPhysicalSwap \? actualSlotQty/);
   assert.match(stop, /<MachinePhotoRecognitionCard/);
 });
 
