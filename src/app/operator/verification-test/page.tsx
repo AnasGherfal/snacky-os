@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { GuidedMachineCamera } from "@/components/operator/GuidedMachineCamera";
 import Link from "next/link";
 import { useLanguage } from "@/components/I18nProvider";
 import { verifyMachineQuantityRowsAgainstXy } from "@/lib/xy-quantity-verification";
@@ -69,6 +70,8 @@ export default function VerificationTestRoute() {
   const [index, setIndex] = useState(0);
   const [checks, setChecks] = useState<Record<number, Check>>({});
   const [finished, setFinished] = useState(false);
+  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
+  useEffect(() => () => { if (testPhotoUrl) URL.revokeObjectURL(testPhotoUrl); }, [testPhotoUrl]);
   const stop = stops[index];
   const check = checks[index];
   const missing = useMemo(() => stop.selections.filter((s) => s.physicallyFilled < s.planned), [stop]);
@@ -148,6 +151,20 @@ export default function VerificationTestRoute() {
           {mismatch.slotCode} · {tr("Expected", "المتوقع")} {mismatch.expectedQty} / XY {mismatch.actualQty ?? "—"} · {mismatch.reason}
         </p>)}
       </div> : null}
+    </section>
+
+    <section className="rounded-2xl border-2 border-amber-200 bg-white p-4 sm:p-6">
+      <div className="text-xs font-bold tracking-widest text-amber-700">SNACKY OS · CAMERA QA</div>
+      <h2 className="mt-1 text-lg font-bold text-slate-950">{tr("Try the guided camera without saving anything", "جرّب كاميرا الإطار دون حفظ أي شيء في النظام")}</h2>
+      <p className="my-3 text-sm leading-6 text-slate-600">{tr("Test the green frame, standard/wide machine options, lighting warnings, and retake on your phone. The photo stays only in this browser tab; it is NOT uploaded to Snacky or used to change XY.", "جرّب الإطار الأخضر وخيارات الماكينة العادية والعريضة وتنبيهات الإضاءة وإعادة التصوير على هاتفك. تبقى الصورة في صفحة المتصفح فقط، ولا تُرفع إلى سناكي ولا تغيّر XY.")}</p>
+      <GuidedMachineCamera disabled={false} onCaptured={async (file) => { setTestPhotoUrl(URL.createObjectURL(file)); return true; }} />
+      {testPhotoUrl ? (
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <p className="text-xs font-semibold text-emerald-900">{tr("Local camera preview — not saved to any server", "معاينة تجريبية محلية — لم تُحفظ في أي خادم")}</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={testPhotoUrl} alt={tr("Local guided camera test", "تجربة إطار تصوير الماكينة")} className="mt-2 max-h-72 w-full rounded-lg object-contain" />
+        </div>
+      ) : null}
     </section>
 
     <div className="flex flex-wrap gap-3">
