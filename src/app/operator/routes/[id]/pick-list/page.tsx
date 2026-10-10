@@ -118,7 +118,6 @@ export default function PickListPage() {
   const [remainingPickupMode, setRemainingPickupMode] = useState(false);
   const [supplementalMode, setSupplementalMode] = useState(false);
   const [prepared, setPrepared] = useState(false);
-  const [smartPlanning, setSmartPlanning] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -471,52 +470,6 @@ export default function PickListPage() {
     ]);
   }
 
-  async function buildSmartPickup() {
-    if (!routeId || locked || confirmed || prepared || remainingPickupMode || supplementalMode) return;
-
-    setSmartPlanning(true);
-    setError("");
-    setNotice("");
-
-    try {
-      const response = await fetch(`/api/operator/routes/${routeId}/smart-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data: unknown = await response.json().catch(() => null);
-      const payload = data && typeof data === "object" && !Array.isArray(data) ? data as ApiRow : {};
-      if (!response.ok) {
-        throw new Error(textOrFallback(payload.error, isArabic ? "تعذر إنشاء خطة الاستلام الذكية." : "Could not build Smart Pickup."));
-      }
-
-      const substitutions = Array.isArray(payload.substitutions) ? payload.substitutions.length : 0;
-      const summary = optionalText(payload.summary);
-      setNotice(
-        [
-          copy.smartApplied,
-          substitutions > 0
-            ? (isArabic ? `تم إجراء ${substitutions} تبديلات للمنتجات.` : `${substitutions} product swaps were planned.`)
-            : null,
-          summary,
-        ].filter(Boolean).join(" "),
-      );
-
-      setCheckedPickupItemIds([]);
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.removeItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
-        } catch {
-          // Visual-only state; the Smart Route plan is already persisted server-side.
-        }
-      }
-      await loadPickList();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : (isArabic ? "تعذر إنشاء خطة الاستلام الذكية." : "Could not build Smart Pickup."));
-    } finally {
-      setSmartPlanning(false);
-    }
-  }
-
   async function handleConfirm() {
     setError("");
     setNotice("");
@@ -660,27 +613,12 @@ export default function PickListPage() {
       {confirmed ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{copy.alreadyConfirmed}</div> : null}
 
       {!remainingPickupMode && !supplementalMode && !confirmed ? (
-        <section className="rounded-2xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="font-bold text-violet-950">{copy.smartTitle}</h2>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-violet-900">{copy.smartDescription}</p>
-              <p className="mt-1 text-xs font-semibold text-violet-800">{copy.smartNoEmpty}</p>
-            </div>
-            <button
-              type="button"
-              className="min-h-12 shrink-0 rounded-xl bg-violet-700 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-              disabled={locked || prepared || submitting || smartPlanning}
-              onClick={() => void buildSmartPickup()}
-            >
-              {smartPlanning ? copy.smartWorking : copy.smartButton}
-            </button>
-          </div>
-          {prepared ? (
-            <p className="mt-2 text-xs font-semibold text-amber-800">
-              {isArabic ? "تم تجهيز لقطة الاستلام الحالية. أكّد الاستلام أو ارجع للمسار قبل إعادة التخطيط." : "The current pickup snapshot is already prepared. Confirm it or return to the route before replanning."}
-            </p>
-          ) : null}
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          {isArabic
+            ? "قائمة الاستلام جاهزة حسب تعليمات الجولة المعتمدة. يتم إعداد الاقتراحات الذكية قبل الإسناد، ولا يمكن للمشغّل تغيير المنتجات أو الكميات تلقائيًا. لأي تعديل تواصل مع الإدارة."
+            : "This pickup list follows the approved route. Smart suggestions are prepared before assignment; operators cannot automatically replace assigned products or quantities. Contact management for changes."}
+        </div>
+      ) : null}
         </section>
       ) : null}
 
