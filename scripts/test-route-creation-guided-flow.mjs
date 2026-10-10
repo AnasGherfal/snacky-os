@@ -88,7 +88,8 @@ test("manual product controls display and enforce machine-specific remaining sto
   assert.match(source, /availableStockForMachine/);
   assert.match(source, /Available for this machine/);
   assert.match(source, /Unassigned after route/);
-  assert.match(source, /availableForMachine <= 0/);
+  assert.match(source, /selectedQty < availableForMachine/);
+  assert.match(source, /disabled=\{saving \|\| !canIncrease\}/);
   assert.match(source, /const safeTotal = Math\.min\(unitQuantity\(desiredManual\), maxTotal\)/);
   assert.match(source, /max=\{storageKnown \? available : 0\}/);
 });
@@ -139,7 +140,12 @@ test("the machine product picker stays focused while retaining full-catalog sear
   assert.notEqual(pickerEnd, -1);
   const pickerSource = source.slice(pickerStart, pickerEnd);
 
-  assert.match(pickerSource, /candidate\.recommendedQty > 0 \|\| candidate\.selectedQty > 0/);
+  assert.match(pickerSource, /const machineProductsToLoad = machineScopedProductCandidates/);
+  assert.match(source, /recentFilledProductIdsByMachine/);
+  assert.match(source, /candidate\.sourceKinds\.has\("recent_filled"\)/);
+  assert.doesNotMatch(source, /otherConfiguredMachineProducts/);
+  assert.match(pageSource, /recent_completed_machine_refills/);
+  assert.match(pageSource, /visibleMachineProductSlots/);
   assert.match(pickerSource, /if \(!manualSearchQuery\) return machineProductsToLoad/);
   assert.match(pickerSource, /return products/);
   assert.doesNotMatch(pickerSource, /\.slice\(0,/);

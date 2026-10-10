@@ -9,14 +9,14 @@ const sidebar=fs.readFileSync('src/components/Sidebar.tsx','utf8');
 const machines=fs.readFileSync('src/app/machines/page.tsx','utf8');
 
 test('owner data health separates current operational exceptions from legacy cleanup',()=>{
-  for(const label of ['Machines missing site','Active sites missing distance','Negative stock balances','Stale refill orders (>48h)','Cash actions 3–30 days old','Recent VMS failures / partial'])assert.ok(health.includes(label));
-  assert.match(health,/Legacy: older than 30 days/);
-  assert.match(health,/Old draft \/ preview batches/);
-  assert.match(health,/current_inventory_by_location/);
-  assert.match(health,/quantity_on_hand/);
-  assert.match(health,/hasAnyRole\(profile, \["owner", "admin"\]\)/);
+  for(const label of ['Machines missing site','Active sites missing distance','Negative stock balances','Safe stale refill cancellations','Cash actions 3–30 days old','Recent VMS failures / partial'])assert.ok(health.includes(label));
+  assert.match(health,/Cash backlog classification/);
+  assert.match(health,/VMS health & cleanup/);
+  assert.match(health,/snacky_data_health_workspace_v1/);
+  assert.match(health,/inventory_health/);
+  assert.match(health,/hasAnyRole\(profile,\["owner","admin"\]\)/);
   assert.doesNotMatch(health,/\["owner", "admin", "supervisor"\]/);
-  assert.match(health,/\.in\("status", \["draft","assigned","picked"\]\)/);
+  assert.match(health,/counts\.safe_refill_cancellations/);
 });
 
 test('machine setup assigns a real site and stores distance on the location',()=>{
