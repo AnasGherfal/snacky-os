@@ -80,3 +80,10 @@ test("operator exposes read-only check and isolated test route", () => {
   assert.match(lab, /Safe, in-browser test route/);
   assert.doesNotMatch(lab, /fetch\(|getSupabase|setXySlotProduct/);
 });
+
+test("a filled stop needs readback or an explicit pending acknowledgement", () => {
+  const page = fs.readFileSync("src/app/operator/routes/[id]/stops/[stopId]/page.tsx", "utf8");
+  assert.match(page, /quantityConfirmationInstalled && !quantityConfirmationReady/);
+  assert.match(page, /Continue with XY verification pending/);
+  assert.match(page, /machine-quantity-confirmation/);
+});
