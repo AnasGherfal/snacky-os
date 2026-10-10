@@ -244,8 +244,8 @@ export function TrainingRouteClient() {
     const found = compare(activeStop);
     if (found.length) {
       setFormError(tr(
-        \`\${found.length} selections still disagree with XY. Correct only those selections or record an explicit pending exception.\`,
-        \`يوجد اختلاف في \${found.length} خانات عن XY. صحح الخانات أو سجّل استثناء معلق صراحةً.\`,
+        `${found.length} selections still disagree with XY. Correct only those selections or record an explicit pending exception.`,
+        `يوجد اختلاف في ${found.length} خانات عن XY. صحح الخانات أو سجّل استثناء معلق صراحةً.`,
       ));
       updateStop((stop) => ({ ...stop, verifiedAt: null }));
     } else {
@@ -316,7 +316,7 @@ export function TrainingRouteClient() {
                     <h4 className="mt-1 text-lg font-bold text-slate-950">{stop.name}</h4>
                     <p className="text-sm text-slate-500">{stop.location} · {stop.lanes.length} {tr("selections", "خانات")}</p>
                   </div>
-                  <span className={\`h-fit rounded-full px-3 py-1 text-xs font-semibold \${stop.status === "completed" ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-700"}\`}>
+                  <span className={`h-fit rounded-full px-3 py-1 text-xs font-semibold ${stop.status === "completed" ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-700"}`}>
                     {stop.status === "completed" ? tr("Completed", "مكتمل") : stop.status === "in_progress" ? tr("In progress", "قيد التنفيذ") : tr("Assigned", "مسند")}
                   </span>
                 </div>
@@ -347,7 +347,7 @@ export function TrainingRouteClient() {
                   <input type="number" min={0} max={100} inputMode="numeric"
                     disabled={state.pickupConfirmed} value={state.pickup[product.id] ?? 0}
                     onChange={(event) => setState((prev) => ({ ...prev, pickup: { ...prev.pickup, [product.id]: Math.max(0, Math.min(100, Number(event.target.value) || 0)) } }))}
-                    className="field-input w-24 text-center text-lg font-bold" aria-label={tr(\`\${product.en} picked quantity\`, \`كمية استلام \${product.ar}\`)} />
+                    className="field-input w-24 text-center text-lg font-bold" aria-label={tr(`${product.en} picked quantity`, `كمية استلام ${product.ar}`)} />
                 </label>
               ))}
             </div>
@@ -427,14 +427,14 @@ export function TrainingRouteClient() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4" id="training-xy-verify">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="text-lg font-bold">{tr("Refill verification", "التحقق من التعبئة")}</h4>
-                <span className={\`rounded-full px-3 py-1 text-xs font-bold \${activeStop.verifiedAt ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"}\`}>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${activeStop.verifiedAt ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"}`}>
                   {activeStop.verifiedAt ? tr("Verified", "مطابق") : tr("Not verified", "غير مؤكد")}
                 </span>
               </div>
               <button type="button" onClick={verify} className="btn-primary mt-3 w-full">{tr("Refresh & verify XY (training)", "تحديث القراءة والتحقق من XY (تدريب)")}</button>
               {conflicts.length > 0 ? (
                 <div className="mt-3 space-y-2">
-                  <p className="font-bold text-rose-800">{tr(\`\${conflicts.length} selections need correction\`, \`\${conflicts.length} خانات تحتاج تصحيح\`)}</p>
+                  <p className="font-bold text-rose-800">{tr(`${conflicts.length} selections need correction`, `${conflicts.length} خانات تحتاج تصحيح`)}</p>
                   {conflicts.map((conflict) => <div key={conflict.slotCode} className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm">
                     <strong>{tr("Selection", "الخانة")} {conflict.slotCode}</strong>
                     <div>{conflict.reason === "product_mismatch" ? tr("Product mismatch", "المنتج غلط في XY") : tr("Quantity mismatch", "الكمية مختلفة")}</div>
