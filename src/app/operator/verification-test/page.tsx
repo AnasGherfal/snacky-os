@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { GuidedMachineCamera } from "@/components/operator/GuidedMachineCamera";
+import { PhotoLibraryAiTest } from "@/components/operator/PhotoLibraryAiTest";
 import Link from "next/link";
 import { useLanguage } from "@/components/I18nProvider";
 import { verifyMachineQuantityRowsAgainstXy } from "@/lib/xy-quantity-verification";
@@ -98,6 +99,8 @@ export default function VerificationTestRoute() {
         <button type="button" onClick={reset} className="rounded-lg bg-white px-3 py-2 text-sm font-bold text-emerald-950">{tr("Reset test route", "إعادة الجولة التجريبية")}</button>
       </div>
     </div>
+
+    <PhotoLibraryAiTest />
 
     <nav aria-label="Test stops" className="grid grid-cols-3 gap-2">
       {stops.map((entry, stopIndex) => <button type="button" key={entry.name} onClick={() => {setIndex(stopIndex);setFinished(false);}}
