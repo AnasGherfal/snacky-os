@@ -218,10 +218,12 @@ export function TrainingRouteClient() {
     const lane = activeStop.lanes.find((row) => row.code === code);
     if (!lane) return;
     const product = selectedProducts[code] ?? lane.xyProductId;
-    const requested = Object.hasOwn(selectedFinals, code) ? selectedFinals[code] : lane.xyQty;
+    // Real XY product-change workflow first protects the new SKU with zero
+    // sellable units. The operator refills and updates final stock separately.
+    const requested = switching ? 0 : Object.hasOwn(selectedFinals, code) ? selectedFinals[code] : lane.xyQty;
     const price = Object.hasOwn(selectedPrices, code) ? selectedPrices[code] : lane.priceLyd;
     const switching = product !== lane.xyProductId;
-    if (switching && !lane.oldStockHandled) {
+    if (switching && product !== lane.productId && !lane.oldStockHandled) {
       setFormError(tr("Record and confirm handling of any old products before changing this selection.", "تأكد من سحب وتسجيل المنتجات القديمة قبل تغيير الخانة.")); return;
     }
     if (!Number.isSafeInteger(requested) || requested < 0 || requested > lane.capacity || !Number.isFinite(price) || price <= 0) {
@@ -230,7 +232,11 @@ export function TrainingRouteClient() {
     if (!Object.hasOwn(selectedFinals, code) && !switching && !Object.hasOwn(selectedPrices, code)) {
       setFormError(tr("Choose a quantity, price or product before saving.", "غيّر الكمية أو السعر أو المنتج أولاً.")); return;
     }
-    updateLane(code, { xyQty: requested, xyProductId: product, priceLyd: price });
+    const changingPhysicalSku = switching && product !== lane.productId;
+    updateLane(code, {
+      xyQty: requested, xyProductId: product, priceLyd: price,
+      ...(changingPhysicalSku ? { productId: product, actualAdd: 0 } : {}),
+    });
     setSelectedFinals((current) => { const next = { ...current }; delete next[code]; return next; });
     setSelectedPrices((current) => { const next = { ...current }; delete next[code]; return next; });
     setSelectedProducts((current) => { const next = { ...current }; delete next[code]; return next; });
@@ -323,7 +329,7 @@ export function TrainingRouteClient() {
                 {stop.xyPending ? <p className="mt-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">{tr("XY verification pending — follow-up required", "التحقق من XY معلق — يحتاج متابعة")}</p> : null}
                 <button type="button" disabled={!state.pickupConfirmed || stop.status === "completed"}
                   className="btn-primary mt-3 w-full disabled:opacity-40"
-                  onClick={() => { updateStop(() => stop); go("stop", i); setState((prev) => ({ ...prev, stops: prev.stops.map((s,j) => j === i ? { ...s, status: "in_progress" } : s) })); }}>
+                  onClick={() => { go("stop", i); setState((prev) => ({ ...prev, stops: prev.stops.map((s,j) => j === i ? { ...s, status: "in_progress" } : s) })); }}>
                   {stop.status === "completed" ? tr("Stop completed", "تم إنهاء الموقع") : tr("Open / start stop", "فتح / بدء الموقع")}
                 </button>
               </div>
