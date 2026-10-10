@@ -68,6 +68,7 @@ export function GuidedMachineCamera({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [frameConfirmed, setFrameConfirmed] = useState(false);
   const [qualityAdvice, setQualityAdvice] = useState<QualityAdvice[]>([]);
+  const [frameWidth, setFrameWidth] = useState<"standard" | "wide">("standard");
   const [saveError, setSaveError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -249,10 +250,22 @@ export function GuidedMachineCamera({
 
             {phase === "camera" ? (
               <>
+                <div className="mb-3 flex justify-center gap-2 text-xs font-bold">
+                  <button type="button" onClick={() => setFrameWidth("standard")}
+                    aria-pressed={frameWidth === "standard"}
+                    className={frameWidth === "standard" ? "rounded-full bg-emerald-300 px-4 py-2 text-emerald-950" : "rounded-full bg-white/15 px-4 py-2 text-white"}>
+                    {tr("Standard machine", "ماكينة عادية")}
+                  </button>
+                  <button type="button" onClick={() => setFrameWidth("wide")}
+                    aria-pressed={frameWidth === "wide"}
+                    className={frameWidth === "wide" ? "rounded-full bg-emerald-300 px-4 py-2 text-emerald-950" : "rounded-full bg-white/15 px-4 py-2 text-white"}>
+                    {tr("Wide machine", "ماكينة عريضة")}
+                  </button>
+                </div>
                 <div className="relative mx-auto aspect-[3/4] w-full max-w-[420px] overflow-hidden rounded-2xl border border-white/30 bg-slate-900 shadow-xl">
                   <video ref={videoRef} autoPlay muted playsInline
                     className="absolute inset-0 h-full w-full object-cover" aria-label={tr("Live rear camera", "الكاميرا الخلفية المباشرة")} />
-                  <div aria-hidden="true" className="pointer-events-none absolute inset-x-[13%] bottom-[8%] top-[6%]">
+                  <div aria-hidden="true" className={"pointer-events-none absolute bottom-[8%] top-[6%] " + (frameWidth === "wide" ? "inset-x-[5%]" : "inset-x-[13%]")}>
                     <div className="absolute inset-0 rounded-lg border-2 border-emerald-300/90 shadow-[0_0_0_999px_rgba(0,0,0,0.15)]" />
                     <div className="absolute inset-0 grid grid-rows-6 opacity-40">
                       {Array.from({ length: 6 }, (_, i) => <div key={i} className="border-b border-emerald-100/60 last:border-0" />)}
