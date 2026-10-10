@@ -2984,6 +2984,7 @@ export default function MachineStopPage() {
             <div>
               <GuidedMachineCamera
                 disabled={finalPhotoSaving}
+                selectionRowCount={machineLayoutRows.length || 6}
                 onCaptured={saveFinalMachinePhotoImmediately}
               />
               <label className="mt-3 block text-xs font-semibold text-slate-600">
