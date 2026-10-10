@@ -12,6 +12,9 @@ on:
       - 'scripts/test-stop-completion-recovery.mjs'
       - 'src/components/operator/CompressorSafetyProofCard.tsx'
       - 'scripts/test-separated-refill-and-compressor-proofs.mjs'
+      - 'src/lib/route-photo-evidence.ts'
+      - 'src/components/RouteCompletionImages.tsx'
+      - 'scripts/test-route-photo-evidence-audit.mjs'
 permissions:
   contents: read
 concurrency:
@@ -31,6 +34,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Photo persistence and stop completion regressions
-        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs
+        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs scripts/test-route-photo-evidence-audit.mjs
       - name: Type check
         run: npx tsc --noEmit

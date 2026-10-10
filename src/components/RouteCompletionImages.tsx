@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/components/I18nProvider";
+import { isDuplicateProofImage } from "@/lib/route-photo-evidence";
 
 export type RouteCompletionImage = {
   id: string;
@@ -48,7 +49,7 @@ function CompletionImageCard({ image, onOpen, locale }: { image: RouteCompletion
     <div className={isCompressor ? "rounded-xl border-2 border-emerald-300 bg-emerald-50 p-3" : "rounded-xl border border-slate-200 bg-white p-3"}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-sm font-semibold text-slate-900">{image.label}</div>
-        {isCompressor ? <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white">{locale === "ar" ? "تم التحقق" : "Verified"}</span> : null}
+        {isCompressor ? <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white">{locale === "ar" ? "تم حفظ الإثبات" : "Proof saved"}</span> : null}
       </div>
       {image.url && !failed ? (
         <button type="button" onClick={() => onOpen(image)} className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
@@ -105,7 +106,7 @@ export function RouteCompletionImages({ stops }: { stops: RouteCompletionStop[] 
         label: locale === "ar" ? "إثبات تشغيل الضاغط" : "Compressor ON proof",
         kind: "compressor",
       }));
-    return { ...stop, images: [...proofImages, ...stop.images] };
+    return { ...stop, images: [...proofImages, ...stop.images], hasDuplicateProof: proofImages.some((compressor) => stop.images.some((completion) => isDuplicateProofImage(compressor, completion))) };
   }), [stops, compressorProofs, locale]);
 
   return (
@@ -118,6 +119,13 @@ export function RouteCompletionImages({ stops }: { stops: RouteCompletionStop[] 
               <h3 className="break-words font-semibold text-slate-900">{stop.title}</h3>
               <p className="mt-1 break-words text-sm text-slate-500">{stop.subtitle}</p>
             </div>
+            {stop.hasDuplicateProof ? (
+              <div role="alert" className="mb-3 rounded-xl border-2 border-amber-400 bg-amber-50 p-3 text-sm font-semibold leading-6 text-amber-950">
+                {locale === "ar"
+                  ? "تنبيه سلامة الصور: صورة الضاغط وصورة إنهاء التعبئة تشير لنفس ملف الصورة. هذا لا يثبت أن المشغل رفع نفس الصورة مرتين؛ قد يكون بسبب خطأ سابق في حفظ الصور. راجع الإثباتات الأصلية."
+                  : "Photo evidence warning: compressor proof and refill completion point to the same photo file. This does NOT prove the operator uploaded the same picture twice. An earlier photo-saving bug may be responsible. Review the original evidence."}
+              </div>
+            ) : null}
             {stop.images.length ? (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {stop.images.map((image) => (
