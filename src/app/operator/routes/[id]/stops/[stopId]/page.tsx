@@ -1617,8 +1617,20 @@ export default function MachineStopPage() {
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    // A quantity snapshot is automatically saved ON Complete Stop below.
-    // Do not block on a separate screenshot/power-off confirmation step.
+    // A successful readback is the normal path. When XY is unavailable,
+    // require an explicit operator decision to record a pending exception;
+    // silently finishing would recreate the original forgotten-XY problem.
+    if (machineQuantityItems.some((item) => Number(item.filledQty ?? 0) > 0)
+      && quantityConfirmationInstalled && !quantityConfirmationReady
+      && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr(
+        "Before finishing, refresh and verify XY. If XY is unavailable or there is an unresolved issue, explicitly choose Continue with XY verification pending.",
+        "قبل إنهاء الموقع، حدّث قراءة XY وتحقق من الكميات. إذا تعذر الاتصال أو بقي اختلاف، اختر صراحةً المتابعة مع بقاء تحقق XY معلقاً.",
+      ));
+      document.getElementById("machine-quantity-confirmation")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    // The confirmed refill snapshot is still committed only at Complete Stop.
     localDraft.saveNow();
     setSubmitting(true);
     setError("");
