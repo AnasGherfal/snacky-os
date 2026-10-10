@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
+import { MachinePhotoRecognitionCard } from "@/components/operator/MachinePhotoRecognitionCard";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
@@ -2995,6 +2996,15 @@ export default function MachineStopPage() {
             </div>
           </div>
         </section>
+
+        <MachinePhotoRecognitionCard
+          routeId={routeId}
+          stopId={stopId}
+          photoSaved={persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto)}
+          photoSaving={finalPhotoSaving}
+          products={(fullProductCatalog ?? stopData.productOptions).map((p) => ({ id: p.id, name: p.name }))}
+          onApplied={() => { void refreshLiveXy(); }}
+        />
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="mb-4 text-lg font-semibold">{tr("Cleaning and final check", "التنظيف والفحص النهائي")}</h2>
