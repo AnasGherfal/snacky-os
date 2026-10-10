@@ -10,6 +10,8 @@ on:
       - 'scripts/test-route-stop-persistence-fix.mjs'
       - 'scripts/test-stop-runtime-polish.mjs'
       - 'scripts/test-stop-completion-recovery.mjs'
+      - 'src/components/operator/CompressorSafetyProofCard.tsx'
+      - 'scripts/test-separated-refill-and-compressor-proofs.mjs'
 permissions:
   contents: read
 concurrency:
@@ -29,6 +31,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Photo persistence and stop completion regressions
-        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs
+        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs
       - name: Type check
         run: npx tsc --noEmit
