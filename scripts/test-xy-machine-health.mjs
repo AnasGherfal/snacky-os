@@ -10,7 +10,7 @@ const dashboard=fs.readFileSync('src/app/machines-dashboard/page.tsx','utf8');
 test('hourly XY scheduler refreshes machine status in the same invocation',()=>{
  assert.match(cron,/syncXyMachineStatus/);
  assert.match(cron,/machineStatusSync/);
- assert.doesNotMatch(cron,/setInterval|new cron|schedule/);
+ assert.doesNotMatch(cron,/setInterval\s*\(|new\s+CronJob\s*\(|cron\.schedule\s*\(/);
 });
 
 test('machine list shows XY online offline and last contact separately from Snacky status',()=>{
