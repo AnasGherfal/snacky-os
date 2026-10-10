@@ -619,8 +619,6 @@ export default function PickListPage() {
             : "This pickup list follows the approved route. Smart suggestions are prepared before assignment; operators cannot automatically replace assigned products or quantities. Contact management for changes."}
         </div>
       ) : null}
-        </section>
-      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
