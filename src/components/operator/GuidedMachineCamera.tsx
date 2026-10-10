@@ -53,9 +53,11 @@ export function analyzeGuidedMachinePhoto(canvas: HTMLCanvasElement): QualityAdv
 export function GuidedMachineCamera({
   disabled,
   onCaptured,
+  selectionRowCount = 6,
 }: {
   disabled: boolean;
   onCaptured: (file: File) => Promise<boolean>;
+  selectionRowCount?: number;
 }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -267,8 +269,9 @@ export function GuidedMachineCamera({
                     className="absolute inset-0 h-full w-full object-cover" aria-label={tr("Live rear camera", "الكاميرا الخلفية المباشرة")} />
                   <div aria-hidden="true" className={"pointer-events-none absolute bottom-[8%] top-[6%] " + (frameWidth === "wide" ? "inset-x-[5%]" : "inset-x-[13%]")}>
                     <div className="absolute inset-0 rounded-lg border-2 border-emerald-300/90 shadow-[0_0_0_999px_rgba(0,0,0,0.15)]" />
-                    <div className="absolute inset-0 grid grid-rows-6 opacity-40">
-                      {Array.from({ length: 6 }, (_, i) => <div key={i} className="border-b border-emerald-100/60 last:border-0" />)}
+                    <div className="absolute inset-0 grid opacity-40"
+                      style={{ gridTemplateRows: "repeat(" + Math.max(1, Math.min(12, selectionRowCount)) + ", minmax(0, 1fr))" }}>
+                      {Array.from({ length: Math.max(1, Math.min(12, selectionRowCount)) }, (_, i) => <div key={i} className="border-b border-emerald-100/60 last:border-0" />)}
                     </div>
                     <div className="absolute left-0 top-0 h-7 w-7 border-l-[5px] border-t-[5px] border-amber-400" />
                     <div className="absolute right-0 top-0 h-7 w-7 border-r-[5px] border-t-[5px] border-amber-400" />
