@@ -50,7 +50,7 @@ test("operator must approve the physical product, old-stock custody and exact co
   assert.equal(canApplyPhotoChange({ suggestion, actualQty: 5, operatorReviewed: false, oldProductAccounted: true }), false);
   assert.equal(canApplyPhotoChange({ suggestion, actualQty: 5, operatorReviewed: true, oldProductAccounted: false }), false);
   assert.equal(canApplyPhotoChange({ suggestion, actualQty: null, operatorReviewed: true, oldProductAccounted: true }), false);
-  assert.equal(canApplyPhotoChange({ suggestion, actualQty: 11, operatorReviewed: true, oldProductAccounted: true }), false);
+  assert.equal(canApplyPhotoChange({ suggestion, actualQty: 0, operatorReviewed: true, oldProductAccounted: true }), false);\n  assert.equal(canApplyPhotoChange({ suggestion, actualQty: 11, operatorReviewed: true, oldProductAccounted: true }), false);
   assert.equal(canApplyPhotoChange({ suggestion, actualQty: 5, operatorReviewed: true, oldProductAccounted: true }), true);
 });
 
