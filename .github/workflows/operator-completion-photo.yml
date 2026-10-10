@@ -12,6 +12,9 @@ on:
       - 'scripts/test-stop-completion-recovery.mjs'
       - 'src/components/operator/CompressorSafetyProofCard.tsx'
       - 'scripts/test-separated-refill-and-compressor-proofs.mjs'
+      - 'src/lib/route-photo-evidence.ts'
+      - 'src/components/RouteCompletionImages.tsx'
+      - 'scripts/test-route-photo-evidence-audit.mjs'
 permissions:
   contents: read
 concurrency:
