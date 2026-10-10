@@ -1,0 +1,32 @@
+name: XY refill readback verification
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/lib/xy-quantity-verification.ts"
+      - "src/components/operator/MachineQuantityConfirmationCard.tsx"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/quantity-confirmation/route.ts"
+      - "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"
+      - "src/app/operator/verification-test/page.tsx"
+      - "scripts/test-xy-refill-readonly-verification.mjs"
+      - "scripts/test-xy-direct-quantity-verification.mjs"
+      - "scripts/test-xy-stop-quantity-editor.mjs"
+      - ".github/workflows/xy-refill-readback-verification.yml"
+  workflow_dispatch:
+jobs:
+  readback-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Selection/readback regressions
+        run: node --experimental-strip-types --test scripts/test-xy-refill-readonly-verification.mjs scripts/test-xy-direct-quantity-verification.mjs scripts/test-machine-quantity-confirmation.mjs scripts/test-xy-stop-quantity-editor.mjs
+      - name: TypeScript typecheck
+        run: npm run typecheck
