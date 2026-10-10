@@ -66,7 +66,7 @@ export function CashCountForm({
           </div>
         </>
       ) : (
-        <FormField label="Total cash counted (LYD)" required hint="This older record has no saved per-machine amounts, so enter the physical bag total once.">
+        <FormField label="Total cash counted (LYD)" required hint="No amount was declared during sealed-box removal. Enter the actual amount counted from this cash box once.">
           <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" required className="field-input text-2xl font-semibold" placeholder="0.00" />
         </FormField>
       )}

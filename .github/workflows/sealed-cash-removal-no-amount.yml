@@ -1,0 +1,36 @@
+name: Sealed cash pickup without amount
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/components/CashRemovalBoxPlanner.tsx'
+      - 'src/components/CashRemovalForm.tsx'
+      - 'src/app/cash-handling/page.tsx'
+      - 'src/components/CashHandlingWorkspace.tsx'
+      - 'src/components/CashCustodyForms.tsx'
+      - 'src/lib/cash-actions.ts'
+      - 'supabase/migrations/20261011110000_sealed_cash_removal_without_machine_amounts.sql'
+      - 'scripts/test-sealed-cash-removal-no-amount.mjs'
+      - '.github/workflows/sealed-cash-removal-no-amount.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Sealed cash and existing removal regression checks
+        run: node --experimental-strip-types --test scripts/test-sealed-cash-removal-no-amount.mjs scripts/test-standalone-cash-removal.mjs scripts/test-cash-custody-chain.mjs
+      - name: Lint operator removal and cash handling
+        run: npx eslint src/components/CashRemovalBoxPlanner.tsx src/app/cash-handling/page.tsx src/components/CashHandlingWorkspace.tsx src/components/CashCustodyForms.tsx
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

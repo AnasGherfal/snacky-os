@@ -13,12 +13,14 @@ export function CashRemovalForm({
   selectedMachineId,
   clientSubmissionId,
   cancelHref,
+  requiresAmounts = true,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   machines: MachineOption[];
   selectedMachineId?: string;
   clientSubmissionId: string;
   cancelHref: string;
+  requiresAmounts?: boolean;
 }) {
   const libyaNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16);
 
@@ -28,10 +30,10 @@ export function CashRemovalForm({
 
       <FormSection
         title="Cash removed from machines"
-        description="Record each machine amount now, then group machines by the physical cash box or sealed bag that actually contains the money. This record is not connected to a route."
+        description={requiresAmounts ? "Record known machine amounts and group machines by the physical cash box or sealed bag." : "Remove the cash box without counting it. Record the machine, seal/box ID, photo, and time. Money will be counted separately after handover."}
       >
         <div className="space-y-5">
-          <CashRemovalBoxPlanner machines={machines} selectedMachineId={selectedMachineId} />
+          <CashRemovalBoxPlanner machines={machines} selectedMachineId={selectedMachineId} requiresAmounts={requiresAmounts} />
 
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Actual removal date and time" required>
@@ -69,7 +71,7 @@ export function CashRemovalForm({
       </FormSection>
 
       <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-        <PrimaryButton>Record cash removal</PrimaryButton>
+        <PrimaryButton>{requiresAmounts ? "Record cash removal" : "Confirm cash box removed"}</PrimaryButton>
         <SecondaryButton href={cancelHref}>Cancel</SecondaryButton>
       </div>
     </LocalDraftForm>

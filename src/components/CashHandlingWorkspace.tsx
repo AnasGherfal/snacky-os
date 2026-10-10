@@ -246,11 +246,11 @@ function CashHandlingClient({ userId }: { userId: string }) {
                 ) : (
                   <>
                     <label>{text('Total counted · LYD', 'إجمالي النقد المعدود · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
-                    <p className={styles.hint}>{text('This is an older cash record without a machine-by-machine amount. Enter the physical bag total once.', 'هذا سجل نقد أقدم لا يحتوي على مبلغ لكل ماكينة. أدخل إجمالي العلبة الفعلي مرة واحدة.')}</p>
+                    <p className={styles.hint}>{text('This sealed cash box has no declared amount. Count its contents now and enter the physical total once.', 'هذه علبة نقدية بدون مبلغ مسجل عند السحب. عدّ النقد الآن وأدخل الإجمالي الفعلي مرة واحدة.')}</p>
                   </>
                 )}
                 <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
-                <p className={styles.hint}>{text('For new collections, Finance receives one cash-box total equal to the sum of the machine amounts already recorded at removal. Any later discrepancy should be handled in reconciliation, not by entering a second unexplained number.', 'في التحصيلات الجديدة، تستلم المالية إجمالي علبة واحد يساوي مجموع مبالغ الماكينات المسجلة وقت السحب. أي فرق يظهر لاحقاً يُعالج في المطابقة، وليس بإدخال رقم ثانٍ غير مفسر.')}</p>
+                <p className={styles.hint}>{text('The person who counts the cash records the physical box total here. When amounts were not declared during removal, do not guess machine totals. Reconcile the counted amount against XY later.', 'يتم تسجيل إجمالي النقد الفعلي بعد عدّ محتويات العلبة. إذا لم تُسجّل مبالغ عند السحب، فلا تخمّن مبالغ الماكينات. تتم المطابقة مع XY لاحقاً.')}</p>
               </> : null}
               <label className={styles.checkbox}><input type="checkbox" required />{text('I confirm this describes what I physically did and checked.', 'أؤكد أن هذا يطابق ما قمت به وتحققت منه فعلياً.')}</label>
               <div className={styles.buttons}><button className={styles.primary} type="submit">{action === 'count' ? text('Confirm count & record once', 'تأكيد العد والتسجيل مرة واحدة') : text('Confirm action', 'تأكيد الإجراء')}</button><button type="button" className={styles.secondary} onClick={() => setAction(null)}>{text('Cancel', 'إلغاء')}</button></div>
