@@ -26,9 +26,11 @@ function amountValue(value: string) {
 export function CashRemovalBoxPlanner({
   machines,
   selectedMachineId,
+  requiresAmounts = true,
 }: {
   machines: MachineOption[];
   selectedMachineId?: string;
+  requiresAmounts?: boolean;
 }) {
   const [boxes, setBoxes] = useState<CashBoxDraft[]>([{ key: "box-1", bagId: "" }]);
   const [selected, setSelected] = useState<Record<string, SelectedMachine>>(() =>
@@ -53,11 +55,11 @@ export function CashRemovalBoxPlanner({
         cash_bag_id: box.bagId.trim().toUpperCase(),
         machines: (assignedByBox.get(box.key) ?? []).map((row) => ({
           machine_id: row.machineId,
-          removed_amount_lyd: row.amountLyd.trim(),
+          removed_amount_lyd: requiresAmounts ? row.amountLyd.trim() : null,
         })),
       }))
       .filter((box) => box.machines.length > 0),
-  }), [assignedByBox, boxes]);
+  }), [assignedByBox, boxes, requiresAmounts]);
 
   function toggleMachine(machineId: string, checked: boolean) {
     setSelected((current) => {
@@ -145,9 +147,9 @@ export function CashRemovalBoxPlanner({
       />
 
       <div>
-        <div className="text-sm font-semibold text-slate-900">Machines and removed amounts</div>
+        <div className="text-sm font-semibold text-slate-900">{requiresAmounts ? "Machines and removed amounts" : "Which machine cash box did you remove?"}</div>
         <p className="mt-1 text-sm leading-6 text-slate-600">
-          Select every machine, then enter the exact amount removed from that machine. All machines start in Box 1.
+          {requiresAmounts ? "Select each machine and enter the actual amount removed. All machines start in Box 1." : "Select the machines whose cash boxes you removed. No amount is entered now; the cash is counted later by an authorized counter."}
         </p>
         <div className="mt-3 grid gap-3">
           {machines.map((machine) => {
@@ -166,7 +168,7 @@ export function CashRemovalBoxPlanner({
 
                 {value ? (
                   <div className="mt-3 grid gap-3 border-t border-slate-200 pt-3 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                    {requiresAmounts ? <label className="grid gap-1.5 text-sm font-medium text-slate-700">
                       Amount removed · LYD
                       <input
                         name={`machine_amount_${machine.id}`}
@@ -180,7 +182,7 @@ export function CashRemovalBoxPlanner({
                         placeholder="0.00"
                         className="field-input"
                       />
-                    </label>
+                    </label> : null}
                     <label className="grid gap-1.5 text-sm font-medium text-slate-700">
                       Physical cash box
                       <select
@@ -224,14 +226,14 @@ export function CashRemovalBoxPlanner({
           {boxes.map((box, index) => {
             const assigned = assignedByBox.get(box.key) ?? [];
             const used = assigned.length > 0;
-            const total = assigned.reduce((sum, row) => sum + amountValue(row.amountLyd), 0);
+            const total = requiresAmounts ? assigned.reduce((sum, row) => sum + amountValue(row.amountLyd), 0) : null;
             return (
               <section key={box.key} className={`rounded-2xl border p-4 ${used ? "border-slate-300 bg-white" : "border-dashed border-slate-200 bg-slate-50"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-semibold text-slate-950">Box {index + 1}</h3>
                     <p className="mt-1 text-xs text-slate-500">
-                      {used ? `${assigned.length} machine${assigned.length === 1 ? "" : "s"} · declared ${total.toFixed(2)} LYD` : "No machines assigned yet"}
+                      {used ? `${assigned.length} machine${assigned.length === 1 ? "" : "s"} · ${total === null ? "Amount pending physical count" : `declared ${total.toFixed(2)} LYD`}` : "No machines assigned yet"}
                     </p>
                   </div>
                   {boxes.length > 1 ? (
@@ -280,9 +282,9 @@ export function CashRemovalBoxPlanner({
       </div>
 
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-        <div className="font-semibold">One amount per machine, one custody trail per physical box</div>
+        <div className="font-semibold">{requiresAmounts ? "One amount per machine, one custody trail per physical box" : "Record the box and seal now, count cash later"}</div>
         <p className="mt-1">
-          Snacky keeps each machine amount separate. Machines sharing a box are grouped only for physical custody; different boxes remain separate through handover and counting.
+          {requiresAmounts ? "Snacky keeps each machine amount separate. Machines sharing a box are grouped only for physical custody; different boxes remain separate through handover and counting." : "Confirm the machine, cash compartments, physical box/seal ID and photo. No amount or assumed zero is recorded. Money is counted after a documented handover."}
         </p>
       </div>
     </div>
