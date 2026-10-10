@@ -450,8 +450,27 @@ export default async function NewRoutePage() {
   const activeProductIds = new Set(productRows.map((product) => product.id));
   // XY stock is authoritative for mapped live selections; the existing
   // planogram alone may omit products actually present in a machine.
+  const freshXyMachines = new Set(
+    latestStockRows
+      .filter((row) => (
+        Boolean(row.machine_id && row.slot_code)
+        && !isStaleStockSnapshot(row.imported_at)
+      ))
+      .map((row) => String(row.machine_id)),
+  );
+  const freshXySelectionKeys = new Set(
+    latestStockRows
+      .filter((row) => Boolean(row.machine_id && row.slot_code && row.product_id && !isStaleStockSnapshot(row.imported_at)))
+      .map((row) => `${row.machine_id}:${row.slot_code}:${row.product_id}`),
+  );
   const visibleMachineProductSlots: MachineSlotRow[] = [
-    ...machineSlotRows,
+    // Old imported planograms contain synthetic VMS-* lanes and sometimes
+    // products no longer mapped in the live XY machine. Do not show those
+    // as "currently in machine" when XY provided a fresh lane snapshot.
+    ...machineSlotRows.filter((slot) => (
+      !freshXyMachines.has(slot.machine_id)
+      || freshXySelectionKeys.has(`${slot.machine_id}:${slot.slot_code}:${slot.product_id}`)
+    )),
     ...latestStockRows
       .filter((row) => Boolean(row.machine_id && row.slot_code && row.product_id && activeProductIds.has(row.product_id)))
       .map((row) => ({
