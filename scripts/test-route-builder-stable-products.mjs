@@ -13,12 +13,12 @@ test("editing a route product quantity keeps that product in the same manual-ite
   assert.doesNotMatch(source, /const next = current\.filter\(\(item\) => !\(item\.machineId === machineId && item\.productId === productId\)\)[\s\S]{0,220}next\.push/);
 });
 
-test("the route product list is focused by default and searches the full catalog only on demand", () => {
-  assert.match(source, /const machineProductsToLoad = useMemo/);
-  assert.match(source, /candidate\.recommendedQty > 0 \|\| candidate\.selectedQty > 0/);
-  assert.match(source, /const otherConfiguredMachineProducts = useMemo/);
+test("current machine products remain visible even when no refill is recommended", () => {
+  assert.match(source, /const machineProductsToLoad = machineScopedProductCandidates/);
+  assert.doesNotMatch(source, /candidate\.recommendedQty > 0 \|\| candidate\.selectedQty > 0/);
   assert.match(source, /if \(!manualSearchQuery\) return machineProductsToLoad/);
   assert.match(source, /return products[\s\S]*\.filter\(\(product\) => productMatchesSearch/);
+  assert.match(source, /recentFilledProductIdsByMachine/);
   assert.match(source, /Products to load for this machine/);
   assert.match(source, /Search results/);
 });
@@ -54,8 +54,9 @@ test("normal quantity clamping does not throw a global route-builder warning", (
 });
 
 
-test("non-refill machine products stay collapsed until the planner asks for them", () => {
-  assert.match(source, /otherConfiguredMachineProducts\.length \? \(/);
-  assert.match(source, /<details className="rounded-xl border border-slate-200 bg-slate-50/);
-  assert.match(source, /Other products already configured in this machine/);
+test("non-refill machine products are not hidden in a collapsed section", () => {
+  assert.match(source, /const machineProductsToLoad = machineScopedProductCandidates/);
+  assert.doesNotMatch(source, /otherConfiguredMachineProducts/);
+  assert.match(source, /Configured in machine/);
+  assert.match(source, /Last completed refill/);
 });
