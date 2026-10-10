@@ -119,13 +119,13 @@ type CashRemovalPlan = {
   boxes: Array<{
     box_key: string;
     cash_bag_id: string;
-    machines: Array<{ machine_id: string; removed_amount_lyd: string }>;
+    machines: Array<{ machine_id: string; removed_amount_lyd: string | null }>;
   }>;
 };
 
-function parseCashRemovalPlan(formData: FormData, path: string, submissionId: string): CashRemovalPlan {
+function parseCashRemovalPlan(formData: FormData, path: string, submissionId: string, requiresAmounts: boolean): CashRemovalPlan {
   const raw = clean(formData.get("cash_removal_plan"));
-  if (!raw) failCashRemoval(path, "Select at least one machine and enter its removed cash amount.", submissionId);
+  if (!raw) failCashRemoval(path, "Select at least one machine and physical cash box.", submissionId);
 
   let value: unknown;
   try {
@@ -159,10 +159,11 @@ function parseCashRemovalPlan(formData: FormData, path: string, submissionId: st
       const machineId = String(machine.machine_id ?? "").trim();
       const amount = String(machine.removed_amount_lyd ?? "").trim();
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(machineId)) failCashRemoval(path, "One selected machine is invalid.", submissionId);
-      if (!cashRemovedAmountPattern.test(amount)) failCashRemoval(path, "Enter a valid LYD amount for every selected machine.", submissionId);
+      if (requiresAmounts && !cashRemovedAmountPattern.test(amount)) failCashRemoval(path, "Enter a valid LYD amount for every selected machine.", submissionId);
+      if (!requiresAmounts && amount) failCashRemoval(path, "Operators do not declare cash amounts during sealed-box removal. Count cash after handover.", submissionId);
       if (seenMachines.has(machineId)) failCashRemoval(path, "A machine can belong to only one physical cash box in one removal.", submissionId);
       seenMachines.add(machineId);
-      machines.push({ machine_id: machineId, removed_amount_lyd: Number(amount).toFixed(2) });
+      machines.push({ machine_id: machineId, removed_amount_lyd: requiresAmounts ? Number(amount).toFixed(2) : null });
     }
 
     seenBoxes.add(boxKey);
@@ -179,7 +180,8 @@ export async function createCashRemoval(formData: FormData) {
   const { profile, supabase } = await requireCapability(legacyPath, canRecordCashRemoval);
   const path = isOperatorRole(profileContext(profile)) ? "/cash-handling" : legacyPath;
   const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
-  const plan = parseCashRemovalPlan(formData, path, submissionId);
+  const requiresAmounts = !isOperatorRole(profileContext(profile));
+  const plan = parseCashRemovalPlan(formData, path, submissionId, requiresAmounts);
   const compartments = Array.from(new Set(formData.getAll("compartments").map(clean).filter(Boolean)));
   const removalType = clean(formData.get("removal_type"));
   const notes = optionalText(formData.get("notes"));
@@ -279,7 +281,7 @@ export async function createCashRemoval(formData: FormData) {
       path,
       transportUncertain || responseUncertain
         ? "Save not confirmed. Do not create a second removal. Reattach the same box photos and retry this saved removal."
-        : rpcMessage(rpcError, "Could not record the machine cash amounts and physical boxes."),
+        : rpcMessage(rpcError, "Could not record the sealed cash removal and physical boxes."),
       submissionId,
     );
   }
@@ -291,10 +293,11 @@ export async function createCashRemoval(formData: FormData) {
   }
 
   const machineCount = plan.boxes.reduce((sum, box) => sum + box.machines.length, 0);
-  const declaredTotal = plan.boxes.reduce(
+  const amountsRecorded = plan.boxes.every((box) => box.machines.every((machine) => machine.removed_amount_lyd !== null));
+  const declaredTotal = amountsRecorded ? plan.boxes.reduce(
     (sum, box) => sum + box.machines.reduce((boxSum, machine) => boxSum + Number(machine.removed_amount_lyd), 0),
     0,
-  );
+  ) : null;
 
   try {
     await logActivity({
@@ -308,7 +311,7 @@ export async function createCashRemoval(formData: FormData) {
         collection_ids: collectionIds,
         box_count: plan.boxes.length,
         machine_count: machineCount,
-        declared_total_lyd: Number(declaredTotal.toFixed(2)),
+        declared_total_lyd: declaredTotal === null ? null : Number(declaredTotal.toFixed(2)),
         collected_at: removedAt,
       },
       metadata: {
@@ -318,7 +321,7 @@ export async function createCashRemoval(formData: FormData) {
         route_id: null,
         replayed: Boolean(result?.replayed),
       },
-      summary: `Recorded ${machineCount} machine cash amount${machineCount === 1 ? "" : "s"} into ${plan.boxes.length} physical box${plan.boxes.length === 1 ? "" : "es"}`,
+      summary: amountsRecorded ? `Recorded amounts from ${machineCount} machines in ${plan.boxes.length} boxes` : `Recorded sealed-box removal from ${machineCount} machines; amount unknown pending count`,
     });
   } catch (error) {
     // Primary cash custody is already committed. A secondary activity-log
@@ -329,7 +332,7 @@ export async function createCashRemoval(formData: FormData) {
   for (const id of collectionIds) revalidateCashPaths(id);
 
   const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
-  const successMessage = `Removal saved: ${machineCount} machine${machineCount === 1 ? "" : "s"} in ${plan.boxes.length} cash box${plan.boxes.length === 1 ? "" : "es"}. Each machine amount is recorded separately.${
+  const successMessage = `Removal saved: ${machineCount} machine${machineCount === 1 ? "" : "s"} in ${plan.boxes.length} cash box${plan.boxes.length === 1 ? "" : "es"}. ${amountsRecorded ? "Machine amounts recorded." : "No amounts were entered; the sealed cash will be counted later."}${
     selfReceiptAllowed
       ? " Owner/admin may continue the custody process from Cash."
       : " Continue the handover from Cash."
