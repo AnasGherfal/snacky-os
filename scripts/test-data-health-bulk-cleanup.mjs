@@ -32,10 +32,10 @@ test('bulk VMS cleanup only soft-archives abandoned zero-import inactive batches
  assert.match(page,/Archive all/);
 });
 
-test('bulk actions are available only through the existing owner-admin cleanup API',()=>{
+test('bulk commands remain inaccessible through the owner-only single-command API',()=>{
  assert.match(button,/bulk_cancel_stale_refills/);
  assert.match(button,/bulk_archive_vms_batches/);
- assert.match(api,/bulk_cancel_stale_refills/);
- assert.match(api,/bulk_archive_vms_batches/);
+ assert.match(api,/snacky_data_health_command_v1/);
+ assert.doesNotMatch(api,/'bulk_cancel_stale_refills'|'bulk_archive_vms_batches'/);
  assert.match(api,/hasAnyRole\(profile,\['owner','admin'\]\)/);
 });
