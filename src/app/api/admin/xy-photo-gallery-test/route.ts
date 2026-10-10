@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     || file.size < 1 || file.size > GALLERY_PHOTO_MAX_BYTES) {
     return json({
       ok: false,
-      error: "Choose a JPEG, PNG or WEBP photo smaller than 8MB. If your iPhone photo is HEIC, export/share it as JPEG first.",
+      error: "Choose a JPEG, PNG or WEBP photo smaller than 4MB. If your iPhone photo is HEIC, export/share it as JPEG first.",
     }, 400);
   }
 
