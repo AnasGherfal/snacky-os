@@ -1197,11 +1197,24 @@ export function RouteCreateForm({
         ? plan.manualStopItems.filter((item) => machineIds.includes(String(item.machineId ?? "")) && unitQuantity(item.quantity) > 0)
         : [];
 
-      setManualStopItems(safeItems);
-      setRecommendationKeys([]);
-      setFinalTakeByRecommendationGroup({});
-      setAdminOverride(false);
-      setSmartPlan(plan);
+      // Never replace quantities already selected in the manager's draft.
+      // Smart Route may preview alternatives, but approved/manual quantities win.
+      const hasExistingSelections = manualStopItems.some((item) => unitQuantity(item.quantity) > 0);
+      if (!hasExistingSelections) {
+        setManualStopItems(safeItems);
+        setRecommendationKeys([]);
+        setFinalTakeByRecommendationGroup({});
+        setAdminOverride(false);
+      }
+      setSmartPlan(hasExistingSelections ? {
+        ...plan,
+        warnings: [
+          tr(locale,
+            "Existing draft selections were preserved. Smart Route is a suggestion only; it did not change any products or quantities.",
+            "تم الحفاظ على اختيارات الجولة الموجودة. الخطة الذكية مجرد اقتراح ولم تُغيّر أي منتجات أو كميات."),
+          ...plan.warnings,
+        ],
+      } : plan);
       if (machineIds.length && !manualMachineId) setManualMachineId(machineIds[0]);
       setBuilderStep("products");
     } catch (err) {
