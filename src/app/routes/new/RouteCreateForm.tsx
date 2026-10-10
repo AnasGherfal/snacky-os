@@ -36,6 +36,11 @@ type MachinePlanogramRow = {
   min_qty: number | null;
 };
 
+type MachineRecentFillRow = {
+  machine_id: string;
+  product_id: string;
+};
+
 type Recommendation = {
   recommendation_key: string;
   machine_slot_id: string | null;
@@ -285,6 +290,7 @@ export function RouteCreateForm({
   recommendations,
   diagnostics,
   machinePlanogramRows,
+  machineRecentFillRows,
   products,
   recentProductIds: _recentProductIds,
   allowAdminOverride,
@@ -297,6 +303,7 @@ export function RouteCreateForm({
   recommendations: Recommendation[];
   diagnostics: RouteRecommendationDiagnostics;
   machinePlanogramRows: MachinePlanogramRow[];
+  machineRecentFillRows: MachineRecentFillRow[];
   storageInventory: { product_id: string; product_name: string; quantity_on_hand: number }[];
   products: ProductPickOption[];
   recentProductIds: string[];
@@ -743,6 +750,16 @@ export function RouteCreateForm({
     return rowsByMachine;
   }, [machinePlanogramRows]);
 
+  const recentFilledProductIdsByMachine = useMemo(() => {
+    const result = new Map<string, Set<string>>();
+    machineRecentFillRows.forEach(({ machine_id, product_id }) => {
+      const productIds = result.get(machine_id) ?? new Set<string>();
+      productIds.add(product_id);
+      result.set(machine_id, productIds);
+    });
+    return result;
+  }, [machineRecentFillRows]);
+
   const recommendationGroupsByMachine = useMemo(() => {
     const groupsByMachine = new Map<string, RecommendationGroup[]>();
     recommendationGroups.forEach((group) => {
@@ -859,6 +876,11 @@ export function RouteCreateForm({
       return next;
     };
 
+    (recentFilledProductIdsByMachine.get(selectedManualMachineId) ?? new Set<string>()).forEach((productId) => {
+      const candidate = ensureCandidate(productId);
+      if (candidate) candidate.sourceKinds.add("recent_filled");
+    });
+
     selectedManualPlanogramRows.forEach((row) => {
       const productId = String(row.product_id ?? "").trim();
       if (!productId) return;
@@ -900,26 +922,15 @@ export function RouteCreateForm({
         { productName: a.product.name, productCategory: a.product.category, productBrand: a.product.brand },
         { productName: b.product.name, productCategory: b.product.category, productBrand: b.product.brand },
       ));
-  }, [productsById, selectedManualItems, selectedManualPlanogramRows, selectedManualRecommendationGroups]);
+  }, [productsById, selectedManualItems, selectedManualPlanogramRows, selectedManualRecommendationGroups, selectedManualMachineId, recentFilledProductIdsByMachine]);
 
   const machineScopedCandidateByProductId = useMemo(
     () => new Map(machineScopedProductCandidates.map((candidate) => [candidate.product.id, candidate])),
     [machineScopedProductCandidates],
   );
 
-  const machineProductsToLoad = useMemo(
-    () => machineScopedProductCandidates.filter((candidate) => candidate.recommendedQty > 0 || candidate.selectedQty > 0),
-    [machineScopedProductCandidates],
-  );
-
-  const otherConfiguredMachineProducts = useMemo(
-    () => machineScopedProductCandidates.filter((candidate) => (
-      candidate.sourceKinds.has("planogram")
-      && candidate.recommendedQty <= 0
-      && candidate.selectedQty <= 0
-    )),
-    [machineScopedProductCandidates],
-  );
+  // Products stay visible even if all lanes are full; search is only for exceptions.
+  const machineProductsToLoad = machineScopedProductCandidates;
 
   const visibleMachineProductCatalog = useMemo(() => {
     if (!manualSearchQuery) return machineProductsToLoad;
@@ -1774,7 +1785,7 @@ export function RouteCreateForm({
                       <div className="text-xs text-slate-500">
                         {manualSearchQuery
                           ? tr(locale, "Searching the full active catalog. Clear search to return to this machine's refill list.", "يتم البحث في كامل المنتجات النشطة. امسح البحث للعودة إلى قائمة تعبئة هذا الجهاز.")
-                          : tr(locale, "Only products that need refill or already have a quantity are shown here. Use search only when you need to add an exception.", "تظهر هنا فقط المنتجات التي تحتاج تعبئة أو التي تم تحديد كمية لها. استخدم البحث فقط عند الحاجة لإضافة منتج استثنائي.")}
+                          : tr(locale, "All configured and recently filled products appear even if no refill is needed. Search only to add another product.", "تظهر جميع المنتجات المهيأة والتي تمت تعبئتها مؤخرًا حتى لو كانت ممتلئة. استخدم البحث لإضافة منتج آخر.")}
                       </div>
                     </div>
                     <div className="text-xs font-medium text-slate-500">
@@ -1786,7 +1797,7 @@ export function RouteCreateForm({
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
                       {manualSearchQuery
                         ? tr(locale, "No products match this search.", "لا توجد منتجات تطابق هذا البحث.")
-                        : tr(locale, "No refill products are pending for this machine. Use search above only if you need to add something manually.", "لا توجد منتجات تعبئة معلقة لهذا الجهاز. استخدم البحث أعلاه فقط إذا احتجت لإضافة منتج يدويًا.")}
+                        : tr(locale, "No configured products were found. Search or check XY mapping.", "لم يتم العثور على منتجات مهيأة. ابحث أو تحقق من ربط المنتجات في XY.")}
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -1798,8 +1809,10 @@ export function RouteCreateForm({
                         const sourceLabel = candidate.recommendedQty > 0
                           ? tr(locale, "Needs refill", "يحتاج تعبئة")
                           : candidate.sourceKinds.has("planogram")
-                            ? tr(locale, "In this machine", "موجود في هذا الجهاز")
-                            : tr(locale, "Catalog", "الكتالوج");
+                            ? tr(locale, "Configured in machine", "موجود في إعدادات الماكينة")
+                            : candidate.sourceKinds.has("recent_filled")
+                              ? tr(locale, "Last completed refill", "آخر تعبئة مكتملة")
+                              : tr(locale, "Catalog", "الكتالوج");
 
                         return (
                           <div
@@ -1900,30 +1913,7 @@ export function RouteCreateForm({
                     </div>
                   )}
 
-                  {!manualSearchQuery && otherConfiguredMachineProducts.length ? (
-                    <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                      <summary className="cursor-pointer text-sm font-medium text-slate-700">
-                        {tr(locale, "Other products already configured in this machine", "منتجات أخرى موجودة في هذا الجهاز")} ({otherConfiguredMachineProducts.length})
-                      </summary>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {otherConfiguredMachineProducts.map((candidate) => {
-                          const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
-                          return (
-                            <button
-                              key={candidate.product.id}
-                              type="button"
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, 1)}
-                              disabled={saving || !candidate.product.storageKnown || availableForMachine === null || availableForMachine <= 0}
-                            >
-                              <span className="font-medium text-slate-900">{candidate.product.name}</span>
-                              <span className="ms-2 text-slate-500">{tr(locale, "Add", "إضافة")}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </details>
-                  ) : null}
+
                 </div>
               </div>
             ) : null}
