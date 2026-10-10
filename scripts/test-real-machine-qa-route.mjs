@@ -32,7 +32,7 @@ test("real selection snapshot feeds actual operator machine editor with no vendo
   assert.match(loader, /slot\.productId/);
   assert.match(loader, /slot\.currentQty/);
   assert.match(loader, /slot\.capacity/);
-  assert.match(loader, /source/); // snapshot type
+  assert.match(endpoint, /source: "xy_imported_snapshot_readonly"/);
   assert.match(trainer, /<MachineStockQuickEditor/);
   assert.match(trainer, /<GuidedMachineCamera/);
   assert.match(trainer, /const isRealSnapshotTraining = Boolean\(realData\)/);
