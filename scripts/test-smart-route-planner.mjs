@@ -179,6 +179,13 @@ test("operators cannot replan an assigned route or overwrite management's pickup
   assert.match(operatorSmartApi, /plan\.slotAssignments/);
 });
 
+test("Smart Route cannot replace the manager's already selected draft items", () => {
+  assert.match(form, /hasExistingSelections/);
+  assert.match(form, /if \(!hasExistingSelections\) \{/);
+  assert.match(form, /Existing draft selections were preserved/);
+  assert.match(operatorSmartApi, /!isOwnerAdminRole\(profile\)/);
+});
+
 test("Smart Pickup refuses to overwrite physical pickup history", () => {
   assert.match(operatorSmartApi, /picked_quantity/);
   assert.match(operatorSmartApi, /picked_qty/);
