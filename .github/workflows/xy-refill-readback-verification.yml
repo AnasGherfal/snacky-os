@@ -30,3 +30,5 @@ jobs:
         run: node --experimental-strip-types --test scripts/test-xy-refill-readonly-verification.mjs scripts/test-xy-direct-quantity-verification.mjs scripts/test-machine-quantity-confirmation.mjs scripts/test-xy-stop-quantity-editor.mjs
       - name: TypeScript typecheck
         run: npm run typecheck
+      - name: Next.js production build
+        run: npm run build
