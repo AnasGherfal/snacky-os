@@ -24,13 +24,13 @@ test('quantity confirmation API reads live XY and fails closed on mismatch or ou
  assert.match(api,/verifyMachineQuantityRowsAgainstXy/);
  assert.match(api,/XY_QUANTITY_MISMATCH/);
  assert.match(api,/XY_LIVE_UNAVAILABLE/);
- assert.match(api,/verification_status: mode === "xy_api" \? "xy_api_verified"/);
+ assert.match(api,/mode === "xy_api" \|\| mode === "xy_readonly"/);
 });
 
 test('operator UI prefers direct XY verification but preserves screenshot and power-off fallback',()=>{
  const card=fs.readFileSync('src/components/operator/MachineQuantityConfirmationCard.tsx','utf8');
- assert.match(card,/Verify with XY/);
- assert.match(card,/saveMode\("xy_api"\)/);
+ assert.match(card,/Refresh & verify XY/);
+ assert.match(card,/saveMode\("xy_readonly"\)/);
  assert.match(card,/Screenshots remain available as a fallback/);
  assert.match(card,/Machine has no electricity/);
 });
