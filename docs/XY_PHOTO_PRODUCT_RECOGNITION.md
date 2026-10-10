@@ -5,6 +5,18 @@ Operators already photograph the final machine during the route. Snacky can now 
 
 One front-on photograph often shows **the front-facing product only**. It does not reliably reveal how many are behind the visible item; **never derive sellable stock from the photo**.
 
+## Passport-style guided camera (included in the regular refill photo)
+- Tap **Open guided machine camera** on the existing Refill proof step.
+- Choose **Standard machine** or **Wide machine** to adjust the on-screen alignment frame.
+- Hold the phone in portrait and stand directly in front of the machine, not sideways.
+- Move backwards until **all four corners of the cabinet**, every product row, and the bottom of the machine are visible inside the green frame. The amber corners show the frame endpoints.
+- Avoid people in the background, glare on the glass, darkness and motion. Move the camera slightly or improve lighting if the glass reflects brightly.
+- Capture and review the photo before saving. A small client-side check provides advisory warnings for severe darkness, glare or blur; these are not proof that the machine is aligned or every product is readable.
+- The operator confirms full-machine coverage and can **Retake** without uploading. Camera permissions are requested only on opening the guided camera.
+- If browser live camera is unavailable or permission is denied, use **Use phone camera / gallery instead**. This cannot overlay the frame inside the native camera but permits a manual visual check of the photo.
+- The visual overlay is **not baked into the photo** and does not crop the image. Full-resolution video frames are captured first, then compressed to retain additional product-package detail within the existing secure refill-proof storage workflow.
+- Photo saved → existing AI SKU recognition → explicit per-selection review and approval → guarded XY change (if needed). No separate redundant proof image is created.
+
 ## Operator path
 1. Open assigned machine stop, physically fill the machine and record actual refills, returns and damages through the existing operator workflow.
 2. Take the required **Refill proof** photograph after loading, from as straight-on a view as possible. Confirm Snacky says **Photo saved**.
