@@ -314,6 +314,10 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   const stopId = String(formData.get("stopId") || "").trim();
   const machineId = String(formData.get("machineId") || "").trim();
   const file = formData.get("photo");
+  const photoPurpose = String(formData.get("photoPurpose") || "completion").trim();
+  if (photoPurpose !== "completion" && photoPurpose !== "compressor") {
+    throw new Error("Unknown machine photo purpose.");
+  }
 
   if (!routeId || !stopId || !machineId) throw new Error("Route, stop, and machine are required for the refill photo.");
   if (!(file instanceof File) || file.size === 0) throw new Error("Take or upload the final machine photo before completing the stop.");
@@ -355,7 +359,12 @@ export async function uploadRefillProofPhoto(formData: FormData) {
     .digest("hex")
     .slice(0, 24);
   const objectName = `${safeFileSegment(stopId, "stop")}-${photoDigest}.${extension}`;
-  const objectPath = `${routeId}/${objectName}`;
+  // Two DIFFERENT proof types for the same stop must have independent
+  // persistence paths. A compressor proof must never masquerade as a
+  // completed/filled machine photo.
+  const objectPath = photoPurpose === "compressor"
+    ? `${routeId}/compressor/${objectName}`
+    : `${routeId}/${objectName}`;
 
   const storageClient = await ensureRefillPhotoBucket();
   if (!storageClient) {
@@ -386,8 +395,20 @@ export async function uploadRefillProofPhoto(formData: FormData) {
     };
   }
 
-  const photoUrl = `/api/storage/${REFILL_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/${encodeURIComponent(objectName)}`;
+  const photoUrl = `/api/storage/${REFILL_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/${photoPurpose === "compressor" ? "compressor/" : ""}${encodeURIComponent(objectName)}`;
   const now = new Date().toISOString();
+  if (photoPurpose === "compressor") {
+    // The safety-check endpoint is the ONLY writer for this proof type.
+    // The upload helper previously overwrote machine_refill_history here,
+    // causing the compressor and completion cards to show the same image.
+    return {
+      photoUrl,
+      photoPath: objectPath,
+      originalName,
+      uploadUnavailable: false,
+      persisted: false,
+    };
+  }
   try {
     const { data: machine, error: machineError } = await storageClient
       .from("machines")

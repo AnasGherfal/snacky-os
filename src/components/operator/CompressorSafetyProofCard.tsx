@@ -77,6 +77,7 @@ export function CompressorSafetyProofCard({
       photoFormData.append("routeId", routeId);
       photoFormData.append("stopId", stopId);
       photoFormData.append("machineId", machineId);
+      photoFormData.append("photoPurpose", "compressor");
       photoFormData.append("photo", file);
       const uploaded = await uploadRefillProofPhoto(photoFormData);
       if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error(tr("The photo could not be uploaded. Try again before completing the stop.", "تعذر رفع الصورة. حاول مرة أخرى قبل إنهاء الموقع."));
