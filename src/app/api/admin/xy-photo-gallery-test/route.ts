@@ -25,6 +25,14 @@ function outputText(payload: unknown): string {
     .map((part) => String(part.text))).join("\n");
 }
 
+export async function GET() {
+  const profile = await getCurrentProfile();
+  if (!profile || profile.active_status !== "active" || !isOwnerAdminRole(profile)) {
+    return json({ available: false }, 403);
+  }
+  return json({ available: true, configured: Boolean(process.env.OPENAI_API_KEY) });
+}
+
 /**
  * Owner-only AI photo test: an uploaded library photo is processed in memory
  * and sent to the vision provider, but NOT stored in Supabase, routes, or XY.
