@@ -151,7 +151,7 @@ test("direct XY quantity confirmation writes each lane then reads XY back", () =
   assert.match(quantityApi, /verifyMachineQuantityRowsAgainstXy/);
   assert.match(quantityApi, /XY_QUANTITY_WRITE_FAILED/);
 
-  assert.match(quantityCard, /Update & verify with XY/);
+  assert.match(quantityCard, /Refresh & verify XY/);
   assert.match(quantityCard, /Snacky writes the confirmed lane quantities into XY and reads them back/);
 });
 
@@ -243,7 +243,7 @@ test("quantity custody is recorded at Complete Stop, never when just opening a s
   assert.match(operatorStop, /filledItems: actualFilledLines/);
   assert.match(operatorStop, /quantityVerificationStatus === "offline_pending"/);
   assert.match(operatorStop, /save_actual_machine_quantities/);
-  assert.match(quantityCard, /Save quantities & continue/);
+  assert.match(quantityCard, /Continue with XY verification pending/);
   assert.doesNotMatch(quantityCard, /Actual product\/lane quantities are saved automatically/);
   assert.match(stopApi, /Number\(row\.target_stock_qty \?\? -1\) === actualQty/);
 });
