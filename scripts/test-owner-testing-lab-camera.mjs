@@ -28,9 +28,9 @@ test("testing lab displays safe camera and mock route, never sends actual XY com
   assert.match(training, /<GuidedMachineCamera/);
   assert.match(training, /setPhotoUrl\(URL\.createObjectURL\(file\)\)/);
   assert.match(client, /<PhotoLibraryAiTest/);
-  assert.match(client, /function makeCheck\(stop: TestStop\)/);
-  assert.match(client, /product_mismatch/);
-  assert.match(client, /quantity_mismatch/);
+  assert.match(client, /<TrainingRouteClient/);
+  assert.match(training, /verifyTrainingSelections/);
+  assert.match(training, /<MachineStockQuickEditor/);
   assert.doesNotMatch(client, /setXySlotProduct|\/xy-slot-product|inventory_movements|uploadRefillProofPhoto|\/xy-final-quantities/);
 });
 test("testing lab is visible and accessible only to an active owner", () => {
