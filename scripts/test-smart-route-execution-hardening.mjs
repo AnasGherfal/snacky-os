@@ -115,7 +115,7 @@ test("executed AI swaps require old-product return before XY product change", ()
   assert.match(xyProductApi, /returned old units before changing this Smart Route lane in XY/);
   assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
   assert.match(xyProductApi, /slotCode/);
-  assert.match(xyProductApi, /const targetStockQty = zeroStockRelabel \? 0 : queueOnOffline \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+  assert.match(xyProductApi, /const targetStockQty = zeroStockRelabel \? 0 : verifiedPhysicalSwap \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
   assert.match(xyProductApi, /slot_code: slotCode/);
 
   assert.match(stopApi, /SMART_ROUTE_RETURN_REQUIRED/);
