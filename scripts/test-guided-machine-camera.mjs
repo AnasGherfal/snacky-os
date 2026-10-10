@@ -10,6 +10,8 @@ test("machine proof offers live rear-camera portrait framing, not an unframed up
   assert.match(camera, /facingMode: \{ ideal: "environment" \}/);
   assert.match(camera, /aspect-\[3\/4\]/);
   assert.match(camera, /border-emerald-300/);
+  assert.match(camera, /selectionRowCount/);
+  assert.match(stop, /selectionRowCount=\{machineLayoutRows\.length \|\| 6\}/);
   assert.match(camera, /TOP OF MACHINE/);
   assert.match(camera, /BOTTOM VISIBLE/);
   assert.match(camera, /All 4 corners inside the green frame/);
