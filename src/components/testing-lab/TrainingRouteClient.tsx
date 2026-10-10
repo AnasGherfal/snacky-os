@@ -52,7 +52,7 @@ const PRODUCTS: Product[] = [
   { id: "pepsi", en: "Pepsi", ar: "بيبسي" },
   { id: "juice", en: "Juice", ar: "عصير" },
 ];
-const START: Stop[] = [
+const START: TrainingStop[] = [
   {
     id: "1", name: "HT Mall", location: "Tripoli", machineCode: "SN-TRAIN-01",
     status: "assigned", xyPending: false, pendingReason: "", cleaningDone: false,
@@ -167,10 +167,10 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
   };
 
   const reset = () => { setState(makeInitial(realData)); go("overview", 0); };
-  const updateStop = (change: (stop: Stop) => Stop) => setState((prev) => ({
+  const updateStop = (change: (stop: TrainingStop) => TrainingStop) => setState((prev) => ({
     ...prev, stops: prev.stops.map((stop, i) => i === index ? change(stop) : stop),
   }));
-  const updateLane = (code: string, patch: Partial<Lane>) =>
+  const updateLane = (code: string, patch: Partial<TrainingLane>) =>
     updateStop((stop) => ({
       ...stop, verifiedAt: null, xyPending: false, lanes: stop.lanes.map((lane) => lane.code === code ? { ...lane, ...patch } : lane),
     }));
@@ -275,6 +275,12 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
           <div className="rounded-xl bg-white/10 p-3"><div className="text-xl font-bold">{state.pickupConfirmed ? tr("Picked", "مستلمة") : tr("Pending", "معلقة")}</div><p className="text-xs text-emerald-100">{tr("Route stock", "بضاعة الجولة")}</p></div>
         </div>
       </div>
+      {isRealSnapshotTraining ? (
+        <p className="border-b border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">
+          {tr("Real Snacky machines/products from the last XY import. No Smart AI button in this safe test route. Training numbers are never written to physical machines or storage.", "ماكينات ومنتجات سناكي الحقيقية من آخر استيراد XY. زر Smart AI مش موجود في جولة التجربة. أرقام التدريب ما تتسجلش في الماكينات أو المخزن.")}
+          {realData?.capturedAt ? " · " + new Date(realData.capturedAt).toLocaleString(ar ? "ar-LY" : "en-GB") : ""}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white p-3">
         <button type="button" className="btn-secondary text-sm" onClick={() => go("overview")}>{tr("Route", "الجولة")}</button>
         <button type="button" className="btn-secondary text-sm" onClick={() => go("pickup")}>{tr("Pickup", "الاستلام")}</button>
@@ -290,8 +296,8 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-950">{tr("Today's route", "جولة اليوم")} · TRAIN-001</h3>
-                  <p className="mt-1 text-sm text-slate-600">{tr("Assigned to: Training operator · Tripoli", "مُسندة إلى: مشغل تدريبي · طرابلس")}</p>
+                  <h3 className="text-xl font-bold text-slate-950">{tr("Today's route", "جولة اليوم")} · {isRealSnapshotTraining ? "QA-REAL-DATA" : "TRAIN-001"}</h3>
+                  <p className="mt-1 text-sm text-slate-600">{isRealSnapshotTraining ? tr("Owner real-machine review · imported XY inventory snapshot", "مراجعة المالك للماكينات الحقيقية · لقطة مخزون XY المستوردة") : tr("Assigned to: Training operator · Tripoli", "مُسندة إلى: مشغل تدريبي · طرابلس")}</p>
                 </div>
                 <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-900">{state.routeCompleted ? tr("Completed", "مكتملة") : completed ? tr("In progress", "قيد التنفيذ") : tr("Assigned", "مسندة")}</span>
               </div>
