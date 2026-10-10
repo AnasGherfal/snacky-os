@@ -25,11 +25,14 @@ async function galleryJpeg(file: File): Promise<File> {
     const image = new Image();
     image.decoding = "async";
     image.src = url;
-    await new Promise<void>((resolve, reject) => {
-      if (image.complete && image.naturalWidth > 0) { resolve(); return; }
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("This photo could not be opened. Export it as JPEG and try again."));
-    });
+    try {
+      await image.decode();
+    } catch {
+      throw new Error("This photo could not be opened. Export it as JPEG and try again.");
+    }
+    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+      throw new Error("This photo has no readable image data. Export it as JPEG and try again.");
+    }
     const maxDimension = 2200;
     const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
