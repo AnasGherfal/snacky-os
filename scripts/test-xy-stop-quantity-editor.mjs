@@ -60,7 +60,7 @@ test("Complete Stop queues specific user-entered XY final stock, never invents a
   assert.match(page, /Object.keys\(selectionPrices\)/);
   assert.match(page, /xy-final-quantities/);
   assert.match(page, /queue_exact_xy_slot_quantities/);
-  assert.match(page, /Optional XY screenshots \/ technical verification/);
+  assert.match(page, /<MachineQuantityConfirmationCard/);
   assert.match(endpoint, /requested.has\(slotCode\)/);
   assert.match(endpoint, /latest_vms_stock_by_slot/);
   assert.match(endpoint, /finalQty > capacity/);
