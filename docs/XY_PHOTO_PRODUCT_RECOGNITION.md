@@ -5,6 +5,18 @@ Operators already photograph the final machine during the route. Snacky can now 
 
 One front-on photograph often shows **the front-facing product only**. It does not reliably reveal how many are behind the visible item; **never derive sellable stock from the photo**.
 
+## Owner-only photo library AI test (no machine required)
+- Open `/operator/verification-test` in the Snacky preview.
+- As owner/admin, the first card says **Test with a photo from your library**.
+- Tap **Choose photo from library** and select an old vending photo from iPhone Photos. **No camera capture** is required.
+- Preview the photo, then tap **Analyze photo with AI (test only)**.
+- Snacky returns recognized active Snacky products with approximate visible row/position and visual evidence plus confidence. Duplicate products in multiple visible selections remain distinct.
+- This is real AI image analysis, not the mock quantity comparison; the vision model needs server-side `OPENAI_API_KEY`.
+- iPhone HEIC images are converted to JPEG in the browser where the browser can decode them; if not, export as JPEG. Large images are downsized client-side to stay under request limits.
+- The photo is sent to the AI provider only for analysis (`store:false`), **never saved to Snacky Storage**, and **never used to issue an XY command**.
+- Positions are intentionally **visual estimates**. The owner is away from the physical machine; without its verified slot mapping there is no safe way to claim a precise XY lane identity or product count.
+- Access to the AI test endpoint is restricted to signed-in active owner/admin accounts; the card is hidden from other roles.
+
 ## Passport-style guided camera (included in the regular refill photo)
 - Tap **Open guided machine camera** on the existing Refill proof step.
 - Choose **Standard machine** or **Wide machine** to adjust the on-screen alignment frame.
