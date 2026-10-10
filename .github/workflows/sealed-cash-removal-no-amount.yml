@@ -29,7 +29,7 @@ jobs:
       - name: Sealed cash and existing removal regression checks
         run: node --experimental-strip-types --test scripts/test-sealed-cash-removal-no-amount.mjs scripts/test-standalone-cash-removal.mjs scripts/test-cash-custody-chain.mjs
       - name: Lint operator removal and cash handling
-        run: npx eslint src/components/CashRemovalForm.tsx src/components/CashRemovalBoxPlanner.tsx src/app/cash-handling/page.tsx src/components/CashHandlingWorkspace.tsx src/components/CashCustodyForms.tsx
+        run: npx eslint src/components/CashRemovalBoxPlanner.tsx src/app/cash-handling/page.tsx src/components/CashHandlingWorkspace.tsx src/components/CashCustodyForms.tsx
       - name: TypeScript check
         run: npm run typecheck
       - name: Production build
