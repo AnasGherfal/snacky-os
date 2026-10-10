@@ -170,12 +170,11 @@ test("replanning an existing route excludes that route's old reservation", () =>
   assert.match(operatorSmartApi, /excludeRouteId: routeId/);
 });
 
-test("operator can build Smart Pickup at storage before confirmation", () => {
-  assert.match(operatorPickList, /AI Smart Pickup/);
-  assert.match(operatorPickList, /Build Smart Pickup/);
-  assert.match(operatorPickList, /\/api\/operator\/routes\/\$\{routeId\}\/smart-plan/);
-  assert.match(operatorPickList, /no usable lane is left empty/);
-  assert.match(operatorPickList, /setPrepared\(Boolean\(payload\.prepared\)\)/);
+test("operators cannot replan an assigned route or overwrite management's pickup list", () => {
+  assert.doesNotMatch(operatorPickList, /buildSmartPickup\(/);
+  assert.doesNotMatch(operatorPickList, /fetch\(`\/api\/operator\/routes\/\$\{routeId\}\/smart-plan/);
+  assert.match(operatorPickList, /This pickup list follows the approved route/);
+  assert.match(operatorSmartApi, /!isOwnerAdminRole\(profile\)/);
   assert.match(operatorSmartApi, /generateSmartRoutePlan/);
   assert.match(operatorSmartApi, /plan\.slotAssignments/);
 });
