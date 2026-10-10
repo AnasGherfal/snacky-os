@@ -418,7 +418,7 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
               onSelectProduct={(code, product) => setSelectedProducts((old) => ({ ...old, [code]: product }))}
               onSaveSelection={saveSelection}
               saveStatuses={saveStatuses}
-              isLiveXy
+              isLiveXy={!isRealSnapshotTraining}
             />
             </div>
 
