@@ -4,6 +4,7 @@ import fs from "node:fs";
 
 const camera = fs.readFileSync("src/components/testing-lab/GuidedMachineCamera.tsx", "utf8");
 const client = fs.readFileSync("src/app/admin/testing-lab/TestingLabClient.tsx", "utf8");
+const training = fs.readFileSync("src/components/testing-lab/TrainingRouteClient.tsx", "utf8");
 const page = fs.readFileSync("src/app/admin/testing-lab/page.tsx", "utf8");
 const sidebar = fs.readFileSync("src/components/Sidebar.tsx", "utf8");
 const admin = fs.readFileSync("src/app/admin/page.tsx", "utf8");
@@ -24,8 +25,8 @@ test("guided camera frame, no cropping, photo preview and mobile fallback", () =
   assert.match(camera, /capture="environment"/);
 });
 test("testing lab displays safe camera and mock route, never sends actual XY commands", () => {
-  assert.match(client, /<GuidedMachineCamera/);
-  assert.match(client, /setTestPhotoUrl\(URL\.createObjectURL\(file\)\)/);
+  assert.match(training, /<GuidedMachineCamera/);
+  assert.match(training, /setPhotoUrl\(URL\.createObjectURL\(file\)\)/);
   assert.match(client, /<PhotoLibraryAiTest/);
   assert.match(client, /function makeCheck\(stop: TestStop\)/);
   assert.match(client, /product_mismatch/);
