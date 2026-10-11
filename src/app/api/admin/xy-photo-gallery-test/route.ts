@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { hasRole } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { resolvePhotoAiConnection, publicPhotoAiConnection, photoAiFailure } from "@/lib/photo-ai-connection";
 import {
   GALLERY_PHOTO_MAX_BYTES,
   GALLERY_PHOTO_MIME_TYPES,
@@ -25,18 +26,24 @@ function outputText(payload: unknown): string {
     .map((part) => String(part.text))).join("\n");
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const profile = await getCurrentProfile();
   if (!profile || profile.active_status !== "active" || !hasRole(profile, "owner")) {
     return json({ available: false }, 403);
   }
-  return json({ available: true, configured: Boolean(process.env.OPENAI_API_KEY) });
+  try {
+    const connection = resolvePhotoAiConnection(process.env, request.headers);
+    // Local diagnostics only: no paid AI probe, credential value or balance claim.
+    return json({ available: true, ...publicPhotoAiConnection(connection) });
+  } catch {
+    return json({ available: true, configured: false, connectionVerified: false, error: "The configured photo model is invalid." });
+  }
 }
 
 /**
- * Owner-only AI photo test: an uploaded library photo is processed in memory
- * and sent to the vision provider, but NOT stored in Supabase, routes, or XY.
- * Visual positions are approximate row / column indexes, NOT actual XY codes.
+ * Owner-only photo test. The selected image is processed in memory, sent to
+ * OpenAI directly or via Vercel AI Gateway, and never saved to Snacky/XY.
+ * No account provisioning, credit purchase, automatic top-up or AI retry.
  */
 export async function POST(request: Request) {
   const profile = await getCurrentProfile();
@@ -46,11 +53,21 @@ export async function POST(request: Request) {
   if (!hasRole(profile, "owner")) {
     return json({ ok: false, error: "This photo-library AI test is available only to Snacky owners." }, 403);
   }
+  const origin = request.headers.get("origin");
+  if (request.headers.get("sec-fetch-site") === "cross-site" || (origin && origin !== new URL(request.url).origin)) {
+    return json({ ok: false, error: "Open the photo test from Snacky OS." }, 403);
+  }
+  let connection;
+  try {
+    connection = resolvePhotoAiConnection(process.env, request.headers);
+  } catch {
+    return json({ ok: false, code: "PHOTO_AI_INVALID_MODEL", error: "The configured photo model is invalid." }, 503);
+  }
+  if (!connection) {
+    return json({ ok: false, code: "PHOTO_AI_NOT_CONFIGURED", error: "No server AI credential is available. Automatic Vercel OIDC access is not present in this deployment. A project administrator must enable it or configure a server-side API key. Never paste keys into chat." }, 503);
+  }
   const db = getSupabaseAdminClient();
   if (!db) return json({ ok: false, error: "Snacky database is not available." }, 503);
-  if (!process.env.OPENAI_API_KEY) {
-    return json({ ok: false, error: "Photo AI is not configured. Set the server-only OPENAI_API_KEY before testing recognition." }, 503);
-  }
 
   let file: FormDataEntryValue | null;
   try {
@@ -61,12 +78,8 @@ export async function POST(request: Request) {
   }
   if (!(file instanceof File) || !GALLERY_PHOTO_MIME_TYPES.has(file.type)
     || file.size < 1 || file.size > GALLERY_PHOTO_MAX_BYTES) {
-    return json({
-      ok: false,
-      error: "Choose a JPEG, PNG or WEBP photo smaller than 4MB. If your iPhone photo is HEIC, export/share it as JPEG first.",
-    }, 400);
+    return json({ ok: false, error: "Choose a JPEG, PNG or WEBP photo smaller than 4MB. If your iPhone photo is HEIC, export/share it as JPEG first." }, 400);
   }
-
   const { data: products, error: productError } = await db
     .from("products").select("id,name,active").eq("active", true).order("name").limit(350);
   if (productError || !products?.length) {
@@ -94,53 +107,44 @@ export async function POST(request: Request) {
 
   try {
     const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
-    const result = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      cache: "no-store",
+    const result = await fetch(connection.url, {
+      method: "POST", cache: "no-store", redirect: "error",
       signal: AbortSignal.timeout(45_000),
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
       body: JSON.stringify({
-        model: process.env.XY_PHOTO_VISION_MODEL || "gpt-4.1-mini",
+        model: connection.model,
         store: false,
         max_output_tokens: 6500,
         input: [{ role: "user", content: [
           { type: "input_text", text: instructions },
           { type: "input_image", image_url: `data:${file.type};base64,${base64}`, detail: "high" },
         ] }],
-        text: {
-          format: { type: "json_schema", name: "snacky_gallery_photo_test", schema: GALLERY_PHOTO_SCHEMA, strict: true },
-        },
+        text: { format: { type: "json_schema", name: "snacky_gallery_photo_test", schema: GALLERY_PHOTO_SCHEMA, strict: true } },
       }),
     });
     const raw = await result.json().catch(() => null);
     if (!result.ok) {
-      console.warn("[snacky:photo-gallery-test] Vision model unavailable", { status: result.status });
-      return json({ ok: false, error: "AI could not analyze this photo. Confirm the model key is configured or try another JPEG." }, 503);
+      // Never log tokens, uploaded images, catalog data or raw provider errors.
+      console.warn("[snacky:photo-gallery-test] Provider unavailable", { status: result.status, provider: connection.provider });
+      return json({ ok: false, ...photoAiFailure(result.status, connection.provider) }, 503);
     }
     let parsed: { photoQuality?: unknown; observations?: unknown };
     try {
       parsed = JSON.parse(outputText(raw)) as { photoQuality?: unknown; observations?: unknown };
+      if (!parsed || !Array.isArray(parsed.observations) || !["good", "partial", "unreadable"].includes(String(parsed.photoQuality))) throw new Error("Invalid schema");
     } catch {
       return json({ ok: false, error: "AI returned an unreadable result. Try the photo again." }, 502);
     }
     const validated = validateGalleryObservations(parsed.observations, allowed);
-    const photoQuality = ["good", "partial", "unreadable"].includes(String(parsed.photoQuality))
-      ? parsed.photoQuality : "unreadable";
-
     return json({
-      ok: true,
-      testOnly: true,
-      photoQuality,
-      observations: validated.observations,
-      rejectedObservations: validated.rejected,
+      ok: true, testOnly: true, provider: connection.provider, connectionVerified: true,
+      photoQuality: parsed.photoQuality,
+      observations: validated.observations, rejectedObservations: validated.rejected,
       analyzedAt: new Date().toISOString(),
       disclaimer: "Visual row/column estimates only; nothing saved and no XY inventory updated.",
     });
-  } catch (cause) {
-    console.warn("[snacky:photo-gallery-test] Scan failed", cause instanceof Error ? cause.message : "unknown");
+  } catch {
+    console.warn("[snacky:photo-gallery-test] Request failed", { provider: connection.provider });
     return json({ ok: false, error: "Photo AI is unavailable. Try a smaller, clearer JPEG or retry." }, 503);
   }
 }
