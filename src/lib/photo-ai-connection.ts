@@ -5,6 +5,7 @@
  * https://vercel.com/docs/oidc
  */
 export type PhotoAiEnvironment = Readonly<{
+  [name: string]: string | undefined;
   OPENAI_API_KEY?: string;
   AI_GATEWAY_API_KEY?: string;
   VERCEL_OIDC_TOKEN?: string;
