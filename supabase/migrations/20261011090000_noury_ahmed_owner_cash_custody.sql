@@ -415,7 +415,8 @@ begin
     'state',case when c.voided_at is not null or c.custody_status='voided' then 'voided'
       when c.actual_cash_collected is not null then 'counted'
       when coalesce(c.cash_bag_id,'') !~ '[^[:space:]]' then 'reference_review'
-      when c.stage='picked_up' and c.delivered_at is not null and c.picked_up_by=c.assigned_to then 'delivered'
+      when c.stage='picked_up' and c.delivered_at is not null and c.picked_up_by=c.delivered_by then 'delivered'
+      when c.stage='picked_up' and c.delivered_at is not null and c.picked_up_by<>c.delivered_by then 'received'
       when c.stage='picked_up' then 'picked_up'
       when c.stage='dropped' then 'dropped' when c.custody_status='in_storage' then 'stored'
       when c.stage='assigned' then 'assigned' else 'collected' end,
