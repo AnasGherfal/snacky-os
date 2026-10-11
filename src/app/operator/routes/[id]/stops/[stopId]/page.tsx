@@ -2468,7 +2468,7 @@ export default function MachineStopPage() {
         </div>
 
         {smartSwapRequirements.length ? (
-          <section id="stop-smart-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
+          <section id="smart-route-changes" className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 md:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-xs font-bold uppercase tracking-wide text-violet-700">{tr("Smart Route product changes", "تغييرات منتجات الجولة الذكية")}</div>
