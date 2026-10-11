@@ -80,7 +80,7 @@ export function StopReadinessGuide({
   ];
   if (smartReturnsPending > 0 || smartXyPending > 0) {
     steps.splice(1, 0, {
-      href: "#stop-smart-changes",
+      href: "#smart-route-changes",
       title: tr("Smart Route changes", "تغييرات الجولة الذكية"),
       hint: tr("Return old products and verify executed product changes.", "أرجع المنتجات القديمة وتأكد من تغييرات المنتجات المنفذة."),
       state: "needed",
