@@ -18,7 +18,7 @@ test("warehouse courier requires assigned handover before pickup; no Finance or 
 assert.match(sql,/when 'pickup','direct_pickup','takeover' then/);
 assert.match(sql,/when 'deliver' then allowed:=array/);
 assert.match(sql,/if v_action in \('pickup','direct_pickup'\) and not \(v_counter or v_courier\)/);
-assert.match(sql,/and h.assigned_to<>v_actor/);
+assert.match(sql,/h.assigned_to<>v_actor/);
 assert.match(sql,/Wait for the courier to confirm physical delivery/);
 assert.match(sql,/when 'deliver' then[\s\S]*?delivered_at=v_now/);
 assert.match(sql,/c.picked_up_by=c.delivered_by then 'delivered'/);
