@@ -54,7 +54,7 @@ export function validateCashCommand(value: unknown): CashCommand {
   if ('assigned_to' in p) uuid(p.assigned_to);
   if ('user_id' in p) uuid(p.user_id);
   if ('seal_condition' in p && !['intact', 'broken', 'mismatch'].includes(String(p.seal_condition))) throw new Error('invalid');
-  if ('notes' in p) text(p.notes, p.seal_condition !== 'intact' || action === 'takeover' ? 3 : 0, 1000);
+  if ('notes' in p) text(p.notes, (('seal_condition' in p && p.seal_condition !== 'intact') || action === 'takeover') ? 3 : 0, 1000);
   if ('storage_location' in p) text(p.storage_location, 2, 180);
   if ('delivery_location' in p) text(p.delivery_location, 2, 180);
   if ('confirm_bag_id' in p) text(p.confirm_bag_id, 1, 120);
@@ -111,7 +111,7 @@ export const cashStateLabels: Record<string, [string, string]> = {
   reference_review: ['Earlier record · reference missing', 'سجل سابق · رقم العلبة غير مسجل'],
   collected: ['With collector', 'مع المحصّل'], assigned: ['Coordinator assigned', 'تم إسناد المسؤول'],
   dropped: ['In storage · pickup pending', 'في المخزن · بانتظار الاستلام'], stored: ['Stored · assignment / pickup pending', 'في المخزن · بانتظار الإسناد أو الاستلام'],
-  picked_up: ['With courier · delivery pending', 'مع المندوب · بانتظار التوصيل'], delivered: ['Courier reported delivered · owner receipt pending', 'تم الإبلاغ عن التوصيل · بانتظار استلام المالك'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
+  picked_up: ['With courier · delivery pending', 'مع المندوب · بانتظار التوصيل'], delivered: ['Courier reported delivered · owner receipt pending', 'تم الإبلاغ عن التوصيل · بانتظار استلام المالك'], received: ['Owner received · counting pending', 'المالك استلم · بانتظار العد'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
 };
 export function cashError(code: string, ar: boolean) {
   const messages: Record<string, [string, string]> = {
