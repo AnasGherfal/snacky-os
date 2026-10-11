@@ -1,0 +1,32 @@
+name: Courier to owner cash custody
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/lib/cash-handover.ts'
+      - 'src/components/CashHandlingWorkspace.tsx'
+      - 'supabase/migrations/20261011090000_noury_ahmed_owner_cash_custody.sql'
+      - 'scripts/test-cash-owner-courier-handoff.mjs'
+      - '.github/workflows/noury-ahmed-owner-cash-custody.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Courier and legacy cash action contracts
+        run: node --experimental-strip-types --test scripts/test-cash-owner-courier-handoff.mjs scripts/test-cash-handover.mjs scripts/test-cash-custody-chain.mjs scripts/test-sealed-cash-removal-no-amount.mjs
+      - name: Lint cash workflow
+        run: npx eslint src/components/CashHandlingWorkspace.tsx src/lib/cash-handover.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
