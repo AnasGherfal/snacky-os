@@ -58,7 +58,7 @@ test("disabled Complete Stop has actionable feedback; original validation remain
 
 test("mobile and Arabic interface guidance is explicit", () => {
   assert.match(guide, /"إنهاء الموقع خطوة بخطوة"/);
-  assert.match(guide, /"كمية"/);
+  assert.match(guide, /"١. كميات التعبئة"/);
   assert.match(guide, /"مطلوبة"/);
   assert.match(guide, /"تم التحقق"/);
   assert.match(guide, /className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"/);
