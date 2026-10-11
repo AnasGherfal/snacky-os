@@ -2,7 +2,7 @@
 export const cashHandlingRoles = ['owner', 'admin', 'supervisor', 'operator', 'warehouse', 'purchasing', 'finance'] as const;
 export const cashUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const cashAmount = /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/;
-export type CashAction = 'enable' | 'counter' | 'assign' | 'dropoff' | 'pickup' | 'direct_pickup' | 'takeover' | 'count';
+export type CashAction = 'enable' | 'counter' | 'assign' | 'dropoff' | 'pickup' | 'direct_pickup' | 'takeover' | 'deliver' | 'count';
 export type CashCommand = { request_id: string; collection_id: string | null; action: CashAction; revision: number; payload: Record<string, string | boolean> };
 export type CashReceipt = { ok: true; request_id: string; collection_id: string | null; action: CashAction; revision: number; amount?: string; finance_posted?: boolean };
 export type CashPerson = { id: string; name: string; enabled?: boolean; can_count?: boolean; owner?: boolean; finance_access?: boolean };
@@ -10,7 +10,7 @@ export type CashBox = {
   id: string; bag: string | null; reference_missing: boolean; revision: number; state: string; collector: string | null; collected_at: string;
   assigned_to: string | null; assignee: string | null; assignee_active: boolean; storage: string | null;
   deposited_at: string | null; depositor: string | null; picked_up_at: string | null; custodian: string | null;
-  cash_location: string | null; counted_at: string | null; counter: string | null; amount: string | null;
+  cash_location: string | null; delivered_at: string | null; delivery_location: string | null; counted_at: string | null; counter: string | null; amount: string | null;
   seal_exception: boolean; evidence_path?: string | null; evidence_url?: string | null;
   machines: { id?: string; name: string; location: string | null; removed_amount_lyd?: string | null; removal_type?: string | null }[]; actions: CashAction[];
   events: { id: string; action: CashAction; at: string; by: string; detail: { location?: string; seal?: string; notes?: string } }[];
@@ -19,12 +19,12 @@ export type CashBox = {
 export function cashReferenceMissing(box: Pick<CashBox, 'bag'> & { reference_missing?: boolean }): boolean {
   return box.reference_missing === true || typeof box.bag !== 'string' || box.bag.trim().length === 0;
 }
-export type CashWorkspace = { me: string; owner: boolean; can_count: boolean; enabled: boolean; can_remove: boolean; people: CashPerson[]; counters: CashPerson[]; rows: CashBox[]; total: number; offset: number };
+export type CashWorkspace = { me: string; owner: boolean; can_count: boolean; can_transport?: boolean; enabled: boolean; can_remove: boolean; people: CashPerson[]; counters: CashPerson[]; rows: CashBox[]; total: number; offset: number };
 const actionFields: Record<CashAction, string[]> = {
   enable: ['enabled'], counter: ['user_id', 'enabled'], assign: ['assigned_to'],
   dropoff: ['assigned_to', 'storage_location', 'seal_condition', 'notes'],
   pickup: ['confirm_bag_id', 'seal_condition', 'notes'], direct_pickup: ['confirm_bag_id', 'seal_condition', 'notes'],
-  takeover: ['confirm_bag_id', 'seal_condition', 'notes'], count: ['amount', 'cash_location'],
+  takeover: ['confirm_bag_id', 'seal_condition', 'notes'], deliver: ['delivery_location', 'notes'], count: ['amount', 'cash_location'],
 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
@@ -56,6 +56,7 @@ export function validateCashCommand(value: unknown): CashCommand {
   if ('seal_condition' in p && !['intact', 'broken', 'mismatch'].includes(String(p.seal_condition))) throw new Error('invalid');
   if ('notes' in p) text(p.notes, p.seal_condition !== 'intact' || action === 'takeover' ? 3 : 0, 1000);
   if ('storage_location' in p) text(p.storage_location, 2, 180);
+  if ('delivery_location' in p) text(p.delivery_location, 2, 180);
   if ('confirm_bag_id' in p) text(p.confirm_bag_id, 1, 120);
   if (action === 'count') {
     if (typeof p.amount !== 'string' || !cashAmount.test(p.amount)) throw new Error('invalid');
@@ -103,14 +104,14 @@ export function cashSameOrigin(request: Request) {
 export const cashActionLabels: Record<CashAction, [string, string]> = {
   enable: ['Pilot setting', 'إعداد التشغيل'], counter: ['Counting permission', 'صلاحية عد النقد'],
   assign: ['Assign coordinator', 'إسناد المسؤول'], dropoff: ['Left in storage', 'وضعتها في المخزن'],
-  pickup: ['Pick up this box', 'استلام العلبة'], direct_pickup: ['I will count my collected box', 'سأعد العلبة التي جمعتها'],
-  takeover: ['Take over custody', 'استلام العهدة من المسؤول'], count: ['Count and record', 'عد النقد وتسجيله'],
+  pickup: ['Pick up from storage · transport to owner', 'استلام من المخزن · توصيل للمالك'], direct_pickup: ['I will count my collected box', 'سأعد العلبة التي جمعتها'],
+  takeover: ['Receive cash box from courier', 'تأكيد استلام علبة النقد من المندوب'], deliver: ['Deliver to owner (unconfirmed)', 'تسليم العلبة للمالك (بانتظار تأكيده)'], count: ['Count and record', 'عد النقد وتسجيله'],
 };
 export const cashStateLabels: Record<string, [string, string]> = {
   reference_review: ['Earlier record · reference missing', 'سجل سابق · رقم العلبة غير مسجل'],
   collected: ['With collector', 'مع المحصّل'], assigned: ['Coordinator assigned', 'تم إسناد المسؤول'],
   dropped: ['In storage · pickup pending', 'في المخزن · بانتظار الاستلام'], stored: ['Stored · assignment / pickup pending', 'في المخزن · بانتظار الإسناد أو الاستلام'],
-  picked_up: ['With coordinator · count pending', 'مع المسؤول · بانتظار العد'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
+  picked_up: ['With courier · delivery pending', 'مع المندوب · بانتظار التوصيل'], delivered: ['Courier reported delivered · owner receipt pending', 'تم الإبلاغ عن التوصيل · بانتظار استلام المالك'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
 };
 export function cashError(code: string, ar: boolean) {
   const messages: Record<string, [string, string]> = {
