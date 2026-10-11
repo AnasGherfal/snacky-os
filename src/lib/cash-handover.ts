@@ -111,7 +111,7 @@ export const cashStateLabels: Record<string, [string, string]> = {
   reference_review: ['Earlier record · reference missing', 'سجل سابق · رقم العلبة غير مسجل'],
   collected: ['With collector', 'مع المحصّل'], assigned: ['Coordinator assigned', 'تم إسناد المسؤول'],
   dropped: ['In storage · pickup pending', 'في المخزن · بانتظار الاستلام'], stored: ['Stored · assignment / pickup pending', 'في المخزن · بانتظار الإسناد أو الاستلام'],
-  picked_up: ['With courier · delivery pending', 'مع المندوب · بانتظار التوصيل'], delivered: ['Courier reported delivered · owner receipt pending', 'تم الإبلاغ عن التوصيل · بانتظار استلام المالك'], received: ['Owner received · counting pending', 'المالك استلم · بانتظار العد'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
+  picked_up: ['With custodian · next step pending', 'مع مسؤول العهدة · بانتظار الخطوة التالية'], delivered: ['Courier reported delivered · owner receipt pending', 'تم الإبلاغ عن التوصيل · بانتظار استلام المالك'], received: ['Owner received · counting pending', 'المالك استلم · بانتظار العد'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],
 };
 export function cashError(code: string, ar: boolean) {
   const messages: Record<string, [string, string]> = {
