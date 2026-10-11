@@ -114,6 +114,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
       : null;
     const payload: CashCommand['payload'] = action === 'assign' ? { assigned_to: get('assigned_to') }
       : action === 'dropoff' ? { assigned_to: get('assigned_to'), storage_location: get('storage_location'), seal_condition: get('seal_condition'), notes: get('notes') }
+      : action === 'deliver' ? { delivery_location: get('delivery_location'), notes: get('notes') }
       : action === 'count' && machineCountRows && machineCountTotal !== null
         ? { amount: `${Math.floor(machineCountTotal / 100)}.${String(machineCountTotal % 100).padStart(2, '0')}`, cash_location: get('cash_location'), machine_counts: JSON.stringify(machineCountRows) }
         : action === 'count' ? { amount: get('amount'), cash_location: get('cash_location') }
@@ -128,15 +129,24 @@ function CashHandlingClient({ userId }: { userId: string }) {
   }
   const locked = busy || Boolean(pending), box = selected ? view?.rows.find(r => r.id === selected) : null;
   const label = (a: CashAction) => cashActionLabels[a][ar ? 1 : 0];
+  const suggestedAhmed = view?.counters.find((person) => /ahmed.*zegallai|احمد.*زغ|أحمد.*زغ/i.test(person.name))
+    ?? view?.counters.find((person) => /^ahmed|^أحمد|^احمد/i.test(person.name));
+
   return <section className={styles.workspace} dir={ar ? 'rtl' : 'ltr'} data-testid="cash-handling">
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
         <h1>{text('Cash', 'النقدية')}</h1>
-        <p>{text('Collect from machines, hand it over, and follow the same cash box in one place.', 'اسحب النقد من الماكينات وسلمه وتابع نفس العلبة في مكان واحد.')}</p></div>
+        <p>{text('Noury removes and deposits · Ahmed transports · Owner receives and counts later. Every step follows the same sealed-box ID.', 'نوري يسحب العلبة ويخزنها · أحمد يستلمها وينقلها · المالك يستلم ويعد النقد لاحقاً. جميع الخطوات مربوطة برقم العلبة نفسه.')}</p></div>
       <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
+    <div className={styles.notice} role="note">
+      <strong>{text('One connected cash-box workflow · No cash amount at pickup', 'مسار نقدية واحد متصل · بدون إدخال مبالغ عند السحب')}</strong>
+      <p>{text('1. Noury: remove the cash box from the machine, record its seal and photo, then leave it in locked storage and save the location with a photo.', '١. نوري: اسحب علبة النقد من الماكينة وسجّل رقمها وصورتها، ثم ضعها في المخزن المقفل وسجّل المكان مع صورة.')}</p>
+      <p>{text('2. Ahmed: collect the identified sealed box from storage, check its seal, transport it to the owner’s counting location, then record delivery. Do not open or count it.', '٢. أحمد: استلم العلبة المختومة من المخزن وتأكد من رقمها والختم، وانقلها لمكان عدّ المالك ثم سجّل التوصيل. ممنوع فتحها أو عدّها.')}</p>
+      <p>{text('3. Owner: only after physically receiving the same sealed box, confirm receipt in Cash. You may leave it pending until you are there and ready to count. Enter the actual amount once after counting.', '٣. المالك: بعد استلام نفس العلبة فعلياً تأكد من الاستلام في النقدية. تقدر تتركها معلّقة حتى تكون موجود ومستعد للعد، وبعدها تدخل المبلغ الحقيقي مرة واحدة.')}</p>
+    </div>
     {error ? <div role="alert" className={styles.error}>{cashError(error, ar)}</div> : null}
     {memoryOnly ? <p className={styles.notice}>{text('This browser could not preserve the retry locally. Keep this page open until saving is confirmed.', 'تعذر حفظ طلب الإعادة في المتصفح. لا تغلق الصفحة حتى يتأكد الحفظ.')}</p> : null}
     {pending ? <section className={styles.pending} aria-label={text('Unconfirmed action', 'إجراء غير مؤكد')}>
@@ -170,6 +180,9 @@ function CashHandlingClient({ userId }: { userId: string }) {
           <div className={styles.cardTop}><span className={styles.badge}>{(cashStateLabels[row.state] ?? [row.state, row.state])[ar ? 1 : 0]}</span>{row.seal_exception ? <span className={styles.warning}>{text('Seal exception', 'ملاحظة على الختم')}</span> : null}</div>
           <h3>{row.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h3>
           <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{cashReferenceMissing(row) ? text('Not recorded', 'غير مسجل') : row.bag}</bdi></p>
+          {row.state === 'dropped' ? <p className={styles.hint}>{text('NEXT: Ahmed picks up from storage', 'التالي: أحمد يستلم من المخزن')}</p> : null}
+          {row.state === 'picked_up' ? <p className={styles.hint}>{text('NEXT: Ahmed delivers the box; owner has not received it yet', 'التالي: أحمد يسلّم العلبة والمالك لم يستلمها بعد')}</p> : null}
+          {row.state === 'delivered' ? <p className={styles.hint}>{text('NEXT: Owner physically receives and confirms — counting may wait', 'التالي: المالك يستلم ويؤكد، ويمكن تأجيل العد')}</p> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{row.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{row.assignee ?? text('Not assigned', 'غير مسند')}</dd></div>
             <div><dt>{text('Collected', 'وقت السحب')}</dt><dd>{date(row.collected_at)}</dd></div><div><dt>{text('Storage', 'المخزن')}</dt><dd>{row.storage ?? '—'}</dd></div></dl>
           {row.amount !== null ? <p className={styles.amount}><bdi>{row.amount} LYD</bdi></p> : null}
@@ -208,25 +221,34 @@ function CashHandlingClient({ userId }: { userId: string }) {
             </div>
           </section> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{box.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{box.assignee ?? '—'}</dd></div>
-            <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.storage ?? '—'}</dd></div></dl>
-          {box.state === 'dropped' ? <p className={styles.notice}>{text('The collector recorded a storage drop-off. The coordinator has not acknowledged pickup yet.', 'سجّل المحصّل وضع العلبة في المخزن. لم يؤكد المسؤول استلامها بعد.')}</p> : null}
+            <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.delivery_location ?? box.storage ?? '—'}</dd></div></dl>
+          {box.state === 'dropped' ? <p className={styles.notice}>{text('Noury reported the sealed box placed in storage. Ahmed must verify its seal and take physical custody.', 'نوري سجّل العلبة في المخزن. أحمد يراجع الختم ورقم العلبة ويؤكد استلامها فعلياً.')}</p> : null}
+          {box.state === 'picked_up' ? <p className={styles.notice}>{text('The courier holds the sealed cash box. Transport it to the owner location and record delivery. It has NOT yet been received by the owner.', 'العلبة المختومة بعهدة المندوب. انقلها لموقع المالك وسجّل التوصيل. لم يؤكد المالك استلامها بعد.')}</p> : null}
+          {box.state === 'delivered' ? <p className={styles.notice}>{text('Ahmed marked this box delivered. The owner must physically verify the same seal and confirm receipt. DO NOT count until received; counting can be delayed.', 'أحمد سجّل توصيل العلبة. لازم المالك يتحقق فعلياً من نفس الختم ويؤكد الاستلام. ممكن تأجيل العد حتى يكون جاهز.')}</p> : null}
+          {box.delivery_location ? <p className={styles.hint}>{text('Courier delivery location', 'موقع توصيل المندوب')}: {box.delivery_location} · {date(box.delivered_at)}</p> : null}
           {box.seal_exception ? <p className={styles.error}>{text('Seal exception recorded. Count the actual money; owner review is still required.', 'تم تسجيل ملاحظة على الختم. يُعد المبلغ الفعلي، وتبقى مراجعة المالك مطلوبة.')}</p> : null}
           {box.evidence_url ? <a className={styles.secondary} href={box.evidence_url} target="_blank" rel="noreferrer noopener">{text('View storage photo', 'عرض صورة المخزن')}</a> : box.deposited_at ? <p className={styles.hint}>{text('Refresh to load the private storage photo.', 'حدّث الصفحة لتحميل صورة المخزن الخاصة.')}</p> : null}
           {!action && !cashReferenceMissing(box) ? <div className={styles.buttons}>{box.actions.map(a => <button className={a === 'count' || a === 'pickup' || a === 'dropoff' ? styles.primary : styles.secondary} key={a} disabled={locked} onClick={() => { setAction(a); setError(''); }}>{label(a)}</button>)}</div> : null}
           {action && !cashReferenceMissing(box) && box.actions.includes(action) && !pending ? <form className={styles.form} onSubmit={e => submit(e, box)} key={`${box.id}-${action}-${box.revision}`}>
             <h3>{label(action)}</h3>
             <fieldset disabled={locked}>
-              {['assign', 'dropoff'].includes(action) ? <label>{text('Coordinator', 'المسؤول عن العد')}
-                {action === 'dropoff' && box.assigned_to ? <><input type="hidden" name="assigned_to" value={box.assigned_to} /><span>{box.assignee}</span></> : <select name="assigned_to" defaultValue={box.assigned_to ?? ''} required><option value="">{text('Choose an authorized person', 'اختر شخصاً مخولاً')}</option>{view.counters.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select>}</label> : null}
+              {['assign', 'dropoff'].includes(action) ? <label>{text('Responsible courier / cash coordinator', 'المسؤول عن نقل النقدية')}
+                {action === 'dropoff' && box.assigned_to ? <><input type="hidden" name="assigned_to" value={box.assigned_to} /><span>{box.assignee}</span></> : <select name="assigned_to" defaultValue={box.assigned_to ?? suggestedAhmed?.id ?? ''} required><option value="">{text('Choose an authorized person', 'اختر شخصاً مخولاً')}</option>{view.counters.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select>}</label> : null}
               {action === 'dropoff' ? <>
+                <p className={styles.hint}>{text('Assign Ahmed for pickup and delivery. Only save this after Noury actually leaves the sealed box in storage; it is NOT yet a handover to Ahmed.', 'اختار أحمد ليستلم ويوصل العلبة. نوري يسجل الخطوة بعد ما يضع العلبة فعلياً في المخزن، وهذا لا يعني أن أحمد استلمها.')}</p>
                 <p className={styles.hint}>{text('Record this only after leaving the sealed box in the designated secure place. This is not a receipt by another employee.', 'سجّل ذلك بعد وضع العلبة المختومة في المكان الآمن المحدد. هذا ليس تأكيد استلام من موظف آخر.')}</p>
                 <label>{text('Exact storage / safe location', 'موقع المخزن / الخزنة بالتحديد')}<input name="storage_location" required minLength={2} maxLength={180} /></label>
                 <label>{text('Photo of the box in storage', 'صورة العلبة في المخزن')}<input type="file" accept="image/jpeg,image/png,image/webp" required onChange={e => { photo.current = e.target.files?.[0] ?? null; }} /></label>
               </> : null}
+              {action === 'deliver' ? <>
+                <p className={styles.hint}>{text('Ahmed: record the actual arrival of the sealed box at the owner counting location. This does NOT claim the owner accepted it and does NOT record an amount.', 'أحمد: سجّل وصول العلبة المختومة لمكان عد المالك. هذا لا يعني أن المالك استلمها ولا يُسجّل أي مبلغ.')}</p>
+                <label>{text('Exact delivery location', 'موقع تسليم العلبة بالتحديد')}<input name="delivery_location" required minLength={2} maxLength={180} placeholder={text('Owner counting location / secure handoff', 'مكان عدّ المالك / نقطة التسليم الآمنة')} /></label>
+              </> : null}
+              {action === 'takeover' ? <p className={styles.hint}>{text('Owner: ONLY confirm receipt after you are physically present, have checked the seal ID, and have the box in your custody. You can count it later.', 'المالك: أكّد الاستلام فقط لما تكون موجود فعلياً وتراجع رقم الختم وتستلم العلبة بيدك. تقدر تعد النقد لاحقاً.')}</p> : null}
               {['pickup', 'direct_pickup', 'takeover'].includes(action) ? <label>{text('Enter the reference on the physical box / seal', 'اكتب الرقم الموجود على العلبة / الختم')}<input name="confirm_bag_id" autoComplete="off" required maxLength={120} /></label> : null}
-              {['dropoff', 'pickup', 'direct_pickup', 'takeover'].includes(action) ? <>
+              {['dropoff', 'pickup', 'direct_pickup', 'takeover', 'deliver'].includes(action) ? <>
                 <label>{text('Seal condition', 'حالة الختم')}<select name="seal_condition" defaultValue="intact"><option value="intact">{text('Intact', 'سليم')}</option><option value="broken">{text('Broken', 'مفتوح / مكسور')}</option><option value="mismatch">{text('Reference mismatch', 'الرقم غير مطابق')}</option></select></label>
-                <label>{text('Notes · required for an exception or takeover', 'ملاحظات · مطلوبة عند وجود ملاحظة أو نقل العهدة')}<textarea name="notes" maxLength={1000} rows={3} required={action === 'takeover'} /></label>
+                <label>{text('Notes · required for an exception or owner receipt', 'ملاحظات · مطلوبة عند وجود ملاحظة أو استلام المالك')}<textarea name="notes" maxLength={1000} rows={3} required={action === 'takeover'} /></label>
               </> : null}
               {action === 'count' ? <>
                 {box.machines.length > 0 && box.machines.every(machine => Boolean(machine.id) && machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined) ? (
