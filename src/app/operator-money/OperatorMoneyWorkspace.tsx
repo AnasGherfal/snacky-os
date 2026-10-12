@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import OperatorMoneyLedgerClient from "./OperatorMoneyLedgerClient";
-import type { PurchaseOverview, PurchaseHistoryRow, PurchaseTotals } from "@/lib/operator-purchase-overview";
+import type { PurchaseHistoryRow, PurchaseTotals } from "@/lib/operator-purchase-overview";
+import type { DebtAdjustedPurchaseOverview } from "@/lib/operator-debt-adjustment-overview";
 
 type Props = ComponentProps<typeof OperatorMoneyLedgerClient> & { initialPersonId: string; lockPerson: true };
 const money = (value: number) => `${value.toFixed(2)} LYD`;
@@ -19,8 +20,7 @@ export default function OperatorMoneyWorkspace(props: Props) {
     const timers = refreshTimers.current;
     timers.forEach(clearTimeout);
     timers.clear();
-    // Read again after a form submission; never infer that a save succeeded or
-    // change balances optimistically. Slow requests are covered by focus/polling.
+    // Never infer that a save succeeded or change balances optimistically.
     for (const delay of [2000, 7000]) {
       const timer = setTimeout(() => { timers.delete(timer); setRefreshVersion((n) => n + 1); }, delay);
       timers.add(timer);
@@ -39,7 +39,7 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
   personId: string; locale: string; selfServiceOnly: boolean; refreshVersion: number;
 }) {
   const [activeLocale, setActiveLocale] = useState(locale);
-  const [data, setData] = useState<PurchaseOverview | null>(null);
+  const [data, setData] = useState<DebtAdjustedPurchaseOverview | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -72,15 +72,15 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
         cache: "no-store", signal: controller.signal,
       });
       const body = await response.json();
-      if (!response.ok || body.success !== true || body.personId !== personId || !body.selected || !Array.isArray(body.history)) {
+      if (!response.ok || body.success !== true || body.personId !== personId || !body.selected || !Array.isArray(body.history) || !Array.isArray(body.adjustments)) {
         throw new Error("Overview unavailable");
       }
       if (current !== state.id) return;
-      setData(body as PurchaseOverview);
+      setData(body as DebtAdjustedPurchaseOverview);
       setError(false);
     } catch {
       if (current !== state.id) return;
-      setData(null); // Unverified balances must never turn into zero or look current.
+      setData(null);
       setError(true);
     } finally {
       clearTimeout(timeout);
@@ -90,7 +90,6 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
 
   useEffect(() => {
     const state = requestState.current;
-    // Schedule the initial network refresh as a callback, with Strict Mode cleanup.
     const initialLoad = setTimeout(() => { setLoading(true); void load(); }, 0);
     const whenVisible = () => {
       if (document.visibilityState === "visible") { setLoading(true); void load(); }
@@ -142,6 +141,26 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
           {" · "}{t("Paid: ", "المسدد: ")}{money(data.selected.paid)}
           {" · "}{t("Units taken: ", "عدد المنتجات المأخوذة: ")}{data.selected.units}
         </p>
+        {data.adjustments.length ? <details className="rounded-xl border border-slate-200 bg-slate-50">
+          <summary className="cursor-pointer p-3 text-sm font-semibold">
+            {t("Historical balance adjustments — not stock purchases", "تسويات الرصيد السابق — ليست مشتريات مخزون")}
+            {" · "}<span dir="ltr">{money(data.adjustments.filter(row => row.kind !== "repayment").reduce((sum, row) => sum + row.amount, 0))}</span>
+          </summary>
+          <div className="space-y-3 border-t p-3">
+            <p className="text-xs text-slate-600">{t("Recorded purchase history is preserved. These entries adjust the debt only; they do not remove products from storage or represent cash received.", "سجل المشتريات الأصلي محفوظ. هذه القيود تعدّل الدين فقط، ولا تخصم منتجات من المخزن ولا تعني استلام نقدية.")}</p>
+            {data.adjustments.map(row => <article key={row.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+              <div className="flex flex-wrap justify-between gap-2">
+                <strong>{row.kind === "opening_balance" ? t("Historical opening balance", "رصيد سابق مثبت")
+                  : row.kind === "waiver" ? t("Debt waived", "إعفاء من الدين")
+                  : row.kind === "repayment" ? t("Historical balance repaid", "سداد الرصيد السابق")
+                  : t("Balance correction", "تصحيح الرصيد")}</strong>
+                <span className="tabular-nums" dir="ltr">{row.amount > 0 ? "+" : ""}{money(row.amount)}</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{row.effectiveDate}</p>
+              <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-600">{row.note}</p>
+            </article>)}
+          </div>
+        </details> : null}
         {data.manager && !selfServiceOnly ? <TeamSummary people={data.people} ar={ar} personId={personId} /> : null}
         <details className="rounded-xl border border-slate-200">
           <summary className="cursor-pointer p-3 text-sm font-semibold">

@@ -4,9 +4,12 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   emptyTotals, moneyValue, readAllPurchaseRows, resolvePurchasePerson,
-  summarizePurchases, text, tripoliMonth, unitsValue, verifyPurchaseStock,
-  type DataRow, type PurchaseHistoryRow, type PurchaseOverview, type StockProof,
+  text, tripoliMonth, unitsValue, verifyPurchaseStock,
+  type DataRow, type PurchaseHistoryRow, type StockProof,
 } from "@/lib/operator-purchase-overview";
+import {
+  debtAdjustmentHistory, summarizeAdjustedPurchases, type DebtAdjustedPurchaseOverview,
+} from "@/lib/operator-debt-adjustment-overview";
 
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "private, no-store, max-age=0", Vary: "Cookie" };
@@ -39,9 +42,9 @@ export async function GET(request: Request) {
   if (!supabase) return failure("Money records are unavailable.", 503);
 
   try {
-    // Operators are constrained in the query itself, in addition to RLS and the
-    // route authorization above. A client flag can never grant manager access.
-    const [purchases, team] = await Promise.all([
+    // Query owner constraints and RLS both apply. Historical balance adjustments
+    // do not create purchases and must not increment physical stock quantities.
+    const [purchases, team, adjustments] = await Promise.all([
       readAllPurchaseRows<DataRow>((from, to) => {
         let query = supabase.from("operator_personal_purchase_status")
           .select(PURCHASE_COLUMNS, { count: "exact" }).order("id");
@@ -54,14 +57,23 @@ export async function GET(request: Request) {
         if (!manager) query = query.eq("id", personId);
         return query.range(from, to);
       }),
+      readAllPurchaseRows<DataRow>((from, to) => {
+        let query = supabase.from("operator_personal_debt_adjustments")
+          .select("id,person_id,kind,amount_lyd,effective_date,note", { count: "exact" }).order("id");
+        if (!manager) query = query.eq("person_id", personId);
+        return query.range(from, to);
+      }),
     ]);
     const member = team.find((row) => text(row.id) === personId);
     if (!member) return failure("Team member not found.", 404);
     const checkedAt = new Date().toISOString();
     const month = tripoliMonth(checkedAt);
-    const people = summarizePurchases(purchases, team, month);
+    const people = summarizeAdjustedPurchases(purchases, team, adjustments, month);
     const selected = people.find((row) => row.personId === personId) ||
       emptyTotals(personId, text(member.full_name), member.active !== false);
+    const ownAdjustments = adjustments.filter(row => text(row.person_id) === personId)
+      .map(debtAdjustmentHistory)
+      .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate) || a.id.localeCompare(b.id));
     const ownPurchases = purchases.filter((row) => text(row.person_id) === personId)
       .sort((a, b) => new Date(text(b.purchased_at)).getTime() - new Date(text(a.purchased_at)).getTime() || text(a.id).localeCompare(text(b.id)));
     const pages = Math.max(1, Math.ceil(ownPurchases.length / PAGE_SIZE));
@@ -87,7 +99,7 @@ export async function GET(request: Request) {
             readAllPurchaseRows<DataRow>((from, to) => proofClient.from("inventory_movements")
               .select(MOVEMENT_COLUMNS, { count: "exact" }).in("id", movementIds).order("id").range(from, to)),
             readAllPurchaseRows<DataRow>((from, to) => proofClient.from("inventory_movements")
-              .select("id,reversed_movement_id", { count: "exact" }).in("reversed_movement_id", movementIds).order("id").range(from, to)),
+              .select("id,reversed_movement_id", { count: "exact" }).in("reversed_movement_id", reversedIds.size ? [...reversedIds] : movementIds).order("id").range(from, to)),
             readAllPurchaseRows<DataRow>((from, to) => proofClient.from("storage_locations")
               .select("id,name", { count: "exact" }).in("id", storageIds).order("id").range(from, to)),
           ]);
@@ -111,8 +123,9 @@ export async function GET(request: Request) {
         purchasedAt: text(purchase.purchased_at), charged: moneyValue(purchase.total_lyd),
         paid: moneyValue(purchase.paid_amount_lyd), outstanding: moneyValue(purchase.remaining_amount_lyd), proof };
     });
-    const payload: PurchaseOverview = { success: true, personId, manager, month, checkedAt,
-      selected, people: manager ? people : [], history, page, pages, historyCount: ownPurchases.length };
+    const payload: DebtAdjustedPurchaseOverview = { success: true, personId, manager, month, checkedAt,
+      selected, people: manager ? people : [], history, page, pages, historyCount: ownPurchases.length,
+      adjustments: ownAdjustments };
     return NextResponse.json(payload, { headers: HEADERS });
   } catch (error) {
     console.error("[operator-purchase-overview] Read failed", error);

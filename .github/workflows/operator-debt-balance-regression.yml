@@ -1,0 +1,24 @@
+name: Operator historical debt balances
+on:
+  pull_request:
+    paths:
+      - 'src/lib/operator-debt-adjustment-overview.ts'
+      - 'src/app/api/operator-money/overview/route.ts'
+      - 'src/app/operator-money/OperatorMoneyWorkspace.tsx'
+      - 'scripts/test-operator-debt-adjustment-overview.mjs'
+      - 'scripts/test-operator-purchase-overview.mjs'
+      - 'supabase/migrations/*operator_personal_debt_balance_adjustments.sql'
+      - '.github/workflows/operator-debt-balance-regression.yml'
+jobs:
+  debt-carryforward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: node --experimental-strip-types --test scripts/test-operator-debt-adjustment-overview.mjs scripts/test-operator-purchase-overview.mjs
