@@ -137,6 +137,7 @@ let code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarg
 code = code.replace(/import \{([^}]+)\} from "(?:next\/server|@\/lib\/auth|@\/lib\/authz|@\/lib\/supabase-server)";/g,
   (_, names) => `const {${names}} = globalThis.__purchaseOverviewTest;`);
 code = code.replace('"@/lib/operator-purchase-overview"', JSON.stringify(new URL("../src/lib/operator-purchase-overview.ts", import.meta.url).href));
+code = code.replace('"@/lib/operator-debt-adjustment-overview"', JSON.stringify(new URL("../src/lib/operator-debt-adjustment-overview.ts", import.meta.url).href));
 const { GET } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 function reset(role = "operator") {
   env = { profile: { role, team_member_id: A }, calls: [], tables: {
@@ -206,4 +207,29 @@ test("existing entry pages use the workspace while the working ledger remains se
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX,
   } });
   assert.equal(compiled.diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error).length, 0);
+});
+test("route: historical adjustments are person-scoped and do not fabricate storage deductions", async () => {
+  reset();
+  env.tables.operator_personal_debt_adjustments = [
+    {id:"opening-a", person_id:A, kind:"opening_balance", amount_lyd:100, effective_date:"2026-09-30", note:"Historical opening balance"},
+    {id:"waiver-a", person_id:A, kind:"waiver", amount_lyd:-25, effective_date:"2026-09-30", note:"Approved waiver"},
+    {id:"secret-b", person_id:B, kind:"opening_balance", amount_lyd:500, effective_date:"2026-09-30", note:"Other person's private balance"},
+  ];
+  const result=await GET(request(`personId=${A}`));
+  assert.equal(result.status,200);
+  assert.equal(result.body.selected.outstanding,95);
+  assert.equal(result.body.selected.charged,20);
+  assert.equal(result.body.selected.units,4);
+  assert.equal(result.body.historyCount,1);
+  assert.equal(result.body.adjustments.length,2);
+  assert.equal(result.body.history[0].proof.status,"deducted");
+  assert.doesNotMatch(JSON.stringify(result.body),/secret-b|Other person's private balance/);
+  const query=env.calls.find(row=>row.table==='operator_personal_debt_adjustments');
+  assert.deepEqual(query.filters,[["eq","person_id",A]]);
+});
+test("route: unavailable historical adjustments never silently understate outstanding debt", async () => {
+  reset(); env.fail="operator_personal_debt_adjustments";
+  const result=await GET(request(`personId=${A}`));
+  assert.equal(result.status,503);
+  assert.equal(result.body.selected,undefined);
 });
