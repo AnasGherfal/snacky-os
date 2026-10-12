@@ -6,12 +6,13 @@ on:
       - 'src/app/api/operator-money/overview/route.ts'
       - 'src/app/operator-money/OperatorMoneyWorkspace.tsx'
       - 'scripts/test-operator-debt-adjustment-overview.mjs'
+      - 'scripts/test-operator-purchase-overview.mjs'
       - 'supabase/migrations/*operator_personal_debt_balance_adjustments.sql'
       - '.github/workflows/operator-debt-balance-regression.yml'
 jobs:
   debt-carryforward:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
     steps:
@@ -19,4 +20,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: node --experimental-strip-types --test scripts/test-operator-debt-adjustment-overview.mjs
+      - run: npm ci
+      - run: node --experimental-strip-types --test scripts/test-operator-debt-adjustment-overview.mjs scripts/test-operator-purchase-overview.mjs
