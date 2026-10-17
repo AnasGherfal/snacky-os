@@ -1844,7 +1844,7 @@ export default function MachineStopPage() {
             <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
             <p className="mt-1">{tr(
               "Your selection is saved even if you close the page. When XY reconnects, Snacky retries the product change only if the original product and quantity still match. Save does not automatically empty a lane.",
-              "اختيارك محفوظ حتى لو أغلقت الصفحة. يحاول سناكي تلقائياً عند عودة اتصال XY، ويجعل مخزون المنتج الجديد القابل للبيع صفراً. عبّئ الخانة بعد التأكد من صحة المنتج في الجهاز.",
+              "اختيارك محفوظ حتى لو أغلقت الصفحة. عند عودة اتصال XY، يحاول سناكي التغيير فقط إذا ظل المنتج والعدد الأصلي كما هما. الحفظ لا يصفّر كمية الخانة تلقائياً.",
             )}</p>
             <div className="mt-2 space-y-1">
               {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
