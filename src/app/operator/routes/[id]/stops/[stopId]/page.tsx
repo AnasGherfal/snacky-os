@@ -1843,7 +1843,7 @@ export default function MachineStopPage() {
           <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
             <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
             <p className="mt-1">{tr(
-              "Your selection is saved even if you close the page. Snacky retries automatically when XY reconnects and sets the new product to zero sellable stock. Physically refill only after confirming the right product on the machine.",
+              "Your selection is saved even if you close the page. When XY reconnects, Snacky retries the product change only if the original product and quantity still match. Save does not automatically empty a lane.",
               "اختيارك محفوظ حتى لو أغلقت الصفحة. يحاول سناكي تلقائياً عند عودة اتصال XY، ويجعل مخزون المنتج الجديد القابل للبيع صفراً. عبّئ الخانة بعد التأكد من صحة المنتج في الجهاز.",
             )}</p>
             <div className="mt-2 space-y-1">
