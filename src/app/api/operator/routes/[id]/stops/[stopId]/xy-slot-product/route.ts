@@ -434,6 +434,50 @@ export async function POST(
   });
 
   if (!verification.verified) {
+    // XY's acknowledgement confirms delivery of an instruction, NOT the lane's
+    // actual product. Production readbacks sometimes catch up minutes later.
+    // Persist the same carefully guarded pending operation used for offline XY
+    // so the cron worker can read back and verify it without operator retries.
+    // Never queue an unsafe explicit stock edit unless it was physically confirmed.
+    if (queueOnOffline && currentStockQty !== null && beforeSlot.vmsProductId) {
+      const { data: queued, error: queueError } = await admin.from("xy_pending_slot_changes").insert({
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: machine.id,
+        vms_machine_id: String(machine.vms_machine_id),
+        slot_code: slotCode,
+        previous_vms_product_id: beforeSlot.vmsProductId,
+        previous_stock_qty: Number(currentStockQty),
+        target_product_id: product.id,
+        target_vms_product_id: targetVmsProductId,
+        target_price_lyd: priceLyd,
+        target_stock_qty: targetStockQty,
+        physical_change_confirmed: verifiedPhysicalSwap,
+        lane_disabled_confirmed: verifiedPhysicalSwap,
+        zero_stock_relabel: zeroStockRelabel,
+        smart_route_swap: Boolean(smartRouteSwap),
+        created_by_user_id: profile.id,
+        last_error: "XY acknowledged the command, but product/price/quantity readback has not verified it.",
+      }).select("id").single();
+      if (queueError || !queued) {
+        return NextResponse.json({
+          success: false, verified: false, writeAccepted: true,
+          code: "XY_ACCEPTED_VERIFICATION_QUEUE_FAILED",
+          error: "XY accepted the command, but Snacky could not track machine verification. Do not send it again; ask an admin to check the live XY lane.",
+          slot: verification.state,
+        }, { status: 409 });
+      }
+      return NextResponse.json({
+        success: true,
+        verified: false,
+        queued: true,
+        writeAccepted: true,
+        queueId: queued.id,
+        targetStockQty,
+        code: "XY_ACCEPTED_PENDING_VERIFICATION",
+        message: "XY accepted the instruction, but this lane is NOT verified yet. Snacky will safely check and retry. Do not treat the product as changed until XY confirms it.",
+      }, { status: 202 });
+    }
     return NextResponse.json({
       success: false,
       verified: false,
