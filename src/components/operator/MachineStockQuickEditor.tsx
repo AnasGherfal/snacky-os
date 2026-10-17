@@ -35,9 +35,7 @@ export function MachineStockQuickEditor({
   prices = {},
   onPriceChange,
   onChangeProduct,
-  onHideSelection,
   hiddenSelections = [],
-  onRestoreSelection,
   productOptions = [],
   productSelections = {},
   onSelectProduct,
@@ -53,10 +51,8 @@ export function MachineStockQuickEditor({
   prices?: Record<string, number>;
   onPriceChange?: (next: Record<string, number>) => void;
   onChangeProduct?: (slotCode: string) => void;
-  onHideSelection?: (slotCode: string) => void;
   hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
-  onRestoreSelection?: (slotCode: string) => void;
-  productOptions?: Array<{ id: string; name: string }>;
+  productOptions?: Array<{ id: string; name: string; sku?: string | null; barcode?: string | null; brand?: string | null }>;
   productSelections?: Record<string, string>;
   onSelectProduct?: (slotCode: string, productId: string) => void;
   onSaveSelection?: (slotCode: string) => void;
@@ -72,6 +68,8 @@ export function MachineStockQuickEditor({
   const [rowInputs, setRowInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [openProductSearchSlot, setOpenProductSearchSlot] = useState<string | null>(null);
+  const [productSearchTerms, setProductSearchTerms] = useState<Record<string, string>>({});
 
   const updateOne = (slot: QuickMachineSlot, raw: string) => {
     setError("");
@@ -192,6 +190,15 @@ export function MachineStockQuickEditor({
                     const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode)
                       || Object.hasOwn(productSelections, slot.slotCode);
                     const actionStatus = saveStatuses[slot.slotCode];
+                    const selectedProductId = productSelections[slot.slotCode] ?? slot.productId ?? "";
+                    const selectedName = productOptions.find((p) => p.id === selectedProductId)?.name ?? slot.productName;
+                    const searchQuery = (productSearchTerms[slot.slotCode] ?? "").trim().toLocaleLowerCase();
+                    const searchMatches = productOptions.filter((p) =>
+                      !searchQuery || [p.name, p.sku, p.barcode, p.brand].some((part) =>
+                        String(part ?? "").toLocaleLowerCase().includes(searchQuery),
+                      ),
+                    ).slice(0, 10);
+                    const isSearching = openProductSearchSlot === slot.slotCode;
                     return (
                       <div key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                         <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
@@ -203,24 +210,80 @@ export function MachineStockQuickEditor({
                           {" · "}{tr("Capacity", "السعة")}: {slot.capacity}
                         </span>
                         {onSelectProduct ? (
-                          <label className="mt-2 block text-xs font-semibold text-slate-700">
-                            {tr("Product", "المنتج")}
-                            <select value={productSelections[slot.slotCode] ?? slot.productId ?? ""}
-                              onChange={(event) => onSelectProduct(slot.slotCode, event.target.value)}
-                              aria-label={tr(`Selection ${slot.slotCode} product`, `منتج الخانة ${slot.slotCode}`)}
-                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-950">
-                              <option value="">{slot.productName || tr("Unmapped XY product", "منتج XY غير مربوط")}</option>
-                              {slot.productId && !productOptions.some((p) => p.id === slot.productId)
-                                ? <option value={slot.productId}>{slot.productName}</option> : null}
-                              {productOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                            {onLoadAllProducts ? <button type="button" onClick={onLoadAllProducts}
-                              disabled={productCatalogLoading}
-                              className="mt-1 text-xs font-semibold text-emerald-800 underline disabled:opacity-50">
-                              {productCatalogLoading ? tr("Loading products…", "جارٍ تحميل المنتجات…")
-                                : tr("Load all products", "عرض كل المنتجات")}
-                            </button> : null}
-                          </label>
+                          <div className="mt-2">
+                            <span className="block text-xs font-semibold text-slate-700">{tr("Product", "المنتج")}</span>
+                            <button
+                              type="button"
+                              aria-expanded={isSearching}
+                              aria-label={tr(`Search replacement product for selection ${slot.slotCode}`, `البحث عن منتج بديل للخانة ${slot.slotCode}`)}
+                              onClick={() => {
+                                setOpenProductSearchSlot(isSearching ? null : slot.slotCode);
+                                if (!isSearching && onLoadAllProducts && !productCatalogLoading) onLoadAllProducts();
+                              }}
+                              className="mt-1 flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-left text-xs font-semibold text-slate-950"
+                            >
+                              <span className="min-w-0 truncate">{selectedName || tr("No product", "بدون منتج")}</span>
+                              <span className="shrink-0 text-emerald-700">{tr("Search", "بحث")}</span>
+                            </button>
+                            {isSearching ? (
+                              <div className="mt-2 space-y-2 rounded-lg border border-emerald-200 bg-white p-2">
+                                <input
+                                  type="search"
+                                  autoFocus
+                                  value={productSearchTerms[slot.slotCode] ?? ""}
+                                  onChange={(event) => setProductSearchTerms((previous) => ({
+                                    ...previous, [slot.slotCode]: event.target.value,
+                                  }))}
+                                  placeholder={tr("Find product by name, SKU or barcode", "ابحث بالاسم أو الرمز أو الباركود")}
+                                  aria-label={tr(`Search products for ${slot.slotCode}`, `بحث المنتجات للخانة ${slot.slotCode}`)}
+                                  className="min-h-11 w-full rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-950 outline-emerald-600"
+                                />
+                                {productCatalogLoading ? (
+                                  <p role="status" className="text-xs text-slate-600">{tr("Loading all products…", "جارٍ تحميل كل المنتجات…")}</p>
+                                ) : null}
+                                <div role="listbox" className="max-h-48 space-y-1 overflow-y-auto">
+                                  {searchMatches.map((product) => (
+                                    <button
+                                      key={product.id}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={product.id === selectedProductId}
+                                      onClick={() => {
+                                        onSelectProduct(slot.slotCode, product.id);
+                                        setOpenProductSearchSlot(null);
+                                        setProductSearchTerms((previous) => ({
+                                          ...previous, [slot.slotCode]: "",
+                                        }));
+                                      }}
+                                      className={`min-h-11 w-full rounded-md px-2 py-2 text-left text-sm ${product.id === selectedProductId
+                                        ? "bg-emerald-100 font-bold text-emerald-950"
+                                        : "text-slate-900 hover:bg-slate-100"}`}
+                                    >
+                                      <span className="block break-words">{product.name}</span>
+                                      {product.sku || product.barcode ? (
+                                        <span className="block text-xs text-slate-500">{[product.sku, product.barcode].filter(Boolean).join(" · ")}</span>
+                                      ) : null}
+                                    </button>
+                                  ))}
+                                  {!searchMatches.length ? (
+                                    <p className="px-2 py-3 text-xs text-slate-600">{tr("No matching product. Check the spelling or full catalog.", "لم نجد منتجاً مطابقاً. تحقق من الاسم أو قائمة المنتجات.")}</p>
+                                  ) : null}
+                                </div>
+                                {onChangeProduct ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenProductSearchSlot(null);
+                                      onChangeProduct(slot.slotCode);
+                                    }}
+                                    className="w-full rounded-md bg-slate-50 px-2 py-2 text-xs font-semibold text-emerald-800"
+                                  >
+                                    {tr("Open detailed product change", "فتح تغيير المنتج بالتفصيل")}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         ) : null}
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
                           value={Object.hasOwn(values, slot.slotCode) ? values[slot.slotCode] : ""}
@@ -253,10 +316,6 @@ export function MachineStockQuickEditor({
                               : actionStatus.status === "verified" ? tr("XY verified", "تم التحقق في XY") : "")}
                           </p>
                         ) : null}
-                        {onHideSelection ? <button type="button" onClick={() => onHideSelection(slot.slotCode)}
-                          className="mt-1 min-h-9 w-full text-xs text-slate-500 underline">
-                          {tr("Not physically present? Hide", "غير موجودة فعلياً؟ إخفاء")}
-                        </button> : null}
                       </div>
                     );
                   })}
@@ -267,19 +326,10 @@ export function MachineStockQuickEditor({
         })}
       </div>
       {hiddenSelections.length ? (
-        <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-amber-950">
-            {tr(`${hiddenSelections.length} physically absent selections hidden · Manage`,
-              `${hiddenSelections.length} خانات غير موجودة فعلياً مخفية · إدارة`)}
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {hiddenSelections.map((row) => <button key={row.slot_code} type="button"
-              className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900"
-              onClick={() => onRestoreSelection?.(row.slot_code)}>
-              {row.slot_code} · {tr("Restore", "إظهار")}
-            </button>)}
-          </div>
-        </details>
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          {tr(`${hiddenSelections.length} selections are hidden by management. Ask an owner or supervisor to review missing lanes.`,
+            `${hiddenSelections.length} خانات مخفية بواسطة الإدارة. تواصل مع المالك أو المشرف لمراجعة الخانات الناقصة.`)}
+        </div>
       ) : null}
             {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
