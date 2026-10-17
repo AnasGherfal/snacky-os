@@ -115,7 +115,8 @@ test("executed AI swaps require old-product return before XY product change", ()
   assert.match(xyProductApi, /returned old units before changing this Smart Route lane in XY/);
   assert.match(xyProductApi, /String\(row\.notes \?\? ""\)\.includes/);
   assert.match(xyProductApi, /slotCode/);
-  assert.match(xyProductApi, /const targetStockQty = zeroStockRelabel \? 0 : queueOnOffline \? actualSlotQty : smartRouteSwap \? 0 : Number\(currentStockQty\)/);
+  assert.match(xyProductApi, /resolveXyProductChangeQuantity/);
+  assert.match(xyProductApi, /const targetStockQty = resolvedQuantity.targetStockQty/);
   assert.match(xyProductApi, /slot_code: slotCode/);
 
   assert.match(stopApi, /SMART_ROUTE_RETURN_REQUIRED/);
@@ -249,19 +250,22 @@ test("quantity custody is recorded at Complete Stop, never when just opening a s
 });
 
 
-test("one-tap manual XY changes save without fake physical confirmations and will sell zero new units", () => {
+test("one-tap manual XY changes preserve current stock without fake physical confirmations", () => {
   const safeQueue = read("supabase/migrations/20261008081500_xy_zero_stock_offline_relabel.sql");
   const worker = read("src/lib/xy-pending-slot-changes.ts");
+  const preserveQueue = read("supabase/migrations/20261018010000_xy_preserve_stock_offline_relabel.sql");
 
-  assert.match(xyProductApi, /const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap/);
+  assert.match(xyProductApi, /const zeroStockRelabel = false/);
   assert.match(xyProductApi, /const queueOnOffline = body.queueOnOffline !== false/);
-  assert.match(xyProductApi, /target_stock_qty: zeroStockRelabel \? 0 : actualSlotQty/);
+  assert.match(xyProductApi, /target_stock_qty: targetStockQty/);
   assert.match(xyProductApi, /zero_stock_relabel: zeroStockRelabel/);
-  assert.match(xyProductApi, /physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap/);
+  assert.match(xyProductApi, /physical_change_confirmed: verifiedPhysicalSwap/);
   assert.match(worker, /safeZeroStockRelabel/);
+  assert.match(worker, /safePreserveStockRelabel/);
   assert.match(worker, /before.currentQty > item.previous_stock_qty/);
-  assert.match(worker, /!safeZeroStockRelabel && stop.status !== "completed"/);
+  assert.match(worker, /!safeNonPhysicalRelabel && stop.status !== "completed"/);
   assert.match(safeQueue, /target_stock_qty = 0/);
+  assert.match(preserveQueue, /target_stock_qty = previous_stock_qty/);
   assert.match(safeQueue, /smart_route_swap = false/);
   assert.match(safeQueue, /physical_change_confirmed = false/);
   assert.match(operatorStop, /queueOnOffline: true/);
