@@ -1838,10 +1838,10 @@ export default function MachineStopPage() {
 
         {(stopData.queuedXyChanges ?? []).some((change) => change.status === "pending" || change.status === "conflict") ? (
           <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-            <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
+            <h2 className="font-bold">{tr("XY product changes awaiting machine verification", "تغييرات منتجات XY بانتظار تأكيد الجهاز")}</h2>
             <p className="mt-1">{tr(
-              "Your selection is saved even if you close the page. Snacky retries automatically when XY reconnects and sets the new product to zero sellable stock. Physically refill only after confirming the right product on the machine.",
-              "اختيارك محفوظ حتى لو أغلقت الصفحة. يحاول سناكي تلقائياً عند عودة اتصال XY، ويجعل مخزون المنتج الجديد القابل للبيع صفراً. عبّئ الخانة بعد التأكد من صحة المنتج في الجهاز.",
+              "The request is saved even if you leave. XY may have accepted it but not yet updated the machine. Snacky checks and safely retries until verified. The replacement starts at zero sellable stock. Do not refill until XY confirms the new product.",
+              "الطلب محفوظ حتى لو غادرت الصفحة. قد يكون XY قبل الطلب ولم ينفذه على الجهاز بعد. يفحص سناكي الحالة ويعيد المحاولة بأمان حتى التأكيد. يبدأ المنتج البديل بمخزون بيع يساوي صفراً. لا تعبئه قبل تأكيد المنتج الجديد في XY.",
             )}</p>
             <div className="mt-2 space-y-1">
               {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
@@ -1850,7 +1850,7 @@ export default function MachineStopPage() {
                   {" · "}
                   <strong>{productById.get(change.target_product_id)?.name ?? tr("Selected product", "المنتج المختار")}</strong>
                   {" · "}
-                  {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Saved — updating XY automatically", "محفوظ — تحديث XY تلقائياً")}
+                  {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("PENDING — not verified on machine", "معلق — لم يتم تأكيده على الجهاز")}
                 </div>
               ))}
             </div>
