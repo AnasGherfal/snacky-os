@@ -704,6 +704,7 @@ export default function MachineStopPage() {
   const [xyChangeSaving, setXyChangeSaving] = useState(false);
   const [xyChangeError, setXyChangeError] = useState("");
   const [xyChangeSuccess, setXyChangeSuccess] = useState("");
+  const [xyChangePending, setXyChangePending] = useState(false);
   const [xySwapSourceSlotCode, setXySwapSourceSlotCode] = useState<string | null>(null);
   const [xySwapTargetSlotCode, setXySwapTargetSlotCode] = useState("");
   const [xySwapSaving, setXySwapSaving] = useState(false);
@@ -988,16 +989,31 @@ export default function MachineStopPage() {
     }
   }, [fullProductCatalog, routeId, stopId]);
 
+  // Only confirmed XY-mapped products can actually be written to a machine lane.
+  // Search the whole catalog automatically, ranking this machine's products first.
+  const xyReplacementProducts = useMemo(() => {
+    const priority = new Set((stopData?.machineProductOptions ?? []).map((product) => product.id));
+    return (fullProductCatalog ?? [])
+      .filter((product) => product.xyMapped === true)
+      .sort((left, right) => Number(priority.has(right.id)) - Number(priority.has(left.id))
+        || left.name.localeCompare(right.name));
+  }, [fullProductCatalog, stopData?.machineProductOptions]);
+
+  useEffect(() => {
+    if (!xyEditSlotCode || fullProductCatalog) return;
+    void loadFullProductCatalog().catch((cause) => {
+      setXyChangeError(cause instanceof Error ? cause.message : tr("Could not load XY-compatible products.", "تعذر تحميل المنتجات المتوافقة مع XY."));
+    });
+  }, [xyEditSlotCode, fullProductCatalog, loadFullProductCatalog]);
+
   const applyXyProductChange = useCallback(async () => {
     if (!routeId || !stopId || !xyEditSlotCode || !xyReplacementProductId || !stopData) return;
 
     const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
-    const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === xyReplacementProductId)
-      ?? stopData.productOptions.find((product) => product.id === xyReplacementProductId)
-      ?? null;
+    const selectedProduct = xyReplacementProducts.find((product) => product.id === xyReplacementProductId) ?? null;
 
     if (!selectedProduct) {
-      setXyChangeError(tr("Choose a replacement product.", "اختر المنتج البديل."));
+      setXyChangeError(tr("Choose a product with a confirmed XY mapping.", "اختر منتجاً له ربط مؤكد في XY."));
       return;
     }
     if (currentSlot?.productId === selectedProduct.id) {
@@ -1008,6 +1024,7 @@ export default function MachineStopPage() {
     setXyChangeSaving(true);
     setXyChangeError("");
     setXyChangeSuccess("");
+    setXyChangePending(false);
     try {
       const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`, {
         method: "POST",
@@ -1045,9 +1062,10 @@ export default function MachineStopPage() {
             ...(current.queuedXyChanges ?? []).filter((row) => row.slot_code !== xyEditSlotCode),
           ],
         } : current);
+        setXyChangePending(true);
         setXyChangeSuccess(tr(
-          "Saved in Snacky. XY will update automatically when the machine reconnects. The new product starts with 0 sellable units until it is physically stocked.",
-          "تم حفظ التغيير في سناكي. سيتم تحديث XY تلقائياً عند عودة اتصال الجهاز. يبدأ المنتج الجديد بمخزون قابل للبيع يساوي صفراً حتى تتم تعبئته فعلياً.",
+          "Change queued in Snacky — NOT yet verified in XY. Keep the lane unloaded/disabled until XY confirms it. New-product stock starts at 0.",
+          "التغيير في قائمة الانتظار بسناكي — لم يُؤكد في XY بعد. أبقِ الخانة خالية أو معطلة حتى تأكيد XY. يبدأ المخزون الجديد من صفر.",
         ));
         setXyEditSlotCode(null);
         setXyReplacementProductId("");
@@ -1092,6 +1110,8 @@ export default function MachineStopPage() {
         };
       });
 
+      setXyChangePending(false);
+      void refreshLiveXy();
       setXyChangeSuccess(tr(
         `Slot ${xyEditSlotCode} was changed in XY and verified.`,
         `تم تغيير الخانة ${xyEditSlotCode} في XY والتحقق منها.`,
@@ -1103,7 +1123,7 @@ export default function MachineStopPage() {
     } finally {
       setXyChangeSaving(false);
     }
-  }, [activeSmartSwapRequirements, fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
+  }, [activeSmartSwapRequirements, refreshLiveXy, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId, xyReplacementProducts]);
 
   const applyXySlotSwap = useCallback(async () => {
     if (!routeId || !stopId || !xySwapSourceSlotCode || !xySwapTargetSlotCode || !stopData) return;
@@ -2249,9 +2269,7 @@ export default function MachineStopPage() {
 
           {xyEditSlotCode ? (() => {
             const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
-            const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === xyReplacementProductId)
-              ?? stopData.productOptions.find((product) => product.id === xyReplacementProductId)
-              ?? null;
+            const selectedProduct = xyReplacementProducts.find((product) => product.id === xyReplacementProductId) ?? null;
 
             const closeChangeEditor = () => {
               if (xyChangeSaving) return;
