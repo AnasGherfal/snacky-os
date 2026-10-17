@@ -35,16 +35,8 @@ export function MachineStockQuickEditor({
   prices = {},
   onPriceChange,
   onChangeProduct,
-  onHideSelection,
-  hiddenSelections = [],
-  onRestoreSelection,
-  productOptions = [],
-  productSelections = {},
-  onSelectProduct,
   onSaveSelection,
   saveStatuses = {},
-  onLoadAllProducts,
-  productCatalogLoading = false,
   isLiveXy = false,
 }: {
   rows: QuickMachineRow[];
@@ -53,16 +45,8 @@ export function MachineStockQuickEditor({
   prices?: Record<string, number>;
   onPriceChange?: (next: Record<string, number>) => void;
   onChangeProduct?: (slotCode: string) => void;
-  onHideSelection?: (slotCode: string) => void;
-  hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
-  onRestoreSelection?: (slotCode: string) => void;
-  productOptions?: Array<{ id: string; name: string }>;
-  productSelections?: Record<string, string>;
-  onSelectProduct?: (slotCode: string, productId: string) => void;
   onSaveSelection?: (slotCode: string) => void;
   saveStatuses?: Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>;
-  onLoadAllProducts?: () => void;
-  productCatalogLoading?: boolean;
   isLiveXy?: boolean;
 }) {
   const { locale } = useLanguage();
@@ -145,7 +129,7 @@ export function MachineStockQuickEditor({
       `سعر الخانة ${slot.slotCode} = ${value.toFixed(2)} د.ل محفوظ مؤقتاً إلى حين إنهاء الموقع.`));
   };
 
-  const changedCount = new Set([...Object.keys(values), ...Object.keys(prices), ...Object.keys(productSelections)]).size;
+  const changedCount = new Set([...Object.keys(values), ...Object.keys(prices)]).size;
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white p-3 shadow-sm sm:p-5" aria-label={tr("Machine lane inventory", "مخزون خانات الجهاز")}>
       <div className="mb-3">
@@ -189,8 +173,7 @@ export function MachineStockQuickEditor({
               {open ? (
                 <div className="grid grid-cols-2 gap-2 border-t border-slate-200 bg-white p-3 sm:grid-cols-3 lg:grid-cols-5">
                   {usable.map((slot) => {
-                    const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode)
-                      || Object.hasOwn(productSelections, slot.slotCode);
+                    const changed = Object.hasOwn(values, slot.slotCode) || Object.hasOwn(prices, slot.slotCode);
                     const actionStatus = saveStatuses[slot.slotCode];
                     return (
                       <div key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
@@ -202,25 +185,15 @@ export function MachineStockQuickEditor({
                             : tr("Last imported stock (not live)", "آخر كمية مستوردة (ليست مباشرة)")}: <strong className="text-slate-950">{slot.liveStockKnown === false ? "—" : units(slot.currentQty)}</strong>
                           {" · "}{tr("Capacity", "السعة")}: {slot.capacity}
                         </span>
-                        {onSelectProduct ? (
-                          <label className="mt-2 block text-xs font-semibold text-slate-700">
-                            {tr("Product", "المنتج")}
-                            <select value={productSelections[slot.slotCode] ?? slot.productId ?? ""}
-                              onChange={(event) => onSelectProduct(slot.slotCode, event.target.value)}
-                              aria-label={tr(`Selection ${slot.slotCode} product`, `منتج الخانة ${slot.slotCode}`)}
-                              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-950">
-                              <option value="">{slot.productName || tr("Unmapped XY product", "منتج XY غير مربوط")}</option>
-                              {slot.productId && !productOptions.some((p) => p.id === slot.productId)
-                                ? <option value={slot.productId}>{slot.productName}</option> : null}
-                              {productOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                            {onLoadAllProducts ? <button type="button" onClick={onLoadAllProducts}
-                              disabled={productCatalogLoading}
-                              className="mt-1 text-xs font-semibold text-emerald-800 underline disabled:opacity-50">
-                              {productCatalogLoading ? tr("Loading products…", "جارٍ تحميل المنتجات…")
-                                : tr("Load all products", "عرض كل المنتجات")}
-                            </button> : null}
-                          </label>
+                        {onChangeProduct ? (
+                          <button
+                            type="button"
+                            onClick={() => onChangeProduct(slot.slotCode)}
+                            aria-label={tr(`Change product in selection ${slot.slotCode}`, `تغيير منتج الخانة ${slot.slotCode}`)}
+                            className="mt-2 min-h-11 w-full rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100"
+                          >
+                            {tr("Change product · search", "تغيير المنتج · بحث")}
+                          </button>
                         ) : null}
                         <input type="number" inputMode="numeric" min={0} max={slot.capacity} step={1}
                           value={Object.hasOwn(values, slot.slotCode) ? values[slot.slotCode] : ""}
@@ -253,10 +226,6 @@ export function MachineStockQuickEditor({
                               : actionStatus.status === "verified" ? tr("XY verified", "تم التحقق في XY") : "")}
                           </p>
                         ) : null}
-                        {onHideSelection ? <button type="button" onClick={() => onHideSelection(slot.slotCode)}
-                          className="mt-1 min-h-9 w-full text-xs text-slate-500 underline">
-                          {tr("Not physically present? Hide", "غير موجودة فعلياً؟ إخفاء")}
-                        </button> : null}
                       </div>
                     );
                   })}
@@ -266,21 +235,6 @@ export function MachineStockQuickEditor({
           );
         })}
       </div>
-      {hiddenSelections.length ? (
-        <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-amber-950">
-            {tr(`${hiddenSelections.length} physically absent selections hidden · Manage`,
-              `${hiddenSelections.length} خانات غير موجودة فعلياً مخفية · إدارة`)}
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {hiddenSelections.map((row) => <button key={row.slot_code} type="button"
-              className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900"
-              onClick={() => onRestoreSelection?.(row.slot_code)}>
-              {row.slot_code} · {tr("Restore", "إظهار")}
-            </button>)}
-          </div>
-        </details>
-      ) : null}
             {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
         "Press Save Selection to queue that selection immediately; Complete Stop also saves any remaining stock/price edits. Background sync retries without holding the operator.",
