@@ -1050,8 +1050,8 @@ export default function MachineStopPage() {
           ],
         } : current);
         setXyChangeSuccess(tr(
-          "Saved in Snacky. XY will update the product when the machine reconnects, preserving the existing quantity if it is still unchanged.",
-          "تم حفظ تغيير المنتج في سناكي. سيحدّث XY عند عودة الاتصال مع الحفاظ على الكمية الحالية إذا لم تتغير.",
+          "Product change saved as PENDING — not yet verified on the machine. Snacky will check and retry safely, preserving the current quantity only if it is unchanged.",
+          "تم تسجيل تغيير المنتج كمعلق — لم يتم تأكيده على الجهاز بعد. يتحقق سناكي ويعيد المحاولة بأمان، مع الحفاظ على الكمية الحالية فقط إن لم تتغير.",
         ));
         setXyEditSlotCode(null);
         setXyReplacementProductId("");
@@ -1841,10 +1841,10 @@ export default function MachineStopPage() {
 
         {(stopData.queuedXyChanges ?? []).some((change) => change.status === "pending" || change.status === "conflict") ? (
           <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-            <h2 className="font-bold">{tr("XY changes awaiting reconnect", "تغييرات XY تنتظر عودة الاتصال")}</h2>
+            <h2 className="font-bold">{tr("XY changes awaiting machine verification", "تغييرات XY بانتظار تأكيد الجهاز")}</h2>
             <p className="mt-1">{tr(
-              "Your selection is saved even if you close the page. When XY reconnects, Snacky retries the product change only if the original product and quantity still match. Save does not automatically empty a lane.",
-              "اختيارك محفوظ حتى لو أغلقت الصفحة. عند عودة اتصال XY، يحاول سناكي التغيير فقط إذا ظل المنتج والعدد الأصلي كما هما. الحفظ لا يصفّر كمية الخانة تلقائياً.",
+              "Your requested change stays saved even if you close the page. XY can accept an instruction before the lane updates; Snacky checks and safely retries until verified. It preserves stock only if the original product and count are unchanged. Confirm the physical product before selling.",
+              "يبقى طلب التغيير محفوظاً حتى بعد إغلاق الصفحة. قد يقبل XY الطلب قبل تحديث الخانة؛ يتحقق سناكي ويعيد المحاولة بأمان حتى التأكيد. يحافظ على المخزون فقط إن لم يتغير المنتج الأصلي والعدد. تأكد من المنتج الفعلي قبل البيع.",
             )}</p>
             <div className="mt-2 space-y-1">
               {(stopData.queuedXyChanges ?? []).filter((change) => ["pending", "conflict"].includes(change.status)).map((change) => (
@@ -1853,7 +1853,7 @@ export default function MachineStopPage() {
                   {" · "}
                   <strong>{productById.get(change.target_product_id)?.name ?? tr("Selected product", "المنتج المختار")}</strong>
                   {" · "}
-                  {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Saved — updating XY automatically", "محفوظ — تحديث XY تلقائياً")}
+                  {change.status === "conflict" ? tr("Admin review needed", "تحتاج مراجعة الإدارة") : tr("Saved — updating XY automatically (NOT verified yet)", "محفوظ — تحديث XY تلقائياً (لم يتم التأكيد بعد)")}
                 </div>
               ))}
             </div>
