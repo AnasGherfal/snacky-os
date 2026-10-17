@@ -217,3 +217,23 @@ test("Queued product relabels preserve stock only against an unchanged XY baseli
   assert.match(picker, /product\.barcode/);
   assert.match(picker, /onSelectProduct\(slot.slotCode, product.id\)/);
 });
+
+test("An XY-accepted product change remains pending until direct machine readback verifies it", () => {
+  const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const worker = read("src/lib/xy-pending-slot-changes.ts");
+  const migration = read("supabase/migrations/20261018010000_xy_preserve_stock_offline_relabel.sql");
+
+  assert.match(api, /if \(!verification\.verified\) \{\s*\/\/ XY's acknowledgement/);
+  assert.match(api, /if \(queueOnOffline && currentStockQty !== null && beforeSlot\.vmsProductId\)/);
+  assert.match(api, /code: "XY_ACCEPTED_PENDING_VERIFICATION"/);
+  assert.match(api, /writeAccepted: true/);
+  assert.match(api, /target_stock_qty: targetStockQty/);
+  assert.match(api, /last_error: "XY acknowledged the command/);
+  assert.match(page, /XY changes awaiting machine verification/);
+  assert.match(page, /NOT verified yet/);
+  assert.match(worker, /safePreserveStockRelabel/);
+  assert.match(worker, /before\.vmsProductId === item\.target_vms_product_id/);
+  assert.match(worker, /await setState\("verified", null\)/);
+  assert.match(migration, /target_stock_qty = previous_stock_qty/);
+});
