@@ -102,6 +102,24 @@ export async function POST(
     return NextResponse.json({ success: false, error: "This machine is not linked to XY." }, { status: 409 });
   }
 
+  // A pending relabel may change either lane asynchronously. Never interleave
+  // a physical two-slot swap with that separate XY command.
+  const { data: pendingChanges, error: pendingError } = await admin.from("xy_pending_slot_changes")
+    .select("id")
+    .eq("machine_id", machine.id)
+    .in("slot_code", [slotCodeA, slotCodeB])
+    .eq("status", "pending")
+    .limit(1);
+  if (pendingError) {
+    return NextResponse.json({ success: false, error: "Could not check pending XY changes. Retry later." }, { status: 503 });
+  }
+  if (pendingChanges?.length) {
+    return NextResponse.json({
+      success: false, verified: false, code: "XY_CHANGE_PENDING",
+      error: "One of these slots has a pending XY product change. Wait for verification or admin review before swapping positions.",
+    }, { status: 409 });
+  }
+
   const vmsMachineId = String(machine.vms_machine_id);
   const beforeLayout = await readXyMachineLayout(vmsMachineId);
   const slotA = beforeLayout.find((slot) => slot.slotCode === slotCodeA) ?? null;
