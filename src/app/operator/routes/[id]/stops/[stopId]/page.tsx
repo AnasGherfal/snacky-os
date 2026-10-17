@@ -155,6 +155,7 @@ interface ProductOption {
   sellingPrice?: number | null;
   vmsSellingPriceLyd?: number | null;
   lastKnownSalePriceLyd?: number | null;
+  xyMapped?: boolean;
 }
 
 interface MachineLayoutSlot {
@@ -289,7 +290,6 @@ type StopDraft = {
   laneFilledQtys: Record<string, number>;
   selectionFinalQtys: Record<string, number>;
   selectionPrices: Record<string, number>;
-  selectionProductIds: Record<string, string>;
   lineNotes: Record<string, string>;
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
@@ -680,7 +680,6 @@ export default function MachineStopPage() {
   // Only touched physical XY selections. Never infer actual lane stock from a product total.
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
   const [selectionPrices, setSelectionPrices] = useState<Record<string, number>>({});
-  const [selectionProductIds, setSelectionProductIds] = useState<Record<string, string>>({});
   const [xyLiveState, setXyLiveState] = useState<{ state: "loading" | "live" | "cached"; at: string | null; error: string | null }>({ state: "loading", at: null, error: null });
   const [selectionSaveStatuses, setSelectionSaveStatuses] = useState<Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>>({});
   const [showAdvancedLayout, setShowAdvancedLayout] = useState(false);
@@ -761,7 +760,6 @@ export default function MachineStopPage() {
     laneFilledQtys,
     selectionFinalQtys,
     selectionPrices,
-    selectionProductIds,
     lineNotes,
     unavailableProducts,
     extraProducts,
@@ -781,7 +779,6 @@ export default function MachineStopPage() {
     laneFilledQtys,
     selectionFinalQtys,
     selectionPrices,
-    selectionProductIds,
     finalPhotoName,
     issueDescription,
     issuePriority,
@@ -805,7 +802,6 @@ export default function MachineStopPage() {
       setLaneFilledQtys(draft.laneFilledQtys ?? {});
       setSelectionFinalQtys(draft.selectionFinalQtys ?? {});
       setSelectionPrices(draft.selectionPrices ?? {});
-      setSelectionProductIds(draft.selectionProductIds ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
@@ -1298,7 +1294,6 @@ export default function MachineStopPage() {
         setLaneFilledQtys(initialLaneQtys);
         setSelectionFinalQtys({});
         setSelectionPrices({});
-        setSelectionProductIds({});
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
         const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
@@ -1310,7 +1305,6 @@ export default function MachineStopPage() {
           laneFilledQtys: initialLaneQtys,
           selectionFinalQtys: {},
           selectionPrices: {},
-          selectionProductIds: {},
           lineNotes: initialNotes,
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
@@ -1441,27 +1435,17 @@ export default function MachineStopPage() {
     }
   };
 
+  // Changing the SKU is a separate, searchable action that must verify XY.
+  // This button only queues the exact stock/price for one selection.
   const saveMachineSelection = async (slotCode: string) => {
     if (!stopData || !routeId || !stopId) return;
     const slot = (stopData.machineLayout ?? []).find((row) => row.slotCode === slotCode);
     if (!slot) return;
     const hasStock = Object.hasOwn(selectionFinalQtys, slotCode);
     const hasPrice = Object.hasOwn(selectionPrices, slotCode);
-    const chosenProductId = selectionProductIds[slotCode] ?? "";
-    const productChanged = Boolean(chosenProductId && chosenProductId !== slot.productId);
-    if (!hasStock && !hasPrice && !productChanged) {
+    if (!hasStock && !hasPrice) {
       setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
         status: "error", message: tr("Nothing changed.", "لا توجد تغييرات."),
-      }}));
-      return;
-    }
-    if (productChanged && hasStock && selectionFinalQtys[slotCode] > 0) {
-      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
-        status: "error",
-        message: tr(
-          "Changing the product starts with zero sellable units. Save the product/price first, then set stock only after the replacement is physically loaded.",
-          "تغيير المنتج يبدأ بمخزون بيع صفر. احفظ المنتج والسعر أولاً، ثم حدّث الكمية بعد تعبئة المنتج الجديد فعلياً.",
-        ),
       }}));
       return;
     }
@@ -1470,71 +1454,33 @@ export default function MachineStopPage() {
       status: "saving", message: tr("Saving in Snacky…", "جارٍ الحفظ في سناكي…"),
     }}));
     try {
-      const endpoint = productChanged
-        ? `/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`
-        : `/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`;
-      const body = productChanged ? {
-        slotCode, productId: chosenProductId, queueOnOffline: true,
-        ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
-      } : {
-        selections: [{
-          slotCode,
-          ...(hasStock ? { finalQty: selectionFinalQtys[slotCode] } : {}),
-          ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
-        }],
-        applyImmediately: true,
-        preferCachedBaseline: xyLiveState.state !== "live",
-      };
-      const response = await fetchWithTimeout(endpoint, {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`, {
         method: "POST",
         headers: { "content-type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          selections: [{
+            slotCode,
+            ...(hasStock ? { finalQty: selectionFinalQtys[slotCode] } : {}),
+            ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
+          }],
+          applyImmediately: true,
+          preferCachedBaseline: xyLiveState.state !== "live",
+        }),
       }, 25000);
-      const payload = await response.json().catch(() => ({})) as {
-        ok?: boolean; success?: boolean; queued?: boolean | number; verified?: boolean;
-        message?: string; error?: string; baselineSource?: string;
-      };
-      if (!response.ok || (productChanged ? payload.success !== true : payload.ok !== true)) {
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      if (!response.ok || payload.ok !== true) {
         throw new Error(payload.error || tr("Could not save the selection.", "تعذر حفظ الخانة."));
       }
-      const verified = productChanged && payload.verified === true;
-      const savedMessage = verified
-        ? tr("Saved and verified in XY.", "تم الحفظ والتحقق في XY.")
-        : productChanged
-          ? tr("Product change saved; XY pending. Sellable stock stays zero until physically verified.", "تم حفظ تغيير المنتج؛ XY معلق. مخزون البيع صفر حتى التحقق الفعلي.")
-          : tr("Saved in Snacky. XY sync pending in background.", "تم الحفظ في سناكي. المزامنة مع XY جارية في الخلفية.");
       setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
-        status: verified ? "verified" : "pending", message: savedMessage,
+        status: "pending",
+        message: tr("Stock/price saved in Snacky; XY verification pending.", "تم حفظ العدد/السعر في سناكي؛ التحقق من XY معلق."),
       }}));
       setSelectionFinalQtys((current) => { const next = { ...current }; delete next[slotCode]; return next; });
       setSelectionPrices((current) => { const next = { ...current }; delete next[slotCode]; return next; });
-      setSelectionProductIds((current) => { const next = { ...current }; delete next[slotCode]; return next; });
-      if (verified) void refreshLiveXy();
     } catch (cause) {
       setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
         status: "error", message: cause instanceof Error ? cause.message : tr("Save failed.", "فشل الحفظ."),
       }}));
-    }
-  };
-
-  const toggleSelectionVisibility = async (slotCode: string, hidden: boolean) => {
-    if (hidden && !window.confirm(tr(
-      `Hide selection ${slotCode} because it is not physically present?`,
-      `إخفاء الخانة ${slotCode} لأنها غير موجودة فعلياً؟`,
-    ))) return;
-    setError("");
-    try {
-      localDraft.saveNow();
-      const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-visibility`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slotCode, hidden }),
-      });
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Could not save selection visibility.");
-      window.location.reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : tr("Could not save selection visibility.", "تعذر حفظ ظهور الخانة."));
     }
   };
 
@@ -1976,17 +1922,9 @@ export default function MachineStopPage() {
           onChange={setSelectionFinalQtys}
           prices={selectionPrices}
           onPriceChange={setSelectionPrices}
-          productOptions={(fullProductCatalog ?? stopData.productOptions).map((p) => ({ id: p.id, name: p.name }))}
-          productSelections={selectionProductIds}
-          onSelectProduct={(slotCode, productId) => setSelectionProductIds((state) => ({ ...state, [slotCode]: productId }))}
           onSaveSelection={(slotCode) => void saveMachineSelection(slotCode)}
           saveStatuses={selectionSaveStatuses}
-          onLoadAllProducts={() => void loadFullProductCatalog()}
-          productCatalogLoading={productCatalogLoading}
           isLiveXy={xyLiveState.state === "live"}
-          hiddenSelections={stopData.hiddenSelections ?? []}
-          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
-          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
           onChangeProduct={(slotCode) => {
             setXySwapSourceSlotCode(null);
             setXySwapTargetSlotCode("");
