@@ -2,6 +2,7 @@ import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { readXyMachineLayout, setXySlotProduct, verifyXySlot } from "@/lib/xy-vms-control";
+import { isSafeStockPreservingQueuedRelabel } from "@/lib/xy-product-change-quantity";
 
 type PendingChange = {
   id: string;
@@ -77,8 +78,10 @@ export async function retryPendingXySlotChanges() {
         && item.smart_route_swap === false
         && item.physical_change_confirmed === false
         && item.lane_disabled_confirmed === false;
+      const safePreserveStockRelabel = isSafeStockPreservingQueuedRelabel(item);
+      const safeNonPhysicalRelabel = safeZeroStockRelabel || safePreserveStockRelabel;
       if (stop.route_id !== item.route_id || stop.machine_id !== item.machine_id
-        || (!safeZeroStockRelabel && (!item.physical_change_confirmed || !item.lane_disabled_confirmed))) {
+        || (!safeNonPhysicalRelabel && (!item.physical_change_confirmed || !item.lane_disabled_confirmed))) {
         await setState("conflict", "Queue ownership or physical safety confirmation changed.");
         report.conflicts++;
         continue;
@@ -88,7 +91,7 @@ export async function retryPendingXySlotChanges() {
         report.conflicts++;
         continue;
       }
-      if (!safeZeroStockRelabel && stop.status !== "completed") {
+      if (!safeNonPhysicalRelabel && stop.status !== "completed") {
         if (["skipped", "canceled", "cancelled"].includes(String(stop.status))) {
           await setState("conflict", "Stop was not completed. Manual review required.");
           report.conflicts++;
@@ -97,7 +100,7 @@ export async function retryPendingXySlotChanges() {
         }
         continue;
       }
-      if (!safeZeroStockRelabel && now.getTime() - Date.parse(item.created_at) > 48 * 3_600_000) {
+      if (!safeNonPhysicalRelabel && now.getTime() - Date.parse(item.created_at) > 48 * 3_600_000) {
         await setState("conflict", "Queued XY change is older than 48 hours; manual verification required.");
         report.conflicts++;
         continue;
@@ -126,7 +129,9 @@ export async function retryPendingXySlotChanges() {
         || (safeZeroStockRelabel
             ? before.currentQty > item.previous_stock_qty
             : before.currentQty !== item.previous_stock_qty)) {
-        await setState("conflict", "XY product or stock increased since queueing; manual review required.");
+        // Stock-preserving relabels must NEVER overwrite a changed quantity,
+        // even if sales reduced the stock while XY was disconnected.
+        await setState("conflict", "XY product or quantity changed since queueing; manual review required.");
         report.conflicts++;
         continue;
       }
