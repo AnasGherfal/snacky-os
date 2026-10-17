@@ -229,7 +229,7 @@ test("offline XY changes are durable, gated by physical safety, and retried by s
   assert.match(operatorStop, /queueOnOffline: true/);
   assert.doesNotMatch(operatorStop, /I physically replaced the product in this lane/);
   assert.doesNotMatch(operatorStop, /I disabled this lane from vending/);
-  assert.match(operatorStop, /Saved in Snacky/);
+  assert.match(operatorStop, /Change queued in Snacky/);
   assert.match(quantityCard, /saveMode\("sync_pending"\)/);
   assert.match(quantityCard, /Photos are optional/);
   assert.match(operatorLayout, /OperatorHomeShortcuts/);
@@ -255,7 +255,7 @@ test("one-tap manual XY changes save without fake physical confirmations and wil
 
   assert.match(xyProductApi, /const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap/);
   assert.match(xyProductApi, /const queueOnOffline = body.queueOnOffline !== false/);
-  assert.match(xyProductApi, /target_stock_qty: zeroStockRelabel \? 0 : actualSlotQty/);
+  assert.match(xyProductApi, /target_stock_qty: targetStockQty/);
   assert.match(xyProductApi, /zero_stock_relabel: zeroStockRelabel/);
   assert.match(xyProductApi, /physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap/);
   assert.match(worker, /safeZeroStockRelabel/);
@@ -265,7 +265,7 @@ test("one-tap manual XY changes save without fake physical confirmations and wil
   assert.match(safeQueue, /smart_route_swap = false/);
   assert.match(safeQueue, /physical_change_confirmed = false/);
   assert.match(operatorStop, /queueOnOffline: true/);
-  assert.match(operatorStop, /Saved in Snacky/);
+  assert.match(operatorStop, /Change queued in Snacky/);
   assert.match(operatorStop, /Saved — updating XY automatically/);
   assert.doesNotMatch(operatorStop, /xyQueuePhysicalConfirmed/);
   assert.doesNotMatch(operatorStop, /xyQueueLaneDisabled/);
