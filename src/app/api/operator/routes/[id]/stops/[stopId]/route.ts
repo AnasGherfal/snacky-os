@@ -464,6 +464,19 @@ export async function GET(
         lastKnownSalePriceByProduct.set(productId, price);
       });
 
+      // The operator's Change Product search must not offer items that XY
+      // cannot identify. Keep the full list for returns/adjustments, but tag
+      // each product with an eligible, confirmed XY product mapping.
+      const { data: confirmedXyMappings, error: confirmedXyMappingsError } = await operationalReadClient
+        .from("vms_product_mappings")
+        .select("product_id")
+        .eq("match_status", "confirmed")
+        .not("vms_product_id", "is", null);
+      if (confirmedXyMappingsError) {
+        throw new Error(`Could not verify XY-compatible products: ${errorMessage(confirmedXyMappingsError)}`);
+      }
+      const xyMappedProductIds = new Set((confirmedXyMappings ?? []).map((row) => String(row.product_id ?? "")));
+
       const productOptions = productRows.map((product) => ({
         id: product.id,
         sku: product.sku,
@@ -478,6 +491,7 @@ export async function GET(
         sellingPrice: product.selling_price ?? null,
         vmsSellingPriceLyd: product.vms_selling_price_lyd ?? null,
         lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
+        xyMapped: xyMappedProductIds.has(String(product.id)),
       }));
 
       return NextResponse.json({ productOptions });
