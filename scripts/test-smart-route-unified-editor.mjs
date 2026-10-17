@@ -42,7 +42,7 @@ test("Both stock and price are edited by individual selection with visible feedb
   assert.match(editor,/updatePrice/);
   assert.match(editor,/setWholeRow/);
   assert.match(editor,/setFeedback/);
-  assert.match(editor,/onSelectProduct/);
+  assert.match(editor,/onChangeProduct/);
   assert.match(editor,/Save selection/);
   assert.match(editor,/Price \(LYD\)/);
   assert.match(editor,/role="status"/);
