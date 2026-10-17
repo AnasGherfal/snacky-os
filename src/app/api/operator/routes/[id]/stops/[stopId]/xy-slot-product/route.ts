@@ -272,6 +272,50 @@ export async function POST(
     }, { status: 409 });
   }
 
+  // XY can acknowledge an instruction before its actual lane state catches up.
+  // Keep a durable, idempotently reconciled pending record; don't tell the
+  // operator that the machine changed until direct XY readback verifies it.
+  const queueUnverifiedChange = async (reason: string, writeWasAccepted: boolean) => {
+    if (currentStockQty === null || !beforeSlot.vmsProductId) {
+      return NextResponse.json({
+        success: false, code: "XY_QUEUE_REQUIRES_BASELINE",
+        error: "XY has no reliable original product/quantity baseline. Ask an admin to inspect this slot.",
+      }, { status: 409 });
+    }
+    const { data: queued, error: queueError } = await admin.from("xy_pending_slot_changes").insert({
+      route_id: routeId,
+      route_stop_id: stopId,
+      machine_id: machine.id,
+      vms_machine_id: String(machine.vms_machine_id),
+      slot_code: slotCode,
+      previous_vms_product_id: beforeSlot.vmsProductId,
+      previous_stock_qty: Number(currentStockQty),
+      target_product_id: product.id,
+      target_vms_product_id: targetVmsProductId,
+      target_price_lyd: priceLyd,
+      target_stock_qty: targetStockQty,
+      physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
+      lane_disabled_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
+      zero_stock_relabel: zeroStockRelabel,
+      smart_route_swap: Boolean(smartRouteSwap),
+      created_by_user_id: profile.id,
+      last_error: reason,
+    }).select("id").single();
+    if (queueError || !queued) {
+      return NextResponse.json({
+        success: false, code: "XY_QUEUE_SAVE_FAILED", verified: false, writeAccepted: writeWasAccepted,
+        error: writeWasAccepted
+          ? "XY accepted the instruction but Snacky could not save the verification queue. Do not send it again; ask an admin to check the live XY slot."
+          : "Could not save this change for an offline retry; no machine change was confirmed.",
+      }, { status: 409 });
+    }
+    return NextResponse.json({
+      success: true, verified: false, queued: true, queueId: queued.id,
+      writeAccepted: writeWasAccepted, code: "XY_PENDING_VERIFICATION",
+      message: "Saved as PENDING in Snacky. Not verified on the machine yet. Recheck XY before loading the replacement product; stock starts at 0.",
+    }, { status: 202 });
+  };
+
   const write = await setXySlotProduct({
     vmsMachineId: String(machine.vms_machine_id),
     slotCode,
@@ -312,40 +356,7 @@ export async function POST(
 
     const xyMachineOffline = /设备不在线|device\s*(?:is\s*)?offline|machine\s*(?:is\s*)?offline|not\s+online/i.test(String(write.message ?? ""));
     if (xyMachineOffline && queueOnOffline) {
-      if (currentStockQty === null || !beforeSlot.vmsProductId) {
-        return NextResponse.json({
-          success: false, code: "XY_QUEUE_REQUIRES_BASELINE",
-          error: "XY did not provide a safe original product/quantity baseline for this lane. Save the change for admin review.",
-        }, { status: 409 });
-      }
-      const { data: queued, error: queueError } = await admin.from("xy_pending_slot_changes").insert({
-        route_id: routeId,
-        route_stop_id: stopId,
-        machine_id: machine.id,
-        vms_machine_id: String(machine.vms_machine_id),
-        slot_code: slotCode,
-        previous_vms_product_id: beforeSlot.vmsProductId,
-        previous_stock_qty: Number(currentStockQty),
-        target_product_id: product.id,
-        target_vms_product_id: targetVmsProductId,
-        target_price_lyd: priceLyd,
-        target_stock_qty: zeroStockRelabel ? 0 : actualSlotQty,
-        physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
-        lane_disabled_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
-        zero_stock_relabel: zeroStockRelabel,
-        smart_route_swap: Boolean(smartRouteSwap),
-        created_by_user_id: profile.id,
-      }).select("id").single();
-      if (queueError || !queued) {
-        return NextResponse.json({
-          success: false, code: "XY_QUEUE_SAVE_FAILED",
-          error: "Could not safely save the change for automatic retry. The machine was not changed.",
-        }, { status: 409 });
-      }
-      return NextResponse.json({
-        success: true, verified: false, queued: true, queueId: queued.id,
-        message: "Saved in Snacky. XY will retry automatically. The new product starts with zero sellable units until the lane is physically verified and refilled.",
-      }, { status: 202 });
+      return queueUnverifiedChange("XY machine offline. Pending retry and readback verification.", false);
     }
     return NextResponse.json({
       success: false,
@@ -405,13 +416,16 @@ export async function POST(
   });
 
   if (!verification.verified) {
+    if (queueOnOffline) {
+      return queueUnverifiedChange("XY acknowledged write, but direct lane readback is not yet verified.", true);
+    }
     return NextResponse.json({
       success: false,
       verified: false,
       writeAccepted: write.accepted,
       xyCode: write.code,
       xyMessage: write.message,
-      error: "XY accepted the change, but the machine has not reported the new slot yet. Do not send it again. Refresh XY after a moment.",
+      error: "XY accepted the command but the machine has not confirmed the product, price and quantity yet. Do not send it again; ask an admin to verify the live XY lane.",
       slot: verification.state,
     }, { status: 409 });
   }
