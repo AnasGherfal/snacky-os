@@ -1042,7 +1042,7 @@ export default function MachineStopPage() {
               id: String(payload.queueId ?? `${xyEditSlotCode}:${xyReplacementProductId}`),
               slot_code: xyEditSlotCode,
               target_product_id: xyReplacementProductId,
-              target_stock_qty: 0,
+              target_stock_qty: Number(payload.targetStockQty ?? currentSlot?.currentQty ?? 0),
               status: "pending" as const,
               last_error: null,
             },
@@ -1050,8 +1050,8 @@ export default function MachineStopPage() {
           ],
         } : current);
         setXyChangeSuccess(tr(
-          "Saved in Snacky. XY will update automatically when the machine reconnects. The new product starts with 0 sellable units until it is physically stocked.",
-          "تم حفظ التغيير في سناكي. سيتم تحديث XY تلقائياً عند عودة اتصال الجهاز. يبدأ المنتج الجديد بمخزون قابل للبيع يساوي صفراً حتى تتم تعبئته فعلياً.",
+          "Saved in Snacky. XY will update the product when the machine reconnects, preserving the existing quantity if it is still unchanged.",
+          "تم حفظ تغيير المنتج في سناكي. سيحدّث XY عند عودة الاتصال مع الحفاظ على الكمية الحالية إذا لم تتغير.",
         ));
         setXyEditSlotCode(null);
         setXyReplacementProductId("");
@@ -1455,17 +1455,6 @@ export default function MachineStopPage() {
       }}));
       return;
     }
-    if (productChanged && hasStock && selectionFinalQtys[slotCode] > 0) {
-      setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
-        status: "error",
-        message: tr(
-          "Changing the product starts with zero sellable units. Save the product/price first, then set stock only after the replacement is physically loaded.",
-          "تغيير المنتج يبدأ بمخزون بيع صفر. احفظ المنتج والسعر أولاً، ثم حدّث الكمية بعد تعبئة المنتج الجديد فعلياً.",
-        ),
-      }}));
-      return;
-    }
-
     setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
       status: "saving", message: tr("Saving in Snacky…", "جارٍ الحفظ في سناكي…"),
     }}));
@@ -1475,6 +1464,7 @@ export default function MachineStopPage() {
         : `/api/operator/routes/${routeId}/stops/${stopId}/xy-final-quantities`;
       const body = productChanged ? {
         slotCode, productId: chosenProductId, queueOnOffline: true,
+        ...(hasStock ? { actualSlotQty: selectionFinalQtys[slotCode] } : {}),
         ...(hasPrice ? { priceLyd: selectionPrices[slotCode] } : {}),
       } : {
         selections: [{
@@ -1501,7 +1491,7 @@ export default function MachineStopPage() {
       const savedMessage = verified
         ? tr("Saved and verified in XY.", "تم الحفظ والتحقق في XY.")
         : productChanged
-          ? tr("Product change saved; XY pending. Sellable stock stays zero until physically verified.", "تم حفظ تغيير المنتج؛ XY معلق. مخزون البيع صفر حتى التحقق الفعلي.")
+          ? tr("Product change queued. XY will preserve the current quantity if it still matches.", "تم وضع تغيير المنتج في الانتظار. سيحافظ XY على الكمية الحالية إذا كانت لم تتغير.")
           : tr("Saved in Snacky. XY sync pending in background.", "تم الحفظ في سناكي. المزامنة مع XY جارية في الخلفية.");
       setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
         status: verified ? "verified" : "pending", message: savedMessage,
@@ -1514,27 +1504,6 @@ export default function MachineStopPage() {
       setSelectionSaveStatuses((current) => ({ ...current, [slotCode]: {
         status: "error", message: cause instanceof Error ? cause.message : tr("Save failed.", "فشل الحفظ."),
       }}));
-    }
-  };
-
-  const toggleSelectionVisibility = async (slotCode: string, hidden: boolean) => {
-    if (hidden && !window.confirm(tr(
-      `Hide selection ${slotCode} because it is not physically present?`,
-      `إخفاء الخانة ${slotCode} لأنها غير موجودة فعلياً؟`,
-    ))) return;
-    setError("");
-    try {
-      localDraft.saveNow();
-      const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-visibility`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slotCode, hidden }),
-      });
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Could not save selection visibility.");
-      window.location.reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : tr("Could not save selection visibility.", "تعذر حفظ ظهور الخانة."));
     }
   };
 
@@ -1985,8 +1954,6 @@ export default function MachineStopPage() {
           productCatalogLoading={productCatalogLoading}
           isLiveXy={xyLiveState.state === "live"}
           hiddenSelections={stopData.hiddenSelections ?? []}
-          onHideSelection={(slotCode) => void toggleSelectionVisibility(slotCode, true)}
-          onRestoreSelection={(slotCode) => void toggleSelectionVisibility(slotCode, false)}
           onChangeProduct={(slotCode) => {
             setXySwapSourceSlotCode(null);
             setXySwapTargetSlotCode("");
@@ -2410,8 +2377,8 @@ export default function MachineStopPage() {
                             </div>
                             <div className="mt-1 text-xs leading-5 text-emerald-900">
                               {tr(
-                                "Save once. If XY is offline, Snacky remembers this selection and updates it automatically when connected. New product stock starts at zero until physically refilled.",
-                                "احفظ مرة واحدة. إذا كان XY غير متصل، يحتفظ سناكي باختيارك ويحدّثه تلقائياً عند عودة الاتصال. يبدأ مخزون المنتج الجديد من صفر إلى أن يُعبأ فعلياً.",
+                                "Save changes this slot's product in XY and checks the result. Its existing quantity is kept unless you edit that quantity.",
+                                "الحفظ يغيّر منتج الخانة في XY ويتحقق من النتيجة. تبقى الكمية الحالية كما هي إلا إذا عدّلتها.",
                               )}
                             </div>
                           </div>
