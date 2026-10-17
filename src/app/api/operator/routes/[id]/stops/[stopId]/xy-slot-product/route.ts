@@ -4,6 +4,7 @@ import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { readXyMachineLayout, setXySlotProduct, verifyXySlot } from "@/lib/xy-vms-control";
+import { resolveXyProductChangeQuantity } from "@/lib/xy-product-change-quantity";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -47,18 +48,29 @@ export async function POST(
     return NextResponse.json({ success: false, error: "Enter a positive LYD selling price with up to two decimals." }, { status: 400 });
   }
   const smartRouteSwapRequested = body.smartRouteSwap === true;
-  // A normal change is a *desired catalogue selection*, not evidence that
-  // somebody physically emptied/refilled a lane. To keep it one tap, retry
-  // automatically while forcing the new mapping's sellable quantity to ZERO.
-  // Smart Route execution still follows its stricter physical-return workflow.
+  const quantityEdited = body.actualSlotQty !== undefined && body.actualSlotQty !== null;
+  if (quantityEdited && (
+    typeof body.actualSlotQty !== "number"
+    || !Number.isSafeInteger(body.actualSlotQty)
+    || body.actualSlotQty < 0
+  )) {
+    return NextResponse.json({ success: false, error: "Enter a valid final selection quantity (zero is allowed)." }, { status: 400 });
+  }
   const verifiedPhysicalSwap = body.physicalChangeConfirmed === true
-    && body.laneDisabledConfirmed === true
-    && Number.isSafeInteger(Number(body.actualSlotQty))
-    && Number(body.actualSlotQty) >= 0;
+    && body.laneDisabledConfirmed === true && quantityEdited;
+  if (smartRouteSwapRequested && quantityEdited && !verifiedPhysicalSwap) {
+    return NextResponse.json({
+      success: false,
+      error: "Smart Route replacements require the old stock to be returned and the physical lane change confirmed.",
+    }, { status: 409 });
+  }
+  // A normal product-label change preserves the CURRENT XY lane quantity
+  // unless an operator explicitly edited the final count. Offline retries are
+  // allowed only when that unchanged baseline can be safely verified again.
   const queueOnOffline = body.queueOnOffline !== false
-    && (!smartRouteSwapRequested || verifiedPhysicalSwap);
-  const zeroStockRelabel = !smartRouteSwapRequested && !verifiedPhysicalSwap;
-  const actualSlotQty = verifiedPhysicalSwap ? Number(body.actualSlotQty) : 0;
+    && ((!smartRouteSwapRequested && !quantityEdited) || verifiedPhysicalSwap);
+  const zeroStockRelabel = false;
+  const actualSlotQty = quantityEdited ? Number(body.actualSlotQty) : null;
   if (!slotCode || !isUuid(productId)) {
     return NextResponse.json({ success: false, error: "Choose a valid slot and product." }, { status: 400 });
   }
@@ -195,7 +207,12 @@ export async function POST(
       error: "XY did not report a reliable current stock quantity for this slot. Snacky will not change the product until the lane can be read safely.",
     }, { status: 409 });
   }
-  const targetStockQty = zeroStockRelabel ? 0 : queueOnOffline ? actualSlotQty : smartRouteSwap ? 0 : Number(currentStockQty);
+  const resolvedQuantity = resolveXyProductChangeQuantity({
+    currentStockQty: currentStockQty === null ? null : Number(currentStockQty),
+    explicitFinalQty: actualSlotQty,
+    smartRouteSwap: Boolean(smartRouteSwap),
+  });
+  const targetStockQty = resolvedQuantity.targetStockQty;
   if (targetStockQty > 500 || (beforeSlot.capacity !== null && targetStockQty > beforeSlot.capacity)) {
     return NextResponse.json({ success: false, code: "XY_CAPACITY_EXCEEDED", error: "Actual lane stock exceeds the XY lane capacity." }, { status: 400 });
   }
@@ -211,9 +228,9 @@ export async function POST(
   }
   if (pendingLane) {
     if (pendingLane.route_id === routeId && pendingLane.route_stop_id === stopId && pendingLane.target_product_id === productId) {
-      if (queueOnOffline && verifiedPhysicalSwap && Number(pendingLane.target_stock_qty ?? -1) !== actualSlotQty) {
+      if (queueOnOffline && verifiedPhysicalSwap && Number(pendingLane.target_stock_qty ?? -1) !== targetStockQty) {
         const { error: correctionError } = await admin.from("xy_pending_slot_changes")
-          .update({ target_stock_qty: actualSlotQty, updated_at: new Date().toISOString() })
+          .update({ target_stock_qty: targetStockQty, updated_at: new Date().toISOString() })
           .eq("id", pendingLane.id).eq("status", "pending");
         if (correctionError) {
           return NextResponse.json({
@@ -222,9 +239,16 @@ export async function POST(
           }, { status: 409 });
         }
       }
+      if (!verifiedPhysicalSwap && Number(pendingLane.target_stock_qty ?? -1) !== targetStockQty) {
+        return NextResponse.json({
+          success: false, code: "XY_QUEUED_QUANTITY_DIFFERS",
+          error: "This slot already has a queued change with a different quantity. Ask an admin to review it rather than overwriting stock.",
+        }, { status: 409 });
+      }
       return NextResponse.json({
         success: true, verified: false, queued: true, queueId: pendingLane.id,
-        error: null, message: "Change saved in Snacky. XY will be retried automatically after reconnecting. Sellable stock will remain zero until the lane is physically checked/refilled.",
+        targetStockQty,
+        error: null, message: "Change saved in Snacky. XY will retry when connected, only if the original product and stock count still match.",
       }, { status: 202 });
     }
     return NextResponse.json({
@@ -304,6 +328,8 @@ export async function POST(
         xy_code: write.code,
         xy_message: write.message,
         xy_stock_qty_sent: targetStockQty,
+        stock_preserved: resolvedQuantity.stockPreserved,
+        explicit_quantity_edit: resolvedQuantity.quantityEdited,
         accepted: false,
         smart_route_swap: Boolean(smartRouteSwap),
       },
@@ -329,9 +355,9 @@ export async function POST(
         target_product_id: product.id,
         target_vms_product_id: targetVmsProductId,
         target_price_lyd: priceLyd,
-        target_stock_qty: zeroStockRelabel ? 0 : actualSlotQty,
-        physical_change_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
-        lane_disabled_confirmed: !zeroStockRelabel && verifiedPhysicalSwap,
+        target_stock_qty: targetStockQty,
+        physical_change_confirmed: verifiedPhysicalSwap,
+        lane_disabled_confirmed: verifiedPhysicalSwap,
         zero_stock_relabel: zeroStockRelabel,
         smart_route_swap: Boolean(smartRouteSwap),
         created_by_user_id: profile.id,
@@ -344,7 +370,8 @@ export async function POST(
       }
       return NextResponse.json({
         success: true, verified: false, queued: true, queueId: queued.id,
-        message: "Saved in Snacky. XY will retry automatically. The new product starts with zero sellable units until the lane is physically verified and refilled.",
+        targetStockQty,
+        message: "Saved in Snacky. XY will retry the product change only if the original product and quantity remain unchanged.",
       }, { status: 202 });
     }
     return NextResponse.json({
@@ -398,6 +425,8 @@ export async function POST(
       xy_code: write.code,
       xy_message: write.message,
       xy_stock_qty_sent: targetStockQty,
+      stock_preserved: resolvedQuantity.stockPreserved,
+      explicit_quantity_edit: resolvedQuantity.quantityEdited,
       verified: verification.verified,
       smart_route_swap: Boolean(smartRouteSwap),
     },
@@ -419,6 +448,7 @@ export async function POST(
   return NextResponse.json({
     success: true,
     verified: true,
+    targetStockQty,
     product: {
       id: product.id,
       name: product.name,

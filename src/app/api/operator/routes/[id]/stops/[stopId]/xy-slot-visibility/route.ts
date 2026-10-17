@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, hasPermission } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -11,6 +11,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const client = getSupabaseServerClient(accessToken);
   const admin = getSupabaseAdminClient();
   if (!accessToken || !profile || !client) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
+  // Hiding a physical machine selection changes the operational layout.
+  // Operators may report a missing lane, but must NOT hide/restore it.
+  if (profile.active_status !== "active" || !hasPermission(profile, "machines.manage")) {
+    return NextResponse.json({ error: "Only an owner, admin, or supervisor may change machine selection visibility." }, { status: 403 });
+  }
   if (!admin) return NextResponse.json({ error: "Protected machine selection configuration unavailable." }, { status: 500 });
 
   let payload: { slotCode?: unknown; hidden?: unknown };
@@ -46,7 +51,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     const { error } = await admin.from("xy_hidden_machine_selections").upsert({
       machine_id: stop.machine_id, slot_code: slotCode,
-      reason: "Marked physically absent from machine by operator",
+      reason: "Marked physically absent from machine by manager",
       updated_by_user_id: profile.id, updated_at: new Date().toISOString(),
     }, { onConflict: "machine_id,slot_code" });
     if (error) return NextResponse.json({ error: "Could not hide this selection." }, { status: 500 });
