@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, isOwnerAdminRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -32,6 +32,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const access = await buildOperatorRouteAccessContext(client, profile);
   if (!canAccessOperatorRoute(access, route.operator_id)) {
     return NextResponse.json({ error: "This machine is not assigned to you." }, { status: 403 });
+  }
+  // Visibility is an owner/admin configuration, not a route execution choice.
+  // Removing the UI button is not sufficient: block direct operator requests too.
+  if (!isOwnerAdminRole(access)) {
+    return NextResponse.json({ error: "Only an owner or admin can change visible machine selections." }, { status: 403 });
   }
 
   if (hidden) {
