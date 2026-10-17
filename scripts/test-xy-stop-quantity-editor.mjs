@@ -95,7 +95,7 @@ test("Background sync checks stop completion, original product and stock before 
 });
 
 
-test("Row action visibly confirms staged selections; hidden physical lanes are reversible", () => {
+test("Row feedback is visible and operators cannot hide physical selections", () => {
   const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
   const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
   const visibilityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-visibility/route.ts");
@@ -105,13 +105,14 @@ test("Row action visibly confirms staged selections; hidden physical lanes are r
   assert.match(editor, /aria-live="polite"/);
   assert.match(editor, /setFeedback/);
   assert.match(editor, /Save Selection for each edited lane/);
-  assert.match(editor, /hiddenSelections/);
-  assert.match(editor, /onRestoreSelection/);
+  assert.doesNotMatch(editor, /onHideSelection|onRestoreSelection|hiddenSelections/);
   assert.match(editor, /onChangeProduct/);
   assert.match(stopApi, /xy_hidden_machine_selections/);
   assert.match(stopApi, /hiddenSlotCodes/);
-  assert.match(stopPage, /toggleSelectionVisibility/);
+  assert.doesNotMatch(stopPage, /toggleSelectionVisibility|onHideSelection|onRestoreSelection/);
   assert.match(visibilityApi, /xy_hidden_machine_selections/);
+  assert.match(visibilityApi, /isOwnerAdminRole\(access\)/);
+  assert.match(visibilityApi, /403/);
   assert.match(migration, /'002'/);
   assert.match(migration, /'036'/);
   assert.match(migration, /'040'/);
@@ -142,7 +143,10 @@ test("each selection can save product price or stock with immediate confirmation
 
   assert.match(editor, /Current in XY/);
   assert.match(editor, /Save selection/);
-  assert.match(editor, /onSelectProduct/);
+  assert.match(editor, /onChangeProduct/);
+  assert.match(stopPage, /xyReplacementProducts/);
+  assert.match(stopPage, /xyMapped === true/);
+  assert.match(stopPage, /Save to XY & verify/);
   assert.match(editor, /onSaveSelection/);
   assert.match(editor, /Price \(LYD\)/);
   assert.match(editor, /role="status"/);
