@@ -1,0 +1,34 @@
+name: Operator stop UX safety
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/components/operator/StopReadinessGuide.tsx'
+      - 'src/app/operator/routes/[id]/stops/[stopId]/page.tsx'
+      - 'scripts/test-stop-readiness-guide-ui.mjs'
+      - '.github/workflows/operator-stop-ux-safety.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Stop UX, Arabic and completion regression
+        run: node --experimental-strip-types --test scripts/test-stop-readiness-guide-ui.mjs scripts/test-stop-completion-recovery.mjs scripts/test-machine-quantity-confirmation.mjs
+      - name: Existing Arabic quick-actions test (pre-existing master mismatch, non-blocking diagnostic)
+        continue-on-error: true
+        run: node --test scripts/test-route-arabic-ui.mjs
+      - name: Lint new component
+        run: npx eslint src/components/operator/StopReadinessGuide.tsx
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Full production build
+        run: npm run build
