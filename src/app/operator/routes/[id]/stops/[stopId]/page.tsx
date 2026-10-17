@@ -2109,7 +2109,7 @@ export default function MachineStopPage() {
           {xyChangeSuccess || xySwapSuccess ? (
             <div
               role="status"
-              className="fixed bottom-4 left-1/2 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-900 shadow-2xl sm:bottom-6"
+              className={`fixed bottom-4 left-1/2 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl border bg-white px-4 py-3 text-sm font-semibold shadow-2xl sm:bottom-6 ${xyChangePending ? "border-amber-300 text-amber-900" : "border-emerald-200 text-emerald-900"}`}
             >
               {xyChangeSuccess || xySwapSuccess}
             </div>
@@ -2343,14 +2343,21 @@ export default function MachineStopPage() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+                    <p className="mb-2 text-sm text-slate-600">{tr(
+                      "Search by name, SKU or barcode. Only products with confirmed XY mappings can be selected.",
+                      "ابحث باسم المنتج أو رمزه أو الباركود. يمكن اختيار المنتجات المؤكدة والمربوطة في XY فقط.",
+                    )}</p>
+                    {productCatalogLoading ? (
+                      <p role="status" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-800">
+                        {tr("Loading searchable XY product catalog…", "جارٍ تحميل قائمة منتجات XY للبحث…")}
+                      </p>
+                    ) : null}
                     <ProductPicker
-                      products={stopData.machineProductOptions ?? stopData.productOptions}
-                      allProducts={fullProductCatalog ?? undefined}
-                      onLoadAllProducts={loadFullProductCatalog}
-                      allProductsLoading={productCatalogLoading}
+                      products={xyReplacementProducts}
                       value={xyReplacementProductId}
                       onChange={setXyReplacementProductId}
                       label={tr("Replacement product", "المنتج البديل")}
+                      autoFocusSearch
                     />
 
                     {selectedProduct ? (
@@ -2394,12 +2401,12 @@ export default function MachineStopPage() {
                     <button
                       type="button"
                       className="btn-primary min-h-12"
-                      disabled={xyChangeSaving || !xyReplacementProductId}
+                      disabled={xyChangeSaving || productCatalogLoading || !selectedProduct || selectedProduct.id === currentSlot?.productId}
                       onClick={() => void applyXyProductChange()}
                     >
                       {xyChangeSaving
                         ? tr("Updating...", "جاري التحديث...")
-                        : tr("Save product change", "حفظ تغيير المنتج")}
+                        : tr("Save to XY & verify", "حفظ في XY والتحقق")}
                     </button>
                   </div>
                 </div>
@@ -2997,7 +3004,7 @@ function Metric({ label, value, tone = "neutral" }: { label: string; value: numb
   );
 }
 
-function ProductPicker({ products, allProducts, onLoadAllProducts, allProductsLoading = false, value, onChange, label = "Existing product" }: { products: ProductOption[]; allProducts?: ProductOption[]; onLoadAllProducts?: () => Promise<ProductOption[]>; allProductsLoading?: boolean; value: string; onChange: (productId: string) => void; label?: string }) {
+function ProductPicker({ products, allProducts, onLoadAllProducts, allProductsLoading = false, value, onChange, label = "Existing product", autoFocusSearch = false }: { products: ProductOption[]; allProducts?: ProductOption[]; onLoadAllProducts?: () => Promise<ProductOption[]>; allProductsLoading?: boolean; value: string; onChange: (productId: string) => void; label?: string; autoFocusSearch?: boolean }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const [sourceMode, setSourceMode] = useState<"priority" | "all">("priority");
@@ -3057,6 +3064,7 @@ function ProductPicker({ products, allProducts, onLoadAllProducts, allProductsLo
       ) : null}
       <div className="rounded-lg border border-slate-200 bg-white p-2">
         <input
+          autoFocus={autoFocusSearch}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="min-h-12 w-full rounded-md border-0 px-2 py-2 text-base outline-none ring-0 md:text-sm"
