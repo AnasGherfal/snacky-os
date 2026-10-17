@@ -4,6 +4,7 @@ import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { groupMachineLayoutRows } from "../src/lib/xy-machine-layout-groups.ts";
+import { resolveXyProductChangeQuantity, isSafeStockPreservingQueuedRelabel } from "../src/lib/xy-product-change-quantity.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
@@ -95,7 +96,7 @@ test("Background sync checks stop completion, original product and stock before 
 });
 
 
-test("Row action visibly confirms staged selections; hidden physical lanes are reversible", () => {
+test("Machine selection visibility is restricted to managers and operators cannot hide lanes", () => {
   const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
   const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
   const visibilityApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-visibility/route.ts");
@@ -106,11 +107,16 @@ test("Row action visibly confirms staged selections; hidden physical lanes are r
   assert.match(editor, /setFeedback/);
   assert.match(editor, /Save Selection for each edited lane/);
   assert.match(editor, /hiddenSelections/);
-  assert.match(editor, /onRestoreSelection/);
+  assert.doesNotMatch(editor, /onRestoreSelection/);
+  assert.doesNotMatch(editor, /onHideSelection/);
+  assert.doesNotMatch(editor, /Not physically present\? Hide/);
   assert.match(editor, /onChangeProduct/);
   assert.match(stopApi, /xy_hidden_machine_selections/);
   assert.match(stopApi, /hiddenSlotCodes/);
-  assert.match(stopPage, /toggleSelectionVisibility/);
+  assert.doesNotMatch(stopPage, /toggleSelectionVisibility/);
+  assert.doesNotMatch(stopPage, /onHideSelection/);
+  assert.match(visibilityApi, /hasPermission\(profile, "machines.manage"\)/);
+  assert.match(visibilityApi, /status: 403/);
   assert.match(visibilityApi, /xy_hidden_machine_selections/);
   assert.match(migration, /'002'/);
   assert.match(migration, /'036'/);
@@ -148,7 +154,8 @@ test("each selection can save product price or stock with immediate confirmation
   assert.match(editor, /role="status"/);
   assert.match(stopPage, /saveMachineSelection/);
   assert.match(stopPage, /applyImmediately: true/);
-  assert.match(stopPage, /stock stays zero until physically verified/);
+  assert.match(stopPage, /actualSlotQty: selectionFinalQtys\[slotCode\]/);
+  assert.match(stopPage, /XY will preserve the current quantity if it still matches/);
   assert.match(quantityApi, /apply_immediately: applyImmediately/);
   assert.match(quantityApi, /readXyMachineLayout/);
   assert.match(worker, /!row.apply_immediately && stop.status !== "completed"/);
@@ -156,4 +163,57 @@ test("each selection can save product price or stock with immediate confirmation
   assert.match(productApi, /requestedPrice/);
   assert.match(productApi, /requestedPrice === null/);
   assert.doesNotMatch(quantityApi, /insert into.*inventory_movements/);
+});
+
+test("Saving a replacement product preserves the existing XY stock unless a final quantity is explicitly edited", () => {
+  const original = 9;
+  assert.deepEqual(resolveXyProductChangeQuantity({
+    currentStockQty: original, smartRouteSwap: false,
+  }), { targetStockQty: 9, quantityEdited: false, stockPreserved: true });
+  assert.deepEqual(resolveXyProductChangeQuantity({
+    currentStockQty: original, explicitFinalQty: 5, smartRouteSwap: false,
+  }), { targetStockQty: 5, quantityEdited: true, stockPreserved: false });
+  assert.deepEqual(resolveXyProductChangeQuantity({
+    currentStockQty: original, explicitFinalQty: 0, smartRouteSwap: false,
+  }), { targetStockQty: 0, quantityEdited: true, stockPreserved: false });
+  assert.deepEqual(resolveXyProductChangeQuantity({
+    currentStockQty: original, smartRouteSwap: true,
+  }), { targetStockQty: 0, quantityEdited: false, stockPreserved: false });
+  assert.throws(() => resolveXyProductChangeQuantity({
+    currentStockQty: null, smartRouteSwap: false,
+  }), /reliable current quantity/);
+  assert.throws(() => resolveXyProductChangeQuantity({
+    currentStockQty: 3, explicitFinalQty: -1, smartRouteSwap: false,
+  }), /valid whole-number/);
+});
+
+test("Queued product relabels preserve stock only against an unchanged XY baseline", () => {
+  const queued = {
+    previous_stock_qty: 7,
+    target_stock_qty: 7,
+    smart_route_swap: false,
+    physical_change_confirmed: false,
+    lane_disabled_confirmed: false,
+    zero_stock_relabel: false,
+  };
+  assert.equal(isSafeStockPreservingQueuedRelabel(queued), true);
+  assert.equal(isSafeStockPreservingQueuedRelabel({ ...queued, target_stock_qty: 0 }), false);
+  assert.equal(isSafeStockPreservingQueuedRelabel({ ...queued, target_stock_qty: 8 }), false);
+  assert.equal(isSafeStockPreservingQueuedRelabel({ ...queued, smart_route_swap: true }), false);
+  assert.equal(isSafeStockPreservingQueuedRelabel({ ...queued, physical_change_confirmed: true }), false);
+
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
+  const worker = read("src/lib/xy-pending-slot-changes.ts");
+  const migration = read("supabase/migrations/20261018010000_xy_preserve_stock_offline_relabel.sql");
+  const picker = read("src/components/operator/MachineStockQuickEditor.tsx");
+  assert.match(page, /hasStock \? \{ actualSlotQty: selectionFinalQtys\[slotCode\] \} : \{\}/);
+  assert.match(api, /target_stock_qty: targetStockQty/);
+  assert.match(api, /const zeroStockRelabel = false/);
+  assert.match(worker, /safePreserveStockRelabel/);
+  assert.match(worker, /before.currentQty !== item.previous_stock_qty/);
+  assert.match(migration, /target_stock_qty = previous_stock_qty/);
+  assert.match(picker, /type="search"/);
+  assert.match(picker, /product\.barcode/);
+  assert.match(picker, /onSelectProduct\(slot.slotCode, product.id\)/);
 });
