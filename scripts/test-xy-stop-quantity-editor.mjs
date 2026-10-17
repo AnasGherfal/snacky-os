@@ -161,3 +161,28 @@ test("each selection can save product price or stock with immediate confirmation
   assert.match(productApi, /requestedPrice === null/);
   assert.doesNotMatch(quantityApi, /insert into.*inventory_movements/);
 });
+
+
+test("Operator replacement is searchable, XY-mapped, audited, and queued until readback verifies it", () => {
+  const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
+  const stopPage = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const stopApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+  const productApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts");
+  const swapApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-swap/route.ts");
+  const worker = read("src/lib/xy-pending-slot-changes.ts");
+
+  assert.match(editor, /Change product · search/);
+  assert.doesNotMatch(editor, /onSelectProduct|onHideSelection|onRestoreSelection/);
+  assert.match(stopPage, /xyMapped === true/);
+  assert.match(stopPage, /void loadFullProductCatalog\(\)/);
+  assert.match(stopPage, /autoFocusSearch/);
+  assert.match(stopPage, /Save to XY & verify/);
+  assert.match(stopApi, /xyMapped: xyMappedProductIds.has/);
+  assert.match(productApi, /const queueUnverifiedChange = async/);
+  assert.match(productApi, /if \(!verification.verified\) \{\s*if \(queueOnOffline\)/);
+  assert.match(productApi, /XY_PENDING_VERIFICATION/);
+  assert.match(productApi, /target_stock_qty: targetStockQty/);
+  assert.match(worker, /if \(before.vmsProductId === item.target_vms_product_id\)/);
+  assert.match(worker, /await setState\("verified", null\)/);
+  assert.match(swapApi, /XY_CHANGE_PENDING/);
+});
