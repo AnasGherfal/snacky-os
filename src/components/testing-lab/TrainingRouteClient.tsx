@@ -108,7 +108,8 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
   const [notice, setNotice] = useState("");
   const [selectedFinals, setSelectedFinals] = useState<Record<string, number>>({});
   const [selectedPrices, setSelectedPrices] = useState<Record<string, number>>({});
-  const [selectedProducts, setSelectedProducts] = useState<Record<string, string>>({});
+  const [trainingProductSlot, setTrainingProductSlot] = useState<string | null>(null);
+  const [trainingProductSearch, setTrainingProductSearch] = useState("");
   const [saveStatuses, setSaveStatuses] = useState<Record<string, { status: "verified" | "error"; message: string }>>({});
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [showIssue, setShowIssue] = useState(false);
@@ -154,7 +155,6 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
     setFormError("");
     setNotice("");
     setSelectedFinals({});
-    setSelectedProducts({});
     setSelectedPrices({});
     setSaveStatuses({});
     setShowIssue(false);
@@ -196,10 +196,10 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
     updateLane(code, { actualAdd: quantity });
   };
 
-  const saveSelection = (code: string) => {
+  const saveSelection = (code: string, replacementProductId?: string) => {
     const lane = activeStop.lanes.find((row) => row.code === code);
     if (!lane) return;
-    const product = selectedProducts[code] ?? lane.xyProductId;
+    const product = replacementProductId ?? lane.xyProductId;
     // Real XY product-change workflow first protects the new SKU with zero
     // sellable units. The operator refills and updates final stock separately.
     const switching = product !== lane.xyProductId;
@@ -221,7 +221,6 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
     });
     setSelectedFinals((current) => { const next = { ...current }; delete next[code]; return next; });
     setSelectedPrices((current) => { const next = { ...current }; delete next[code]; return next; });
-    setSelectedProducts((current) => { const next = { ...current }; delete next[code]; return next; });
     setSaveStatuses((prev) => ({
       ...prev, [code]: { status: "verified", message: tr("Simulated XY selection saved", "تم حفظ الخانة في XY التجريبي") },
     }));
@@ -413,13 +412,35 @@ export function TrainingRouteClient({ realData }: { realData?: { stops: Training
               onChange={setSelectedFinals}
               prices={selectedPrices}
               onPriceChange={setSelectedPrices}
-              productOptions={products.map((product) => ({ id: product.id, name: product[ar ? "ar" : "en"] }))}
-              productSelections={selectedProducts}
-              onSelectProduct={(code, product) => setSelectedProducts((old) => ({ ...old, [code]: product }))}
+              onChangeProduct={(code) => { setTrainingProductSlot(code); setTrainingProductSearch(""); }}
               onSaveSelection={saveSelection}
               saveStatuses={saveStatuses}
               isLiveXy={!isRealSnapshotTraining}
             />
+            {trainingProductSlot ? (
+              <div className="mt-3 rounded-xl border-2 border-emerald-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-bold">{tr(`Change product · selection ${trainingProductSlot}`, `تغيير المنتج · الخانة ${trainingProductSlot}`)}</h4>
+                  <button type="button" className="min-h-10 rounded-lg border px-3" onClick={() => setTrainingProductSlot(null)}>{tr("Cancel", "إلغاء")}</button>
+                </div>
+                <input autoFocus type="search" className="field-input mt-2 w-full" value={trainingProductSearch}
+                  placeholder={tr("Search a replacement product", "ابحث عن منتج بديل")}
+                  onChange={(event) => setTrainingProductSearch(event.target.value)} />
+                <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                  {products.filter((product) => [product.en, product.ar, product.id].some((label) => String(label ?? "").toLowerCase().includes(trainingProductSearch.trim().toLowerCase())))
+                    .slice(0, 16).map((product) => (
+                      <button type="button" key={product.id} className="min-h-11 w-full rounded-lg border border-slate-200 p-2 text-start text-sm hover:bg-emerald-50"
+                        onClick={() => {
+                          // Simulate Save Product Change, not the stock/price save.
+                          saveSelection(trainingProductSlot, product.id);
+                          setTrainingProductSlot(null);
+                        }}>
+                        {product[ar ? "ar" : "en"]}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ) : null}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4" id="training-xy-verify">
