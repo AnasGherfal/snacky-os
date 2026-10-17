@@ -152,7 +152,7 @@ test("each selection can save product price or stock with immediate confirmation
   assert.match(editor, /role="status"/);
   assert.match(stopPage, /saveMachineSelection/);
   assert.match(stopPage, /applyImmediately: true/);
-  assert.match(stopPage, /stock stays zero until physically verified/);
+  assert.match(stopPage, /stock starts at 0/);
   assert.match(quantityApi, /apply_immediately: applyImmediately/);
   assert.match(quantityApi, /readXyMachineLayout/);
   assert.match(worker, /!row.apply_immediately && stop.status !== "completed"/);
