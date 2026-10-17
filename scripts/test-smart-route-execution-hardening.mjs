@@ -266,7 +266,7 @@ test("one-tap manual XY changes save without fake physical confirmations and wil
   assert.match(safeQueue, /physical_change_confirmed = false/);
   assert.match(operatorStop, /queueOnOffline: true/);
   assert.match(operatorStop, /Change queued in Snacky/);
-  assert.match(operatorStop, /Saved — updating XY automatically/);
+  assert.match(operatorStop, /PENDING — not verified on machine/);
   assert.doesNotMatch(operatorStop, /xyQueuePhysicalConfirmed/);
   assert.doesNotMatch(operatorStop, /xyQueueLaneDisabled/);
 });
