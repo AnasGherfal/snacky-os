@@ -5,6 +5,8 @@ import { getCurrentProfile } from "@/lib/auth";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { getServerI18n } from "@/lib/i18n/server";
+import { MachineIssueClaimButton } from "@/components/operator/MachineIssueClaimButton";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -23,6 +25,9 @@ function formatDateTime(value: string | null) {
 export default async function OperatorIssuesPage() {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
+  const { locale } = await getServerI18n();
+  const ar = locale === "ar";
+  const tr = (en: string, arabic: string) => ar ? arabic : en;
 
   const supabase = getSupabaseAdminClient();
   let query = supabase
@@ -47,19 +52,76 @@ export default async function OperatorIssuesPage() {
         .order("created_at", { ascending: true })
     : { data: [] };
 
+  const { data: availableTasks, error: availableError } = supabase && isOperatorRole(profile)
+    ? await supabase.from("crm_tasks")
+        .select("id,title,priority,status,dispatch_state,created_at,issue:issues!inner(id,issue_type,status,description,created_at,machine:machines(id,name,machine_code,location:locations(id,name,distance_from_storage_km)))")
+        .eq("task_type", "field_action")
+        .eq("dispatch_state", "available")
+        .eq("issue.issue_type", "machine_unavailable")
+        .eq("status", "open")
+        .is("assigned_to", null)
+        .eq("is_practice", false)
+        .is("archived_at", null)
+        .order("created_at", { ascending: false })
+        .limit(60)
+    : { data: [], error: null };
+  if (availableError) console.error("[operator-issues] Could not load shared machine issue queue", { code: availableError.code });
+  const availableMachineTasks = (availableTasks ?? []).filter((task: any) =>
+    !["resolved", "closed"].includes(String(task.issue?.status ?? ""))
+  );
+
   return (
     <>
       <PageHeader
         title="Machine issues"
-        subtitle="Field work assigned to you by Customer Relations, plus machine issues you reported."
+        subtitle={tr("Claim available machine incidents or finish work already assigned to you.", "استلم بلاغات أعطال الماكينات المتاحة أو أكمل العمل المسند إليك.")}
         action={<SecondaryButton href="/operator/routes">Back to my routes</SecondaryButton>}
       />
 
-      <section className="mb-6 space-y-3">
+      {isOperatorRole(profile) ? (
+        <section className="mb-6 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4" dir={ar ? "rtl" : "ltr"}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-bold text-amber-950">{tr("Available machine issues", "أعطال الماكينات المتاحة")}</h2>
+            <span className="rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-amber-950">{availableMachineTasks.length}</span>
+          </div>
+          <p className="text-sm text-amber-900">{tr(
+            "All active operators can see these issues. The first operator to claim takes responsibility for the visit. If you fix it, record your diagnosis and a field photo to close the machine-only report. Customer complaints remain with Customer Relations.",
+            "البلاغات ظاهرة لكل المشغّلين النشطين. أول مشغّل يستلم البلاغ يصبح مسؤولاً عن الزيارة. إذا أصلحت العطل، سجّل التشخيص وأرفق صورة ميدانية لإغلاق بلاغ الماكينة. مشاكل العملاء تبقى لدى علاقات العملاء.",
+          )}</p>
+          {availableError ? (
+            <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-900">{tr("Could not load available machine issues. Refresh this page.", "تعذر تحميل بلاغات الماكينات. حدّث الصفحة.")}</p>
+          ) : !availableMachineTasks.length ? (
+            <p className="rounded-lg bg-white p-3 text-sm text-slate-600">{tr("No unclaimed machine issues at the moment.", "لا توجد بلاغات ماكينة بانتظار الاستلام حالياً.")}</p>
+          ) : (
+            <div className="space-y-3">
+              {availableMachineTasks.map((task: any) => (
+                <article key={task.id} className="rounded-xl border border-amber-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center gap-2"><StatusBadge status={task.priority} />
+                    <span className="text-xs text-slate-500">{formatDateTime(task.created_at)}</span>
+                  </div>
+                  <h3 className="mt-2 font-semibold text-slate-950">
+                    {task.issue?.machine?.name ?? tr("Machine incident", "بلاغ ماكينة")}
+                    {task.issue?.machine?.machine_code ? ` · ${task.issue.machine.machine_code}` : ""}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">{task.issue?.machine?.location?.name ?? ""}
+                    {task.issue?.machine?.location?.distance_from_storage_km != null
+                      ? ` · ${Number(task.issue.machine.location.distance_from_storage_km).toFixed(1)} km ${tr("from storage (one way)", "من المخزن (اتجاه واحد)")}` : ""}
+                  </p>
+                  <p className="my-3 whitespace-pre-wrap text-sm text-slate-800">{task.issue?.description ?? task.title}</p>
+                  <MachineIssueClaimButton taskId={task.id} userId={profile.id} />
+                </article>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-amber-900">{tr("Phone push alerts require notifications enabled on the operator's device in Account. In-app issues appear regardless.", "إشعارات الهاتف تحتاج تفعيلها من حساب المشغّل. البلاغات داخل سناكي تظهر حتى بدون إشعارات الهاتف.")}</p>
+        </section>
+      ) : null}
+
+      <section className="mb-6 space-y-3" dir={ar ? "rtl" : "ltr"}>
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">My assigned field work</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{tr("My field work", "مهامي الميدانية")}</h2>
           <p className="text-sm text-slate-500">
-            Customer Relations owns the customer complaint. Open only the field actions assigned to you and report what you found at the machine.
+            {tr("Open a claimed issue, record the diagnosis and field photos, then select Fixed or a maintenance outcome. Customer complaints are followed up by Customer Relations.", "افتح البلاغ الذي استلمته، وسجّل التشخيص والصور، ثم حدّد تم الإصلاح أو احتياج الصيانة. علاقات العملاء تتابع مشاكل العملاء.")}
           </p>
         </div>
         {!myTasks?.length ? (
