@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 
 type Product = { id: string; name: string; sku: string | null; barcode: string | null; unit_price_lyd: number | null; machine_qty: number; bag_qty: number };
 type Sale = { id: string; product_name: string; quantity: number; unit_price_lyd: number; total_lyd: number; stock_source: string; deposited_at: string; status: string; stock_posted: boolean };
-type Workspace = { ok: boolean; task_id: string; machine_name: string; machine_id: string; can_sell: boolean; products: Product[]; sales: Sale[] };
-type Command = { request_id: string; task_id: string; product_id: string; quantity: number; unit_price_lyd: number; stock_source: "machine" | "operator_bag"; notes: string; cash_in_machine: true; new_unrecorded_payment: true };
+type BagRoute = { id: string; date: string; status: string };
+type Workspace = { ok: boolean; task_id: string; machine_name: string; machine_id: string; can_sell: boolean; products: Product[]; sales: Sale[]; bag_routes?: BagRoute[] };
+type Command = { request_id: string; task_id: string; product_id: string; quantity: number; unit_price_lyd: number; stock_source: "machine" | "operator_bag"; stock_route_id?: string; notes: string; cash_in_machine: true; new_unrecorded_payment: true };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const money = (n: number) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })} LYD`;
 
@@ -20,6 +21,7 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
   const [search, setSearch] = useState("");
   const [productId, setProductId] = useState("");
   const [source, setSource] = useState<"machine" | "operator_bag">("machine");
+  const [bagRouteId, setBagRouteId] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
   const [cashConfirmed, setCashConfirmed] = useState(false);
@@ -61,6 +63,7 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
             || saved.cash_in_machine !== true || saved.new_unrecorded_payment !== true) throw new Error("Invalid saved sale");
           setPending(saved); setExpanded(true); setProductId(saved.product_id);
           setQuantity(saved.quantity); setSource(saved.stock_source); setNotes(saved.notes);
+          setBagRouteId(saved.stock_route_id ?? "");
           setCashConfirmed(true); setNewPayment(true);
         }
       } catch {
@@ -76,6 +79,7 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
   const unitPrice = pending?.unit_price_lyd ?? Number(product?.unit_price_lyd ?? 0);
   const total = Math.round(quantity * unitPrice * 100) / 100;
   const available = source === "machine" ? Number(product?.machine_qty ?? 0) : Number(product?.bag_qty ?? 0);
+  const bagRouteReady = source !== "operator_bag" || (data?.bag_routes ?? []).some((r) => r.id === bagRouteId);
   const matches = (data?.products ?? []).filter((p) =>
     [p.name, p.sku, p.barcode].join(" ").toLowerCase().includes(search.trim().toLowerCase())
   ).slice(0, 30);
@@ -86,11 +90,12 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
   async function save() {
     if (lock.current || blocked || !ready) return;
     if (!pending && (!data?.can_sell || !product || !Number.isInteger(quantity) || quantity < 1
-      || quantity > available || unitPrice <= 0 || !cashConfirmed || !newPayment)) return;
+      || quantity > available || unitPrice <= 0 || !cashConfirmed || !newPayment || !bagRouteReady)) return;
     lock.current = true; setBusy(true); setMessage("");
     const command: Command = pending ?? {
       request_id: crypto.randomUUID(), task_id: taskId, product_id: productId,
       quantity, unit_price_lyd: unitPrice, stock_source: source, notes: notes.trim(),
+      ...(source === "operator_bag" ? { stock_route_id: bagRouteId } : {}),
       cash_in_machine: true, new_unrecorded_payment: true,
     };
     try {
@@ -147,6 +152,13 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
             <option value="operator_bag">{tr("My recorded operator bag", "البضاعة المسجّلة في عهدتي")}</option>
           </select>
         </label>
+        {source === "operator_bag" ? <label className="block text-sm font-medium">{tr("Which route's stock?", "البضاعة من أي جولة؟")}
+          <select className="field-input mt-1 min-h-12 w-full" disabled={locked} value={bagRouteId} onChange={(e) => { setBagRouteId(e.target.value); setCashConfirmed(false); }}>
+            <option value="">{tr("Choose the bag route", "اختر جولة البضاعة")}</option>
+            {(data?.bag_routes ?? []).map((r) => <option key={r.id} value={r.id}>{r.date} · {r.id.slice(0, 8)}</option>)}
+          </select>
+          <span className="mt-1 block text-xs text-slate-500">{tr("Only stock recorded for that route can be used. Cash still stays in this machine.", "يُخصم من البضاعة المسجّلة لتلك الجولة فقط. النقد يبقى داخل نفس الماكينة.")}</span>
+        </label> : null}
         <label className="block text-sm font-medium">{tr("Find product", "البحث عن المنتج")}
           <input type="search" className="field-input mt-1 min-h-12 w-full" disabled={locked} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr("Name, SKU or barcode", "اسم المنتج أو رمزه أو الباركود")} />
         </label>
@@ -168,7 +180,7 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
         <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" className="mt-1 size-5 shrink-0" disabled={locked} checked={newPayment} onChange={(e) => setNewPayment(e.target.checked)} /><span>{tr("This is a new cash payment, not already recorded in XY or paid earlier.", "هذا مبلغ نقدي جديد، غير مسجّل في XY ولم يُدفع مسبقاً.")}</span></label>
         <label className="flex items-start gap-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold"><input type="checkbox" className="mt-1 size-5 shrink-0" disabled={locked} checked={cashConfirmed} onChange={(e) => setCashConfirmed(e.target.checked)} /><span>{tr(`I left the full ${money(total)} in this machine's cashbox.`, `تركت كامل مبلغ ${money(total)} في صندوق نقود نفس الماكينة.`)}</span></label>
         <label className="block text-sm">{tr("Note (optional)", "ملاحظة (اختياري)")}<textarea className="field-input mt-1 w-full" rows={2} maxLength={2000} disabled={locked} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
-        <button type="button" className="btn-primary min-h-12 w-full" onClick={() => void save()} disabled={busy || blocked || !ready || (!pending && (!product || quantity < 1 || quantity > available || !Number.isInteger(quantity) || unitPrice <= 0 || !cashConfirmed || !newPayment || Boolean(loadError)))}>
+        <button type="button" className="btn-primary min-h-12 w-full" onClick={() => void save()} disabled={busy || blocked || !ready || (!pending && (!product || quantity < 1 || quantity > available || !Number.isInteger(quantity) || unitPrice <= 0 || !cashConfirmed || !newPayment || !bagRouteReady || Boolean(loadError)))}>
           {busy ? tr("Saving…", "جارٍ الحفظ…") : pending ? tr("Retry saved sale", "إعادة محاولة البيع المحفوظ") : tr("Record sale — cash left in machine", "تسجيل البيع — النقد داخل الماكينة")}
         </button>
       </div> : null}
