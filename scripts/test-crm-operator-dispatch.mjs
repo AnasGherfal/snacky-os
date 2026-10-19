@@ -16,6 +16,11 @@ const crm=read('src/lib/crm-workspace.ts');
 const notices=read('supabase/migrations/20260919220000_assignment_notifications.sql');
 const reliability=read('supabase/migrations/20261002104000_operations_reliability_v1.sql');
 const crmOwnedAssignment=read('supabase/migrations/20261002214500_crm_owned_operator_issue_assignment.sql');
+const machineQueue=read('supabase/migrations/20261019091500_machine_incident_shared_operator_claim.sql');
+const machineClaimApi=read('src/app/api/operator/issues/claim/route.ts');
+const machineClaimButton=read('src/components/operator/MachineIssueClaimButton.tsx');
+const machineReportRepair=read('supabase/migrations/20261019090000_fix_machine_report_catalog_expressions.sql');
+const operatorLayout=read('src/app/operator/layout.tsx');
 const fieldQueueForm=read('src/components/CrmIssueFieldQueue.tsx');
 const fieldQueueApi=read('src/app/api/crm/field-queue/route.ts');
 const crmCommandApi=read('src/app/api/crm/command/route.ts');
@@ -148,27 +153,54 @@ test('CRM assigns field work to one named active operator',()=>{
  assert.match(workspace,/operators=\{\(context\.directory/);
 });
 
-test('quick CRM machine report records the issue without broadcasting operator work',()=>{
- assert.match(crmOwnedAssignment,/create or replace function public\.snacky_report_machine_issue_v1/i);
- assert.match(crmOwnedAssignment,/'operator_notified',false/);
- assert.match(crmOwnedAssignment,/'needs_field_assignment',not v_has_field_work/);
- const quickReportSection=crmOwnedAssignment.slice(crmOwnedAssignment.indexOf('create or replace function public.snacky_report_machine_issue_v1'));
- assert.doesNotMatch(quickReportSection,/snacky_issue_field_queue_command_v1\('create'/);
+test('machine-only issue saves, creates shared field work and notifies all active operators',()=>{
+ assert.match(machineReportRepair,/pg_catalog\.coalesce/);
+ assert.match(machineReportRepair,/pg_catalog\.nullif/);
+ assert.match(machineQueue,/create or replace function public\.snacky_report_machine_issue_v1/i);
+ assert.match(machineQueue,/insert into public\.crm_tasks/);
+ assert.match(machineQueue,/dispatch_state/);
+ assert.match(machineQueue,/\'available\'/);
+ assert.match(machineQueue,/snacky_notice_private\.emit/);
+ assert.match(machineQueue,/\'operator_alerts_queued\',v_alert_count/);
+ assert.match(machineQueue,/crm_command_receipts/);
  assert.match(forms,/Record machine issue/);
- assert.doesNotMatch(forms,/Report & notify operators/);
- assert.match(crmCommandApi,/Machine issue recorded\. Assign an operator from the issue if a field visit is needed\./);
- assert.doesNotMatch(crmCommandApi,/Machine issue sent to operators\./);
+ assert.match(crmCommandApi,/Active operators can now see and claim the field task/);
+ assert.match(crmCommandApi,/revalidatePath\(path,'layout'\)/);
+ assert.match(workspace,/machineReport\?tr\('Report the fault/);
 });
 
-test('operators cannot claim or release customer issue work from the shared queue',()=>{
- assert.doesNotMatch(operatorIssues,/Operator workload/);
- assert.doesNotMatch(operatorIssues,/Available machine issues/);
- assert.doesNotMatch(operatorIssues,/Claim issue/);
- assert.doesNotMatch(operatorIssues,/Release back to queue/);
- assert.match(operatorIssues,/My assigned field work/);
- assert.ok(fieldQueueApi.includes("hasAnyRole(profile,['owner','admin','supervisor','crm'])"));
+test('machine-only claims are atomic and do not grant operators control of CRM customer issues',()=>{
+ assert.match(machineQueue,/create or replace function public\.snacky_claim_machine_issue_v1/i);
+ assert.match(machineQueue,/for update;/i);
+ assert.match(machineQueue,/Another operator already claimed/);
+ assert.match(machineQueue,/machine\.issue\.claim/);
+ assert.match(machineQueue,/r\.action='machine\.report'/);
+ assert.match(machineQueue,/crm_dispatch_task_id/);
+ assert.match(machineQueue,/dispatch_state='accepted'/);
+ assert.match(machineQueue,/event_kind='available'/);
+ assert.match(machineClaimApi,/crmDispatchSameOrigin/);
+ assert.match(machineClaimApi,/snacky_claim_machine_issue_v1/);
+ assert.match(machineClaimApi,/retryable/);
+ assert.match(machineClaimButton,/sessionStorage/);
+ assert.match(machineClaimButton,/Retry saved claim/);
+ assert.match(operatorIssues,/Available machine issues/);
+ assert.match(operatorIssues,/MachineIssueClaimButton/);
+ assert.match(operatorLayout,/Machine issues ready to claim/);
  assert.match(fieldQueueApi,/Only CRM field assignment is supported/);
  assert.match(crmOwnedAssignment,/p_action<>'create'/);
+});
+
+test('fixed machine-only issue closes with recorded diagnosis and proof, customer complaints remain CRM-owned',()=>{
+ assert.match(machineQueue,/v_action='fix'/);
+ assert.match(machineQueue,/v_issue\.issue_type='machine_unavailable'/);
+ assert.match(machineQueue,/receipt\.action='machine\.report'/);
+ assert.match(machineQueue,/set status='resolved'/);
+ assert.match(machineQueue,/resolution=v_note/);
+ assert.match(machineQueue,/v_issue\.customer_phone/);
+ assert.match(machineQueue,/v_issue\.customer_whatsapp/);
+ assert.match(panel,/Start work now/);
+ assert.match(panel,/customer complaints still require Customer Relations/);
+ assert.match(migration,/Upload at least one field photo before marking the task fixed/);
 });
 
 test('operator visit can finish as repair technician part or offline without closing customer complaint',()=>{
