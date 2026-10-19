@@ -33,8 +33,8 @@ export async function POST(request:Request){
    }
    const issueId=String(data?.id??'');
    if(!data||data.ok!==true||!uuidPattern.test(issueId))return NextResponse.json({ok:false,message:'Could not confirm the machine report. Retry the same saved request.'},{status:503});
-   for(const path of ['/my-work','/issues','/follow-ups'])revalidatePath(path,'layout');
-   return NextResponse.json({ok:true,commandId:command.id,id:issueId,kind:'issue',href:crmHref('issue',issueId),message:'Machine issue recorded. Assign an operator from the issue if a field visit is needed.'});
+   for(const path of ['/my-work','/issues','/follow-ups','/operator/issues','/operator'])revalidatePath(path,'layout');
+   return NextResponse.json({ok:true,commandId:command.id,id:issueId,kind:'issue',href:crmHref('issue',issueId),message:'Machine issue recorded. Active operators can now see and claim the field task.',taskId:String(data.task_id??''),operatorAlertsQueued:Number(data.operator_alerts_queued??0)});
   }catch(error){
    console.error('[crm] Machine report result uncertain',error);
    return NextResponse.json({ok:false,message:'Could not confirm the machine report. Retry this same saved request.'},{status:503});
