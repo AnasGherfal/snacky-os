@@ -14,6 +14,7 @@ import {CrmLocationPaymentScheduleForm} from '@/components/CrmLocationPaymentSch
 import {CrmObligationAdminForm} from '@/components/CrmObligationAdminForm';
 import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';
 import {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
+import {crmIssueAssignee,type IssueAssignmentSummary} from '@/lib/crm-issue-assignee';
 import { crmContactLink,crmHref,crmNames,crmPaths,crmStatus,crmIssueOperationalStatus,crmOptionRows,issueStatuses,leadStatuses,taskStatuses,issueCategories,locationTypes,type CrmKind,type CrmSection } from '@/lib/crm-workspace';
 
 export type CrmSearchParams=Record<string,string|string[]|undefined>;
@@ -57,7 +58,7 @@ function RecordRows({rows,ar,staff}:{rows:any[];ar:boolean;staff:boolean}){
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  return <div className="space-y-3">{rows.map(row=><article className={`rounded-xl border bg-white p-4 ${row.overdue?'border-rose-200':'border-slate-200'}`} key={`${row.kind}:${row.id}`}>
   <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-500">{crmNames[row.kind as CrmSection]?.[ar?1:0]??row.kind}{row.is_practice?` · ${tr('PRACTICE','تدريب')}`:''}{row.data?.is_historical?` · ${tr('HISTORICAL','تاريخي')}`:''}</p><Link href={crmHref(row.kind,row.id)} className="mt-1 block break-words font-semibold text-slate-950 hover:underline">{row.title}</Link><p className="mt-1 text-sm text-slate-600">{row.location_name??row.machine_name??''}</p></div><Badge status={row.operational_status??row.status} ar={ar} overdue={row.overdue}/></div>
-  <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3"><div><span className="text-xs text-slate-500">{tr('Next action','الخطوة القادمة')}</span><p>{row.data?.is_historical?tr('Historical record — no current action','سجل تاريخي — لا يتطلب إجراء حالياً'):(row.next_action||tr('Not scheduled','لم تُحدد'))}</p></div><div><span className="text-xs text-slate-500">{tr('Due','الموعد')}</span><p dir="ltr" className="text-start">{row.due_date??'—'} {row.due_time?.slice(0,5)??''}</p></div><div><span className="text-xs text-slate-500">{tr('Assigned to','المسؤول')}</span><p>{row.assigned_name??tr('Unassigned','غير معيّن')}</p></div></div>
+  <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3"><div><span className="text-xs text-slate-500">{tr('Next action','الخطوة القادمة')}</span><p>{row.data?.is_historical?tr('Historical record — no current action','سجل تاريخي — لا يتطلب إجراء حالياً'):(row.next_action||tr('Not scheduled','لم تُحدد'))}</p></div><div><span className="text-xs text-slate-500">{tr('Due','الموعد')}</span><p dir="ltr" className="text-start">{row.due_date??'—'} {row.due_time?.slice(0,5)??''}</p></div><div><span className="text-xs text-slate-500">{row.issue_assignee?.label??tr('Assigned to','المسؤول')}</span><p>{row.issue_assignee?.name??row.assigned_name??tr('Unassigned','غير معيّن')}</p></div></div>
   {row.kind==='obligation'?<div className="mt-3 text-sm"><p className="font-semibold">{money(row.data.amount_lyd)} · {tr('Rent period','فترة الإيجار')}: {rentPeriodLabel(row.data,ar)}</p><p className="mt-1 text-xs text-slate-600">{row.data?.is_historical?tr('Historical paid record — no Finance action','سجل دفع تاريخي — لا يتطلب إجراءً مالياً'):row.data.finance_verified_at?tr('Finance verified','تم التحقق المالي'):row.status==='paid'?tr('Payment reported — Finance not verified','الدفع مسجّل — بانتظار التحقق المالي'):tr('Administrative follow-up','متابعة إدارية')}</p></div>:null}
   {staff&&['lead','issue','contact'].includes(row.kind)?<div className="mt-3"><ContactButtons row={row} ar={ar}/></div>:null}
  </article>)}</div>;
@@ -102,12 +103,21 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   else console.error('[crm-workspace] Customer support panel unavailable',{error:supportResult.error});
  }
  const row=context.record,d=row?.data??{},kind=section as CrmKind;
- const issueIds=section==='issue'?(context.rows??[]).map((r:any)=>String(r.id??'')).filter(Boolean):[];
- const issueFieldState=new Map<string,string>();
- if(issueIds.length&&db){
-  const fieldStateResult=await db.from('crm_tasks').select('issue_id,dispatch_state,created_at').in('issue_id',issueIds).eq('task_type','field_action').is('archived_at',null).order('created_at',{ascending:false});
-  if(!fieldStateResult.error)for(const task of fieldStateResult.data??[]){const key=String(task.issue_id??'');if(key&&!issueFieldState.has(key)&&task.dispatch_state)issueFieldState.set(key,String(task.dispatch_state));}
+ const issueIds=[...new Set<string>([
+ ...(context.rows??[]).filter((r:any)=>r.kind==='issue').map((r:any)=>String(r.id)),
+ ...(section==='issue'&&row?[String(row.id)]:[]),
+])];
+const issueFieldState=new Map<string,string>();
+const issueAssignments=new Map<string,IssueAssignmentSummary>();
+if(issueIds.length&&db){
+ // Read the real field assignment, never infer it from the reporter/CRM owner.
+ const assignmentResult=await db.rpc('snacky_issue_assignment_summary_v1',{p_issue_ids:issueIds});
+ if(assignmentResult.error)console.error('[crm-workspace] Issue assignment unavailable',{code:assignmentResult.error.code});
+ else for(const task of (assignmentResult.data??[]) as IssueAssignmentSummary[]){
+  issueAssignments.set(task.issue_id,task);
+  if(task.dispatch_state)issueFieldState.set(task.issue_id,task.dispatch_state);
  }
+}
  let repeatIssueCount=0;
  let repeatIssueRows:any[]=[];
  const issueMachineId=d.machine_id??row?.machine_id;
@@ -118,8 +128,14 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   else console.error('[crm-workspace] Repeat issue history unavailable',{issue_id:row.id,error:repeatResult.error});
  }
  const crmMemberIds=new Set((context.directory??[]).filter((p:any)=>p.role==='crm').map((p:any)=>String(p.id)));
- const rows=(context.rows??[]).map((r:any)=>({...r,assigned_name:crmTeamView&&crmMemberIds.has(String(r.assigned_to))?tr('CRM team','فريق علاقات العملاء'):(r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name),operational_status:r.kind==='issue'?crmIssueOperationalStatus(r.status,issueFieldState.get(String(r.id))):r.status}));
+ const rows=(context.rows??[]).map((r:any)=>{
+ const ownerName=crmTeamView&&crmMemberIds.has(String(r.assigned_to))?tr('CRM team','فريق علاقات العملاء'):(r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name);
+ return {...r,assigned_name:ownerName,
+  issue_assignee:r.kind==='issue'?crmIssueAssignee(r,issueAssignments.get(String(r.id)),ar,ownerName):null,
+  operational_status:r.kind==='issue'?crmIssueOperationalStatus(r.status,issueFieldState.get(String(r.id))):r.status};
+});
  const name=(member:any)=>context.directory.find((p:any)=>p.id===member)?.name??(ar?'غير مسجّل':'Not recorded');
+ const issueAssignee=section==='issue'&&row?crmIssueAssignee(row,issueAssignments.get(String(row.id)),ar,name(row.assigned_to)):null;
  const machineReport=create&&section==='issue'&&scalar(searchParams,'dispatch')==='operator';
  const title=machineReport?tr('Machine not working','عطل ماكينة'):create&&section==='issue'?tr('Quick customer issue','بلاغ عميل سريع'):create?`${tr('Add','إضافة')} ${crmNames[section][ar?1:0]}`:row?.title??(section==='work'?`${tr('Hello','أهلاً')}, ${profile.full_name.split(' ')[0]}`:crmNames[section][ar?1:0]);
  const listHref=crmPaths[section];
@@ -167,14 +183,14 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
     <div className="flex items-end gap-2"><button className="btn-primary">{tr('Apply','تطبيق')}</button><Link className="btn-secondary" href={listHref}>{tr('Reset','إعادة ضبط')}</Link></div>
    </form>
    {section==='management'?<section className="surface-card"><h2 className="font-semibold">{tr('Team activity — last 30 days','نشاط الفريق — آخر 30 يوماً')}</h2><p className="mt-2 text-xs text-slate-500">{tr('Activity since this connected workflow was introduced; practice records are excluded. Handled and overdue counts show the current position.','النشاط المسجّل منذ بدء العمل المترابط؛ تُستبعد سجلات التدريب. أعداد المسؤوليات والمتأخرات تمثل الوضع الحالي.')}</p><div className="mt-4 grid gap-3 lg:grid-cols-2">{context.performance?.map((p:any)=><div key={p.id} className="rounded-xl border p-4"><strong>{p.name}</strong><dl className="mt-3 grid grid-cols-2 gap-2 text-sm">{[['issues_handled','Current issues','المشاكل المسندة'],['issues_resolved','Resolved','تم حلها'],['average_resolution_hours','Average hours to resolve','متوسط ساعات الحل'],['leads_contacted','Leads contacted','جهات تم التواصل معها'],['proposals_sent','Proposals sent','العروض المرسلة'],['accepted','Accepted locations','الجهات المقبولة'],['tasks_completed','Tasks completed','المتابعات المكتملة'],['overdue_followups','Overdue follow-ups','المتابعات المتأخرة']].map(([key,en,arabic])=><div key={key}><dt className="text-xs text-slate-500">{tr(en,arabic)}</dt><dd className="font-semibold">{p[key]??'—'}</dd></div>)}</dl></div>)}</div></section>:null}
-   <div className="flex justify-between text-sm text-slate-600"><h2 className="font-semibold">{section==='work'?(crmTeamView?tr('CRM team work queue','قائمة عمل فريق علاقات العملاء'):tr('Your work queue','قائمة عملك')):crmNames[section][ar?1:0]}</h2><span>{context.total} {tr('records','سجل')}</span></div>
+   <div className="flex justify-between text-sm text-slate-600"><h2 className="font-semibold">{section==='work'?(crmTeamView?tr('CRM team work queue','قائمة عمل فريق علاقات العملاء'):tr('Your work queue','قائمة عملك')):crmNames[section][ar?1:0]}</h2><span>{context.total} {tr('records','سجل')}{section==='issue'?` · ${tr('Newest first','الأحدث أولاً')}`:''}</span></div>
    {rows.length?<RecordRows rows={rows} ar={ar} staff={context.staff}/>:<EmptyState title={tr('No matching records','لا توجد سجلات مطابقة')} body={tr('No records match these filters. Resolved and completed records remain available through the status and date filters.','لا توجد سجلات بهذه المرشحات. تبقى السجلات المحلولة والمكتملة متاحة من مرشحات الحالة والتاريخ.')}/>}
    <div className="flex justify-between gap-2">{context.offset>0?<Link className="btn-secondary" href={`${listHref}?${new URLSearchParams({...filters,offset:String(Math.max(0,context.offset-40))})}`}>{tr('Previous','السابق')}</Link>:<span/>}{context.offset+40<context.total?<Link className="btn-secondary" href={`${listHref}?${new URLSearchParams({...filters,offset:String(context.offset+40)})}`}>{tr('Next','التالي')}</Link>:null}</div>
    <p className="text-xs text-slate-500">{tr('Refreshes while this page is open. No messages or payments are sent automatically.','تتحدّث البيانات أثناء فتح الصفحة. لا تُرسل رسائل أو دفعات تلقائياً.')}</p>
   </>:null}
   {row&&!create?<>
    <section className="surface-card space-y-4"><div className="flex flex-wrap items-center gap-2"><Badge status={row.status} ar={ar}/>{row.archived?<span className="text-sm text-amber-900">{tr('Archived — history preserved','مؤرشف — السجل محفوظ')}</span>:null}{row.is_practice?<span className="text-sm text-amber-900">{tr('Practice only','للتدريب فقط')}</span>:null}{d.is_historical?<span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-900">{tr('Historical record','سجل تاريخي')}</span>:null}</div>
-    <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">{[[tr('Assigned to','المسؤول'),name(row.assigned_to)],[tr('Created by','أنشأه'),name(d.created_by_member_id??d.created_by??d.reported_by)],[tr('Created','تاريخ الإنشاء'),formattedDate(row.created_at,ar)],[tr('Last updated','آخر تحديث'),formattedDate(row.updated_at,ar)],[tr('Next action','الخطوة القادمة'),row.next_action??'—'],[tr('Follow-up','المتابعة'),`${row.due_date??'—'} ${row.due_time??''}`]].map(([label,value])=><div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
+    <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">{[[issueAssignee?.label??tr('Assigned to','المسؤول'),issueAssignee?.name??name(row.assigned_to)],[tr('Created by','أنشأه'),name(d.created_by_member_id??d.created_by??d.reported_by)],[tr('Created','تاريخ الإنشاء'),formattedDate(row.created_at,ar)],[tr('Last updated','آخر تحديث'),formattedDate(row.updated_at,ar)],[tr('Next action','الخطوة القادمة'),row.next_action??'—'],[tr('Follow-up','المتابعة'),`${row.due_date??'—'} ${row.due_time??''}`]].map(([label,value])=><div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
     <ContactButtons row={row} ar={ar}/>
     {row.location_id?<p className="text-sm">{tr('Location','الموقع')}: {context.staff?<Link className="text-sky-800 underline" href={crmHref('location',row.location_id)}>{row.location_name??tr('Open location','فتح الموقع')}</Link>:row.location_name}</p>:null}
     {section==='location'?<div className="grid gap-3 text-sm sm:grid-cols-2"><div><strong>{tr('Address','العنوان')}</strong><p>{d.address||tr('Not recorded','غير مسجّل')}</p></div><div><strong>{tr('Main contact','المسؤول في الموقع')}</strong><p>{d.contact_name||tr('Not recorded','غير مسجّل')} · {d.contact_phone??''}</p></div><div><strong>{tr('Relationship owner','مسؤول العلاقة')}</strong><p>{name(d.relationship?.assigned_to)}</p></div><div><strong>{tr('Last contact','آخر تواصل')}</strong><p>{formattedDate(d.relationship?.last_contact_at,ar)}</p></div>{d.rent_amount!==undefined?<div><strong>{tr('Recorded rent','الإيجار المسجّل')}</strong><p>{Number(d.rent_amount)>0?money(d.rent_amount):tr('Not configured','غير مضبوط')}</p><p className="text-xs text-slate-500">{tr('Terms only. Upcoming obligations and actual payments are shown separately.','شروط الاتفاق فقط. تظهر الالتزامات والدفعات الفعلية منفصلة.')}</p></div>:null}<div><strong>{tr('Payment frequency','تكرار الدفع')}</strong><p>{d.relationship?.payment_frequency??tr('Not configured','غير مضبوط')}</p></div><div><strong>{tr('Next rent due','موعد الإيجار القادم')}</strong><p>{d.relationship?.payment_recurring?(d.relationship?.next_payment_due_date??tr('Not configured','غير مضبوط')):tr('Recurring rent not enabled','الإيجار الدوري غير مفعّل')}</p></div><div><strong>{tr('Recurring rent','الإيجار الدوري')}</strong><p>{d.relationship?.payment_recurring?tr('Enabled','مفعّل'):tr('Not enabled','غير مفعّل')}</p></div>{d.relationship?.notes?<p className="whitespace-pre-wrap sm:col-span-2">{d.relationship.notes}</p>:null}</div>:null}

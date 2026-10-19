@@ -7,7 +7,7 @@ export function CrmRecordForm({kind,row,context,userId,ar,machineReport=false}:{
  const tr=(en:string,arabic:string)=>ar?arabic:en,d=row?.data??{},relation=d.relationship??{};
  const f=(name:string,en:string,arabic:string,extra:Partial<CrmField>={}):CrmField=>({name,label:tr(en,arabic),value:String(d[name]??''),...extra});
  const people=(field=false)=>context.directory.filter(p=>field||p.role!=='operator').map(p=>({value:p.id,label:p.name}));
- const assignee=f('assigned_to','Responsible employee','الموظف المسؤول',{type:'select',value:row?.assigned_to??context.me,options:people(kind==='task'),required:true});
+ const assignee=f('assigned_to',kind==='issue'?'CRM owner (not repair operator)':'Responsible employee',kind==='issue'?'مسؤول علاقات العملاء (وليس مشغّل الإصلاح)':'الموظف المسؤول',{type:'select',value:row?.assigned_to??context.me,options:people(kind==='task'),required:true});
  const next=[f('next_action','Next action','الخطوة القادمة'),f('next_action_date','Next follow-up date','تاريخ المتابعة القادمة',{type:'date'}),f('next_action_time','Time (optional)','الوقت (اختياري)',{type:'time',advanced:true})];
  const locationOptions=[{value:'',label:tr('Choose location','اختر الموقع')},...(context.options.locations??[]).map((x:any)=>({value:x.id,label:x.name}))];
  let fields:CrmField[]=[];
