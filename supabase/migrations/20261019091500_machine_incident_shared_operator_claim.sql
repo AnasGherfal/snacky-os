@@ -24,7 +24,6 @@ declare
   v_task public.crm_tasks%rowtype;
   v_operator record;
   v_alert_count integer:=0;
-  v_created_task boolean:=false;
 begin
   if v_actor is null or not public.snacky_current_profile_has_any_role(array['owner','admin','supervisor','crm']) then
     raise exception 'Customer relations access required.' using errcode='42501';
@@ -124,7 +123,6 @@ begin
       'open','available',v_me,v_me,false
     )
     returning * into v_task;
-    v_created_task:=true;
 
     update public.issues
     set is_waiting=true,
@@ -262,8 +260,18 @@ begin
       set assigned_to=v_member,updated_by=v_member,updated_at=v_now
       where id=v_task.id
       returning * into v_task;
+    -- Claiming means accepting responsibility. The field work can start
+    -- directly on arrival without a redundant second Accept tap.
+    perform pg_catalog.set_config('snacky.crm_dispatch_task_id',v_task.id::text,true);
+    update public.crm_tasks
+      set dispatch_state='accepted',acknowledged_at=coalesce(acknowledged_at,v_now),
+          status='in_progress',updated_by=v_member,updated_at=v_now
+      where id=v_task.id
+      returning * into v_task;
+    perform pg_catalog.set_config('snacky.crm_dispatch_task_id','',true);
+
     update public.issues
-      set status='assigned',is_waiting=true,waiting_on='operator',
+      set status='in_progress',is_waiting=true,waiting_on='operator',
           next_action='Operator claimed machine-failure report',
           next_action_date=(v_now at time zone 'Africa/Tripoli')::date,
           updated_at=v_now,updated_by=v_member
