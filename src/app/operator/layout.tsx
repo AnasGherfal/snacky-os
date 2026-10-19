@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { type ReactNode } from 'react';
 import { getCurrentProfile, getAuthenticatedSupabaseServerClient } from '@/lib/auth';
 import { canExecuteRoutes, isOperatorRole, isOwnerAdminRole } from '@/lib/authz';
-import { getSupabaseAdminClient } from '@/lib/supabase-server';
 import { getServerI18n } from '@/lib/i18n/server';
 import { OperatorHomeShortcuts } from '@/components/operator/OperatorHomeShortcuts';
 
@@ -19,14 +18,12 @@ export default async function OperatorLayout({ children }: { children: ReactNode
     .eq('assigned_to', profile.team_member_id).eq('task_type', 'field_action')
     .neq('status', 'completed').eq('is_practice', false).is('archived_at', null) : null;
   const count = result && !result.error ? result.count : null;
-  const admin = isOperatorRole(profile) ? getSupabaseAdminClient() : null;
-  const sharedResult = admin ? await admin.from('crm_tasks')
-    .select('id,issue:issues!inner(id,issue_type)', { count: 'exact', head: true })
-    .eq('task_type','field_action').eq('dispatch_state','available')
-    .eq('issue.issue_type','machine_unavailable')
-    .eq('status','open').is('assigned_to',null).is('archived_at',null)
-    .eq('is_practice',false) : null;
-  const availableCount = sharedResult && !sharedResult.error ? sharedResult.count : null;
+  // The RPC needs the signed-in operator JWT. A service-role client would
+  // have no auth.uid() and incorrectly return an empty shared queue.
+  const sharedResult = db && isOperatorRole(profile)
+    ? await db.rpc('snacky_available_machine_issues_v1') : null;
+  const availableCount = sharedResult && !sharedResult.error && Array.isArray(sharedResult.data)
+    ? sharedResult.data.length : null;
   return <>
     <OperatorHomeShortcuts>
     {isOperatorRole(profile) ? (
