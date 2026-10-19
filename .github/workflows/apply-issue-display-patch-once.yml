@@ -1,0 +1,75 @@
+name: Apply reviewed issue display patch once
+on:
+  push:
+    branches: [fix/issue-operator-and-newest-first-20261019]
+    paths: [.github/workflows/apply-issue-display-patch-once.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.ref == 'refs/heads/fix/issue-operator-and-newest-first-20261019'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-operator-and-newest-first-20261019
+      - name: Apply exact reviewed replacements
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p=Path('src/components/CrmWorkspace.tsx')
+          s=p.read_text()
+          raw=p.read_bytes()
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest()=='6427a107d2e373a931972571fb4e05b67ba7cb1c', 'Workspace changed; review before patching'
+          def once(a,b):
+           global s
+           assert s.count(a)==1, f'Expected one patch target: {a[:100]}'
+           s=s.replace(a,b)
+          once("import {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';", "import {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';\nimport {crmIssueAssignee,type IssueAssignmentSummary} from '@/lib/crm-issue-assignee';")
+          start=s.index(" const issueIds=section==='issue'?")
+          end=s.index(' let repeatIssueCount=0;',start)
+          assert 'fieldStateResult' in s[start:end]
+          s=s[:start]+""" const issueIds=[...new Set<string>([
+           ...(context.rows??[]).filter((r:any)=>r.kind==='issue').map((r:any)=>String(r.id)),
+           ...(section==='issue'&&row?[String(row.id)]:[]),
+          ])];
+          const issueFieldState=new Map<string,string>();
+          const issueAssignments=new Map<string,IssueAssignmentSummary>();
+          if(issueIds.length&&db){
+           // Read the real field assignment, never infer it from the reporter/CRM owner.
+           const assignmentResult=await db.rpc('snacky_issue_assignment_summary_v1',{p_issue_ids:issueIds});
+           if(assignmentResult.error)console.error('[crm-workspace] Issue assignment unavailable',{code:assignmentResult.error.code});
+           else for(const task of (assignmentResult.data??[]) as IssueAssignmentSummary[]){
+            issueAssignments.set(task.issue_id,task);
+            if(task.dispatch_state)issueFieldState.set(task.issue_id,task.dispatch_state);
+           }
+          }
+          """+s[end:]
+          once(" const rows=(context.rows??[]).map((r:any)=>({...r,assigned_name:crmTeamView&&crmMemberIds.has(String(r.assigned_to))?tr('CRM team','فريق علاقات العملاء'):(r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name),operational_status:r.kind==='issue'?crmIssueOperationalStatus(r.status,issueFieldState.get(String(r.id))):r.status}));", """ const rows=(context.rows??[]).map((r:any)=>{
+           const ownerName=crmTeamView&&crmMemberIds.has(String(r.assigned_to))?tr('CRM team','فريق علاقات العملاء'):(r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name);
+           return {...r,assigned_name:ownerName,
+            issue_assignee:r.kind==='issue'?crmIssueAssignee(r,issueAssignments.get(String(r.id)),ar,ownerName):null,
+            operational_status:r.kind==='issue'?crmIssueOperationalStatus(r.status,issueFieldState.get(String(r.id))):r.status};
+          });""")
+          once(" const name=(member:any)=>context.directory.find((p:any)=>p.id===member)?.name??(ar?'غير مسجّل':'Not recorded');", " const name=(member:any)=>context.directory.find((p:any)=>p.id===member)?.name??(ar?'غير مسجّل':'Not recorded');\n const issueAssignee=section==='issue'&&row?crmIssueAssignee(row,issueAssignments.get(String(row.id)),ar,name(row.assigned_to)):null;")
+          once("{tr('Assigned to','المسؤول')}</span><p>{row.assigned_name??tr('Unassigned','غير معيّن')}", "{row.issue_assignee?.label??tr('Assigned to','المسؤول')}</span><p>{row.issue_assignee?.name??row.assigned_name??tr('Unassigned','غير معيّن')}")
+          once("[tr('Assigned to','المسؤول'),name(row.assigned_to)]", "[issueAssignee?.label??tr('Assigned to','المسؤول'),issueAssignee?.name??name(row.assigned_to)]")
+          once("<span>{context.total} {tr('records','سجل')}</span>", "<span>{context.total} {tr('records','سجل')}{section==='issue'?` · ${tr('Newest first','الأحدث أولاً')}`:''}</span>")
+          p.write_text(s)
+          p=Path('src/components/CrmRecordForms.tsx')
+          s=p.read_text()
+          a="const assignee=f('assigned_to','Responsible employee','الموظف المسؤول',"
+          b="const assignee=f('assigned_to',kind==='issue'?'CRM owner (not repair operator)':'Responsible employee',kind==='issue'?'مسؤول علاقات العملاء (وليس مشغّل الإصلاح)':'الموظف المسؤول',"
+          assert s.count(a)==1
+          p.write_text(s.replace(a,b))
+          PY
+          git mv supabase/migrations/20261019160000_issue_assignee_and_newest_order.sql supabase/migrations/20261019163000_issue_assignee_and_newest_order.sql
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx supabase/migrations/20261019163000_issue_assignee_and_newest_order.sql
+          git commit -m 'Display the assigned repair operator and label CRM ownership separately'
+          git push origin HEAD:refs/heads/fix/issue-operator-and-newest-first-20261019
