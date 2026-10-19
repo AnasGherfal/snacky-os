@@ -10,6 +10,7 @@ import {
 } from "@/components/CashCustodyForms";
 import { PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
+import { getServerI18n } from "@/lib/i18n/server";
 import {
   canAccessPath,
   canApproveCashVariance,
@@ -78,7 +79,7 @@ const eventLabels: Record<string, string> = {
   removed: "Cash removed and bag sealed",
   stored: "Bag received into storage",
   counted: "Cash total counted",
-  expectation_calculated: "VMS expectation calculated",
+  expectation_calculated: "Cash expectation calculated — VMS plus manual repair cash",
   reconciled: "Combined total reconciled",
   variance_flagged: "Owner review required",
   variance_resolved: "Variance resolved by owner/admin",
@@ -97,6 +98,8 @@ export default async function CashCollectionDetailPage({
   const { id } = await params;
   const messages = await searchParams;
   const profile = await getCurrentProfile();
+  const { locale } = await getServerI18n();
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
   const context = profile ? {
     id: profile.id,
     role: profile.role,
@@ -181,7 +184,7 @@ export default async function CashCollectionDetailPage({
   const [{ data: collection, error: collectionError }, { data: events }, { data: finance }] = await Promise.all([
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, operator_id, collected_at, cash_period_start, cash_period_end, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, removed_amount_lyd, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .select("id, route_id, machine_id, operator_id, collected_at, cash_period_start, cash_period_end, vms_expected_cash, manual_repair_cash_lyd, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, removed_amount_lyd, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, manual_repair_cash_lyd, machine:machines(id, name, machine_code, location:locations(id, name)))")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -209,6 +212,8 @@ export default async function CashCollectionDetailPage({
   const isOwnCollection = row.operator_id === profile.team_member_id;
   const mayReceive = canReceive && (!isOwnCollection || isOwnerOrAdmin);
   const status = String(row.custody_status ?? "removed");
+  const manualRepairCash = Number(row.manual_repair_cash_lyd ?? 0);
+  const xyExpected = row.vms_expected_cash == null ? null : Number(row.vms_expected_cash) - manualRepairCash;
   const hasRecordedMachineAmounts = machines.length > 0 && machines.every((entry) => {
     const amount = entry.removed_amount_lyd;
     return amount !== null && amount !== undefined && Number.isFinite(Number(amount)) && Number(amount) >= 0;
@@ -232,11 +237,12 @@ export default async function CashCollectionDetailPage({
       <SectionCard><CustodyStages status={status} /></SectionCard>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SectionCard><div className="text-sm text-slate-500">Combined VMS cash expected</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.vms_expected_cash)}</div><div className="mt-1 text-xs text-slate-500">{row.expected_source?.replaceAll("_", " ") ?? "Not calculated"}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">{tr("Combined expected cash — XY + manual", "النقد المتوقع — XY والبيع اليدوي")}</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.vms_expected_cash)}</div><div className="mt-1 text-xs text-slate-500">{row.expected_source?.replaceAll("_", " ") ?? "Not calculated"}</div>{row.expected_calculated_at ? <dl className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs"><div className="flex justify-between gap-2"><dt>{tr("XY cash", "نقد XY")}</dt><dd>{money(xyExpected)}</dd></div><div className="flex justify-between gap-2"><dt>{tr("Repair cash left in machines", "نقد الإصلاحات داخل الماكينات")}</dt><dd>{money(manualRepairCash)}</dd></div></dl> : null}</SectionCard>
         <SectionCard><div className="text-sm text-slate-500">Combined physical count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.actual_cash_collected)}</div><div className="mt-1 text-xs text-slate-500">One total, never a made-up machine split</div></SectionCard>
         <SectionCard><div className="text-sm text-slate-500">Missing cash</div><div className={`mt-2 text-2xl font-semibold ${shortage && shortage > 0 ? "text-rose-700" : "text-slate-900"}`}>{money(shortage)}</div><div className="mt-1 text-xs text-slate-500">{variance !== null && variance > 0 ? `Overage ${money(variance)}` : "Expected minus counted"}</div></SectionCard>
         <SectionCard><div className="text-sm text-slate-500">Custody status</div><div className="mt-3"><StatusBadge status={status} label={cashCustodyStatusLabel(status)} /></div><div className="mt-2 text-xs text-slate-500">Reconciliation: {String(row.reconciliation_status ?? "pending").replaceAll("_", " ")}</div></SectionCard>
       </div>
+      {manualRepairCash > 0 ? <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" dir={locale === "ar" ? "rtl" : "ltr"}>{tr("Manual repair-sale cash was already left in these machines. It is included only for these removal intervals when the combined expectation is ready. Collecting this money is not another sale or an operator cash debt.", "نقد البيع اليدوي أثناء الإصلاح متروك مسبقاً داخل هذه الماكينات. يُحتسب لفترات الجمع هذه فقط عند اكتمال حساب المتوقع. جمعه ليس بيعاً جديداً ولا ديناً على المشغّل.")}</p> : null}
 
       <div className="grid gap-6 xl:grid-cols-[1fr_430px]">
         <div className="space-y-6">
@@ -263,9 +269,9 @@ export default async function CashCollectionDetailPage({
 
           <SectionCard>
             <h2 className="text-lg font-semibold">Machines included—diagnostics only</h2>
-            <p className="mt-1 text-sm text-slate-500">Machine intervals establish the VMS source. Snacky OS compares only their combined expected total with the one physical bag count.</p>
+            <p className="mt-1 text-sm text-slate-500">{tr("Machine intervals establish the XY and manual cash sources. Snacky compares only their combined expected total with the one physical bag count.", "تحدد فترات الماكينات نقد XY والبيع اليدوي. يقارن سناكي إجمالي المتوقع فقط مع العد الفعلي للكيس.")}</p>
             <div className="mt-4 space-y-3">
-              {machines.map((entry, index) => <div key={entry.machine_id ?? index} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div><StatusBadge status={entry.expectation_status} /></div><div className="mt-3 text-xs text-slate-600">VMS interval: {formatDate(entry.interval_start_at)} → {formatDate(entry.interval_end_at)} · {entry.vms_sales_count ?? "—"} deduplicated sales</div></div>)}
+              {machines.map((entry, index) => <div key={entry.machine_id ?? index} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div><StatusBadge status={entry.expectation_status} /></div><div className="mt-3 text-xs text-slate-600">VMS interval: {formatDate(entry.interval_start_at)} → {formatDate(entry.interval_end_at)} · {entry.vms_sales_count ?? "—"} deduplicated sales</div>{Number(entry.manual_repair_cash_lyd ?? 0)>0 ? <p className="mt-2 text-xs font-semibold text-emerald-900">{tr("Repair cash in this interval", "نقد الإصلاحات في هذه الفترة")}: {money(entry.manual_repair_cash_lyd)}</p> : null}</div>)}
             </div>
           </SectionCard>
 
@@ -279,14 +285,13 @@ export default async function CashCollectionDetailPage({
               {!events?.length ? <p className="text-sm text-slate-500">No custody events recorded.</p> : null}
             </div>
           </SectionCard>
-
         </div>
 
         <div className="space-y-6">
           {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "You collected this bag. As owner/admin, you can receive it into storage yourself; Snacky OS records that it was a self-receipt." : "A different person verifies the seal, photographs the handoff, and records the exact safe location."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
           {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">{recordedMachineTotal !== null ? "Confirm the stored cash" : "Count the stored bag"}</h2><p className="mt-1 text-sm text-slate-500">{recordedMachineTotal !== null ? "The amount for each machine was already recorded at collection. Review the automatic bag total below and confirm it once." : "This older record has no saved per-machine amounts. Enter the physical bag total once."}</p><CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} recordedMachineTotal={recordedMachineTotal} /></SectionCard> : null}
-          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">Optional follow-up: compare with VMS</h2><p className="mt-1 text-sm text-slate-500">The cash count is already saved and available in Snacky LYD. This comparison is not required now—you can return and complete it later.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">{tr("Optional follow-up: compare with XY + manual cash", "متابعة اختيارية: مقارنة XY والنقد اليدوي")}</h2><p className="mt-1 text-sm text-slate-500">The cash count is already saved and available in Snacky LYD. This comparison is not required now—you can return and complete it later.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {["reconciled", "banked"].includes(status) ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Counted & reconciled</h2><p className="mt-2 text-sm text-slate-600">This cash is already included in the Snacky LYD balance and is available to spend. No extra cash step is required.</p></SectionCard> : null}
           {status === "voided" ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Voided record</h2><p className="mt-2 text-sm text-slate-600">This record remains visible for audit and cannot be edited or reused.</p></SectionCard> : null}

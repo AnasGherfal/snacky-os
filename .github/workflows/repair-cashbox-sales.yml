@@ -1,0 +1,33 @@
+name: Repair cashbox sales checks
+on:
+  pull_request:
+    paths:
+      - 'src/components/RepairManualSales.tsx'
+      - 'src/components/OperationalSalesSummary.tsx'
+      - 'src/app/api/operator/repair-sales/**'
+      - 'src/app/follow-ups/[id]/page.tsx'
+      - 'supabase/migrations/*repair_cashbox*'
+      - 'scripts/test-repair-cashbox-sales.mjs'
+      - '.github/workflows/repair-cashbox-sales.yml'
+permissions:
+  contents: read
+concurrency:
+  group: repair-cashbox-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Repair sale API and ledger contracts
+        run: node --experimental-strip-types --test scripts/test-repair-cashbox-sales.mjs
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Focused lint
+        run: npx eslint src/app/api/operator/repair-sales/route.ts src/components/RepairManualSales.tsx src/components/OperationalSalesSummary.tsx 'src/app/follow-ups/[id]/page.tsx'
