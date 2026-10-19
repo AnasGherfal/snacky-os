@@ -1,0 +1,33 @@
+name: Issue-owned field work
+on:
+  pull_request:
+    paths:
+      - 'src/app/issues/**'
+      - 'src/app/follow-ups/**'
+      - 'src/app/operator/issues/**'
+      - 'src/app/api/crm/field-queue/**'
+      - 'src/components/IssueFieldWork.tsx'
+      - 'scripts/test-issue-owned-field-work.mjs'
+      - 'scripts/test-repair-cashbox-sales.mjs'
+      - 'supabase/migrations/20261019160000_issue_owned_field_workspace.sql'
+      - '.github/workflows/issue-owned-field-work.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Issue and repair-sale contracts
+        run: node --test scripts/test-issue-owned-field-work.mjs scripts/test-repair-cashbox-sales.mjs
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Focused lint
+        run: npx eslint src/components/IssueFieldWork.tsx 'src/app/issues/[id]/page.tsx' src/app/issues/page.tsx 'src/app/follow-ups/[id]/page.tsx' src/app/operator/issues/page.tsx src/app/api/crm/field-queue/route.ts

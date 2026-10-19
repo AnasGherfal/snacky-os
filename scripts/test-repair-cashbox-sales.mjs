@@ -77,8 +77,10 @@ test('database validation rollback unlocks editing; unknown failure preserves th
   const h=harness({result:{data:null,error:{code,message:'fixture'}}});const r=await h.exports.POST(request(command()));assert.equal(r.status,status);assert.equal((await r.json()).retryable,retryable);
  }
 });
-test('repair sale entry is in the authorized field task and operational revenue includes repairs',()=>{
- assert.match(read('src/app/follow-ups/[id]/page.tsx'),/RepairManualSales/);
+test('repair sale entry belongs to the authorized issue; operational revenue still includes repairs',()=>{
+ assert.match(read('src/components/IssueFieldWork.tsx'),/RepairManualSales/);
+ assert.match(read('src/app/issues/[id]/page.tsx'),/IssueFieldWork/);
+ assert.doesNotMatch(read('src/app/follow-ups/[id]/page.tsx'),/RepairManualSales/);
  const summary=read('src/components/OperationalSalesSummary.tsx');
  assert.match(summary,/repair_task_id/);assert.match(summary,/machine_cashbox/);assert.match(summary,/props\.vmsRevenue \+ enteredRevenue/);
 });
