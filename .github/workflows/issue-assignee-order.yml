@@ -1,0 +1,29 @@
+name: Issue assignee and newest first
+on:
+  pull_request:
+    paths:
+      - src/components/CrmWorkspace.tsx
+      - src/components/CrmRecordForms.tsx
+      - src/lib/crm-issue-assignee.ts
+      - supabase/migrations/*issue_assignee_and_newest_order.sql
+      - scripts/test-issue-assignee-order.mjs
+      - .github/workflows/issue-assignee-order.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Assignment, issue placement and existing repair sales
+        run: node --test scripts/test-issue-assignee-order.mjs scripts/test-issue-owned-field-work.mjs scripts/test-repair-cashbox-sales.mjs
+      - name: TypeScript
+        run: npx tsc --noEmit --incremental false
+      - name: Focused lint
+        run: npx eslint src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx src/lib/crm-issue-assignee.ts
