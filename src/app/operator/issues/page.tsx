@@ -52,23 +52,19 @@ export default async function OperatorIssuesPage() {
         .order("created_at", { ascending: true })
     : { data: [] };
 
-  const { data: availableTasks, error: availableError } = supabase && isOperatorRole(profile)
-    ? await supabase.from("crm_tasks")
-        .select("id,title,priority,status,dispatch_state,created_at,issue:issues!inner(id,issue_type,status,description,created_at,machine:machines(id,name,machine_code,location:locations(id,name,distance_from_storage_km)))")
-        .eq("task_type", "field_action")
-        .eq("dispatch_state", "available")
-        .eq("issue.issue_type", "machine_unavailable")
-        .eq("status", "open")
-        .is("assigned_to", null)
-        .eq("is_practice", false)
-        .is("archived_at", null)
-        .order("created_at", { ascending: false })
-        .limit(60)
+  // The read-only RPC validates active operator access and returns only
+  // machine-only issues with a machine.report receipt. No customer PII or
+  // unrelated CRM tasks can leak into the shared operator queue.
+  const { data: availableMachineTasks, error: availableError } = supabase && isOperatorRole(profile)
+    ? await supabase.rpc("snacky_available_machine_issues_v1")
     : { data: [], error: null };
   if (availableError) console.error("[operator-issues] Could not load shared machine issue queue", { code: availableError.code });
-  const availableMachineTasks = (availableTasks ?? []).filter((task: any) =>
-    !["resolved", "closed"].includes(String(task.issue?.status ?? ""))
-  );
+  const availableRows = (availableMachineTasks ?? []) as Array<{
+    task_id: string; issue_id: string; title: string; description: string;
+    priority: string; created_at: string; machine_name: string | null;
+    machine_code: string | null; location_name: string | null;
+    distance_from_storage_km: number | string | null;
+  }>;
 
   return (
     <>
@@ -82,7 +78,7 @@ export default async function OperatorIssuesPage() {
         <section className="mb-6 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4" dir={ar ? "rtl" : "ltr"}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-bold text-amber-950">{tr("Available machine issues", "أعطال الماكينات المتاحة")}</h2>
-            <span className="rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-amber-950">{availableMachineTasks.length}</span>
+            <span className="rounded-full bg-amber-200 px-3 py-1 text-sm font-bold text-amber-950">{availableRows.length}</span>
           </div>
           <p className="text-sm text-amber-900">{tr(
             "All active operators can see these issues. The first operator to claim takes responsibility for the visit. If you fix it, record your diagnosis and a field photo to close the machine-only report. Customer complaints remain with Customer Relations.",
@@ -90,25 +86,25 @@ export default async function OperatorIssuesPage() {
           )}</p>
           {availableError ? (
             <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-900">{tr("Could not load available machine issues. Refresh this page.", "تعذر تحميل بلاغات الماكينات. حدّث الصفحة.")}</p>
-          ) : !availableMachineTasks.length ? (
+          ) : !availableRows.length ? (
             <p className="rounded-lg bg-white p-3 text-sm text-slate-600">{tr("No unclaimed machine issues at the moment.", "لا توجد بلاغات ماكينة بانتظار الاستلام حالياً.")}</p>
           ) : (
             <div className="space-y-3">
-              {availableMachineTasks.map((task: any) => (
-                <article key={task.id} className="rounded-xl border border-amber-200 bg-white p-4">
+              {availableRows.map((task) => (
+                <article key={task.task_id} className="rounded-xl border border-amber-200 bg-white p-4">
                   <div className="flex flex-wrap items-center gap-2"><StatusBadge status={task.priority} />
                     <span className="text-xs text-slate-500">{formatDateTime(task.created_at)}</span>
                   </div>
                   <h3 className="mt-2 font-semibold text-slate-950">
-                    {task.issue?.machine?.name ?? tr("Machine incident", "بلاغ ماكينة")}
-                    {task.issue?.machine?.machine_code ? ` · ${task.issue.machine.machine_code}` : ""}
+                    {task.machine_name ?? tr("Machine incident", "بلاغ ماكينة")}
+                    {task.machine_code ? ` · ${task.machine_code}` : ""}
                   </h3>
-                  <p className="mt-1 text-sm text-slate-600">{task.issue?.machine?.location?.name ?? ""}
-                    {task.issue?.machine?.location?.distance_from_storage_km != null
-                      ? ` · ${Number(task.issue.machine.location.distance_from_storage_km).toFixed(1)} km ${tr("from storage (one way)", "من المخزن (اتجاه واحد)")}` : ""}
+                  <p className="mt-1 text-sm text-slate-600">{task.location_name ?? ""}
+                    {task.distance_from_storage_km != null
+                      ? ` · ${Number(task.distance_from_storage_km).toFixed(1)} km ${tr("from storage (one way)", "من المخزن (اتجاه واحد)")}` : ""}
                   </p>
-                  <p className="my-3 whitespace-pre-wrap text-sm text-slate-800">{task.issue?.description ?? task.title}</p>
-                  <MachineIssueClaimButton taskId={task.id} userId={profile.id} />
+                  <p className="my-3 whitespace-pre-wrap text-sm text-slate-800">{task.description ?? task.title}</p>
+                  <MachineIssueClaimButton taskId={task.task_id} userId={profile.id} />
                 </article>
               ))}
             </div>
