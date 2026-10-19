@@ -63,7 +63,7 @@ test('fixed requires report plus image proof and completes field task only',()=>
  assert.ok(migration.includes("status='completed'"));
  assert.ok(migration.includes("result=v_note"));
  assert.doesNotMatch(migration,/update public\.issues set status='resolved'/i);
- assert.match(panel,/Finishing field work does not close the customer issue/i);
+ assert.match(panel,/customer complaints still require Customer Relations/i);
 });
 
 test('generic field-task updates cannot bypass managed dispatch state',()=>{
@@ -113,7 +113,7 @@ test('operator phone UI exposes assigned dispatch steps and visit outcomes with 
  assert.doesNotMatch(panel,/OperatorIssueReleaseButton/);
  assert.ok(panel.includes('proofImages<1'));
  assert.ok(panel.includes('crm-documents'));
- assert.match(panel,/Finishing field work does not close the customer issue/i);
+ assert.match(panel,/customer complaints still require Customer Relations/i);
  assert.match(panel,/customer issue stays open/i);
 });
 
