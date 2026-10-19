@@ -304,6 +304,61 @@ $claim$;
 revoke all on function public.snacky_claim_machine_issue_v1(uuid,uuid) from public,anon;
 grant execute on function public.snacky_claim_machine_issue_v1(uuid,uuid) to authenticated;
 
+-- Safe, sanitized shared queue. Operators cannot read unrelated customer
+-- complaints or arbitrary CRM tasks via this reporting projection.
+create or replace function public.snacky_available_machine_issues_v1()
+returns table (
+  task_id uuid,
+  issue_id uuid,
+  title text,
+  description text,
+  priority text,
+  created_at timestamptz,
+  machine_name text,
+  machine_code text,
+  location_name text,
+  distance_from_storage_km numeric
+)
+language sql
+stable security definer
+set search_path to ''
+as $queue$
+  select t.id,t.issue_id,t.title,i.description,t.priority,t.created_at,
+         m.name,m.machine_code,l.name,l.distance_from_storage_km
+  from public.crm_tasks t
+  join public.issues i on i.id=t.issue_id
+  join public.machines m on m.id=i.machine_id
+  left join public.locations l on l.id=m.location_id
+  where auth.uid() is not null
+    and public.snacky_current_profile_has_any_role(array['operator'])
+    and exists(
+      select 1 from public.team_members member
+      where member.id=public.snacky_current_team_member_id()
+        and member.active and member.active_status='active'
+        and (member.role::text='operator' or coalesce(member.roles::text[],'{}')&&array['operator'])
+    )
+    and t.task_type='field_action'
+    and t.dispatch_state='available' and t.status='open'
+    and t.assigned_to is null and t.archived_at is null
+    and coalesce(t.is_practice,false)=false
+    and i.issue_type='machine_unavailable'
+    and i.status::text not in ('resolved','closed')
+    and i.archived_at is null and coalesce(i.is_practice,false)=false
+    and i.contact_channel='other'
+    and nullif(pg_catalog.btrim(i.customer_name),'') is null
+    and nullif(pg_catalog.btrim(i.customer_phone),'') is null
+    and nullif(pg_catalog.btrim(i.customer_whatsapp),'') is null
+    and exists(
+      select 1 from public.crm_command_receipts receipt
+      where receipt.action='machine.report'
+        and receipt.response->>'id'=i.id::text
+    )
+  order by t.created_at desc
+  limit 60
+$queue$;
+revoke all on function public.snacky_available_machine_issues_v1() from public,anon;
+grant execute on function public.snacky_available_machine_issues_v1() to authenticated;
+
 
 CREATE OR REPLACE FUNCTION crm_dispatch_private.command(p_command jsonb)
  RETURNS jsonb
