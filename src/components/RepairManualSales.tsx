@@ -46,24 +46,30 @@ export function RepairManualSales({ taskId, userId, ar }: { taskId: string; user
     } finally { clearTimeout(timer); }
   }, [taskId, ar]);
 
-  useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const saved = JSON.parse(raw) as Command;
-        if (!uuid.test(saved.request_id) || saved.task_id !== taskId || !uuid.test(saved.product_id)
-          || !["machine", "operator_bag"].includes(saved.stock_source) || !Number.isInteger(saved.quantity)
-          || saved.cash_in_machine !== true || saved.new_unrecorded_payment !== true) throw new Error("Invalid saved sale");
-        setPending(saved); setExpanded(true); setProductId(saved.product_id);
-        setQuantity(saved.quantity); setSource(saved.stock_source); setNotes(saved.notes);
-        setCashConfirmed(true); setNewPayment(true);
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const saved = JSON.parse(raw) as Command;
+          if (!uuid.test(saved.request_id) || saved.task_id !== taskId || !uuid.test(saved.product_id)
+            || !["machine", "operator_bag"].includes(saved.stock_source) || !Number.isInteger(saved.quantity)
+            || saved.cash_in_machine !== true || saved.new_unrecorded_payment !== true) throw new Error("Invalid saved sale");
+          setPending(saved); setExpanded(true); setProductId(saved.product_id);
+          setQuantity(saved.quantity); setSource(saved.stock_source); setNotes(saved.notes);
+          setCashConfirmed(true); setNewPayment(true);
+        }
+      } catch {
+        setBlocked(true);
+        setMessage(ar ? "تعذر قراءة الطلب المحفوظ. اطلب مراجعة الإدارة قبل إعادة تسجيل البيع." : "Could not read the saved request. Ask management to check before recording this sale again.");
       }
-    } catch {
-      setBlocked(true);
-      setMessage(ar ? "تعذر قراءة الطلب المحفوظ. اطلب مراجعة الإدارة قبل إعادة تسجيل البيع." : "Could not read the saved request. Ask management to check before recording this sale again.");
-    }
-    setReady(true);
+      setReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [key, taskId, ar]);
 
   const product = data?.products.find((p) => p.id === productId);
