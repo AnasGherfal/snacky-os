@@ -168,7 +168,7 @@ export async function generateInvestorStatement(fd:FormData) {
  const grossShare=Math.round(Math.max(0,adjustedProfit)*Number(agreement.profit_share_percent))/100;
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
  const priorDue=priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
- const investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
+ let investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
  const usdCapped=agreement.payout_cap_usd!=null;
  const requestedRate=Number(text(fd,'usd_rate_lyd_per_usd'));
  const rate=usdCapped&&Number.isFinite(requestedRate)&&requestedRate>0?requestedRate:null;
@@ -186,6 +186,7 @@ export async function generateInvestorStatement(fd:FormData) {
   const previouslyDueUsd=(history.data??[]).reduce((sum,h)=>sum+Number(h.confirmed_payable_usd),0)
    +priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_usd??0),0);
   shareUsd=Math.max(0,Math.min(Math.round((grossShare/rate)*100)/100,Number(agreement.payout_cap_usd)-previouslyDueUsd));
+  investorDue=Math.min(investorDue,Math.round(shareUsd*rate*100)/100);
  }
  const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`recorded_site_rent: ${siteRentDue}`,`booked_rent: ${bookedRent}`,`additional_accrued_rent: ${extraRent}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
