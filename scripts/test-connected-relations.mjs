@@ -80,7 +80,8 @@ test('unavailable storage keeps an in-memory retry but corrupt storage never min
 test('sidebar, operator entry, history paging, Finance selector and safe archive targets are connected',()=>{
  const sidebar=read('src/components/Sidebar.tsx'),ui=read('src/components/CrmWorkspace.tsx');
  assert.match(sidebar,/href: "\/my-work"/);assert.match(sidebar,/Customer issue tasks/);
- assert.match(read('src/app/operator/layout.tsx'),/Open customer tasks/);
+ assert.match(read('src/app/operator/layout.tsx'),/Open machine issues/);
+ assert.match(read('src/app/operator/issues/page.tsx'),/Open issue & work/);
  assert.match(ui,/history_offset/);assert.match(ui,/Older activity/);assert.match(ui,/finance_payments/);
  assert.match(ui,/open_issues/);assert.match(ui,/created_to/);assert.match(ui,/agreement_type/);
  assert.match(ui,/\['lead','issue','task','contact'\]\.includes\(section\)/);
