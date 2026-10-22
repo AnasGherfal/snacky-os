@@ -9,7 +9,7 @@ export type InvestorStatementRecord={
  calculation_status:string;generated_at:string;source_complete?:boolean;data_source_note?:string|null;capital_purchases_lyd?:number|string|null;
  distribution_basis_lyd?:number|string|null;profit_basis?:string|null;expense_breakdown?:Array<{key:string;label:string;amount:number;transactionCount:number}>|null;
 };
-export function InvestorStatementCard({statement:s,paid,ar,adminUserId}:{statement:InvestorStatementRecord;paid:number;ar:boolean;adminUserId?:string}) {
+export function InvestorStatementCard({statement:s,paid,ar,adminUserId,usdCapped=false}:{statement:InvestorStatementRecord;paid:number;ar:boolean;adminUserId?:string;usdCapped?:boolean}) {
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const due=Number(s.investor_share_due_lyd),remaining=Math.max(0,due-paid),final=s.calculation_status==='finalized';
  const fmt=(v:unknown)=>v===null||v===undefined?tr('Not recorded','غير مسجّل'):Number.isFinite(Number(v))?formatFinanceMoney(Number(v)):tr('Unavailable','غير متاح');
@@ -35,6 +35,7 @@ export function InvestorStatementCard({statement:s,paid,ar,adminUserId}:{stateme
    </form>}
    {s.data_source_note?<p className="mt-3 break-words text-xs text-slate-500">{s.data_source_note}</p>:null}
   </div>:null}
-  {adminUserId&&final&&remaining>0?<details className="mt-5 rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer font-semibold">{tr('Record investor payout','تسجيل دفعة للمستثمر')} · {fmt(remaining)}</summary><div className="mt-4"><InvestorMoneyForm kind="payout" entityId={s.id} userId={adminUserId} remaining={remaining}/></div></details>:null}
+  {adminUserId&&final&&usdCapped?<p className="mt-4 rounded-lg border border-amber-200 p-3 text-sm text-amber-950">{tr('USD-capped agreement: use Record Actual USD Payout in the 2026 investor overview. This LYD-only payment form is disabled to prevent mixing currencies.','اتفاقية بسقف بالدولار: سجّل الدفع الفعلي بالدولار من كشف المستثمر 2026. تم تعطيل الدفع بالدينار هنا لمنع خلط العملات.')}</p>:null}
+  {adminUserId&&final&&remaining>0&&!usdCapped?<details className="mt-5 rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer font-semibold">{tr('Record investor payout','تسجيل دفعة للمستثمر')} · {fmt(remaining)}</summary><div className="mt-4"><InvestorMoneyForm kind="payout" entityId={s.id} userId={adminUserId} remaining={remaining}/></div></details>:null}
  </details>;
 }
