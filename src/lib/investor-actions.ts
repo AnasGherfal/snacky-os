@@ -154,8 +154,10 @@ export async function generateInvestorStatement(fd:FormData) {
    const category=String(r.category??'').toLowerCase();
    const description=String(r.description??'');
    if(/product|inventory|restock|stock purchase|machine purchase|machine investment|equipment|capital/i.test(category))return false; // handled by existing COGS/capital classifier
-   if(/rent|fixed costs|charity|shipping/.test(category))return true;
-   if(/ايجار|إيجار|rent|warehouse|مخزن|ht mall|الشاهين|ارامكس|نقل ماكينه|تركيب مكيف|تعديل الميزانيه/i.test(description))return true;
+   if(/rent|fixed costs|charity/.test(category))return true;
+   if(category.includes('shipping') && String(r.transaction_date??'').slice(0,10)<='2026-09-30')return true; // Owner identified this period's freight as new-machine capital logistics
+   if(/ايجار|إيجار|rent|warehouse|مخزن|ht mall|تركيب مكيف|تعديل الميزانيه/i.test(description))return true;
+   if(String(r.transaction_date??'').slice(0,10)<='2026-09-30' && /الشاهين|ارامكس|نقل ماكينه/i.test(description))return true;
    if(/^(anas|أنس)$/i.test(description.trim()))return true;
    if(category==='uncategorized' && description.trim()!=='machine moving')return true;
    if(category==='other' && !['machine moving','Car battery'].includes(description.trim()))return true;
@@ -170,7 +172,7 @@ export async function generateInvestorStatement(fd:FormData) {
  const approvedOperations=(row:any)=>{
   const category=String(row.category??'').toLowerCase();
   const description=String(row.description??'').trim().toLowerCase();
-  return (category.includes('salary')||category==='other'&&description==='car battery'||category==='uncategorized'&&description==='machine moving')
+  return (category.includes('salary')||category==='other'&&description==='car battery'||category==='uncategorized'&&description==='machine moving'||category.includes('maintenance')||category.includes('utilities')||category.includes('fuel')||category.includes('marketing')||category.includes('advertising')||category.includes('repair')||(category.includes('shipping')&&String(row.transaction_date??'').slice(0,10)>'2026-09-30'))
    && row.direction==='money_out' && row.transaction_effect==='expense' && row.transaction_status==='active'
    && row.voided_at==null && !row.is_void && ['confirmed','reviewed'].includes(String(row.review_status??''))
    && String(row.currency??'LYD').toUpperCase()==='LYD' && Number.isFinite(Number(row.amount));
