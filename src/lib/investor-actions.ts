@@ -139,22 +139,31 @@ export async function generateInvestorStatement(fd:FormData) {
   if(result.error) fail('Manual-sale product costs could not load.'); movements.push(...(result.data??[]));
  }
 
- // Accrue contractual site rent even when payment and Finance classification are
- // not yet linked. Offset confirmed Finance rent so the same liability is not deducted twice.
- const siteRent=await supabase.from('location_admin_obligations').select('amount_lyd,title,due_date,rent_period_start_month,is_practice')
-   .gte('due_date',bounds.start).lte('due_date',bounds.end).or('is_practice.eq.false,is_practice.is.null');
- if(siteRent.error)fail('Location rent obligations could not be verified.');
- const siteRentDue=(siteRent.data??[]).filter((r:any)=>/rent|ايجار|إيجار/i.test(String(r.title??'')))
-   .reduce((sum:number,r:any)=>sum+Number(r.amount_lyd??0),0);
- const bookedRent=ledgerRows.filter((row:any)=>row.direction==='money_out'&&row.transaction_effect==='expense'&&row.transaction_status==='active'
-   && !row.is_void&&row.voided_at==null&&['confirmed','reviewed'].includes(String(row.review_status??''))
-   && String(row.currency??'LYD').toUpperCase()==='LYD'
-   && /rent|ايجار|إيجار/i.test(String(row.category??'')+' '+String(row.description??'')))
-   .reduce((sum:number,row:any)=>sum+Number(row.amount??0),0);
- const extraRent=Math.round(Math.max(0,siteRentDue-bookedRent)*100)/100;
-
+ // Contractual monthly costs belong to the month earned, not the cash payment date.
+ // Owner-confirmed investor policies are kept separate from Finance cash entries:
+ // no fictitious salary, rent or investor payment is posted here.
+ const policyResult=agreement.investment_amount_usd!=null
+   ? await supabase.from('investor_cost_policies').select('item_key,item_type,label,monthly_amount_lyd,effective_from,effective_through,notes')
+    .eq('agreement_id',agreementId).lte('effective_from',bounds.start)
+   : {data:[],error:null};
+ if(policyResult.error)fail('Investor monthly cost policies could not load.');
+ const policyRows=(policyResult.data??[]).filter((p:any)=>p.effective_through==null||p.effective_through>=bounds.start);
+ const costs=policyRows.filter((p:any)=>p.item_type==='rent'||p.item_type==='salary_adjustment');
+ const additionalAccrual=costs.reduce((sum:number,p:any)=>sum+Number(p.monthly_amount_lyd??0),0);
+ const isOwnerOrNonOperating=(r:any)=>{
+   const category=String(r.category??'').toLowerCase();
+   const description=String(r.description??'');
+   if(/product|inventory|restock|stock purchase|machine purchase|machine investment|equipment|capital/i.test(category))return false; // handled by existing COGS/capital classifier
+   if(/rent|fixed costs|charity|shipping/.test(category))return true;
+   if(/ايجار|إيجار|rent|warehouse|مخزن|ht mall|الشاهين|ارامكس|نقل ماكينه|تركيب مكيف|تعديل الميزانيه/i.test(description))return true;
+   if(/^(anas|أنس)$/i.test(description.trim()))return true;
+   if(category==='uncategorized' && description.trim()!=='machine moving')return true;
+   if(category==='other' && !['machine moving','Car battery'].includes(description.trim()))return true;
+   return false;
+ };
+ const cleanLedger=agreement.investment_amount_usd!=null?ledgerRows.filter(r=>!isOwnerOrNonOperating(r)):ledgerRows;
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
- const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
+ const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows:cleanLedger,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
  const pendingExpenseRows=ledgerRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
  const previousStatements=priorStatementsResult.data??[];
  const priorFinalized=previousStatements.filter(row=>row.calculation_status==='finalized');
@@ -163,7 +172,7 @@ export async function generateInvestorStatement(fd:FormData) {
  const priorMonthKnown=last?.month_start?.slice(0,7)===expectedPriorMonth || bounds.start==='2026-04-01';
  const priorLoss=last && last.month_start?.slice(0,7)===expectedPriorMonth?Number(last.loss_carried_out_lyd??0):0;
  // Profit share is zero while earlier operating losses remain unrecouped.
- const adjustedProfit=Math.round((calculation.distributionBasisLyd-extraRent+priorLoss+Number.EPSILON)*100)/100;
+ const adjustedProfit=Math.round((calculation.distributionBasisLyd-additionalAccrual+priorLoss+Number.EPSILON)*100)/100;
  const carriedLossOut=Math.round(Math.min(0,adjustedProfit)*100)/100;
  const grossShare=Math.round(Math.max(0,adjustedProfit)*Number(agreement.profit_share_percent))/100;
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
@@ -188,11 +197,11 @@ export async function generateInvestorStatement(fd:FormData) {
   shareUsd=Math.max(0,Math.min(Math.round((grossShare/rate)*100)/100,Number(agreement.payout_cap_usd)-previouslyDueUsd));
   investorDue=Math.min(investorDue,Math.round(shareUsd*rate*100)/100);
  }
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`recorded_site_rent: ${siteRentDue}`,`booked_rent: ${bookedRent}`,`additional_accrued_rent: ${extraRent}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`,`excluded_cashbook_entries: ${ledgerRows.length-cleanLedger.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
-  operating_expenses_lyd:Math.round((calculation.operatingExpensesLyd+extraRent)*100)/100,operating_profit_lyd:Math.round((calculation.operatingProfitLyd-extraRent)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
-  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:[...calculation.expenseBreakdown,...(extraRent>0?[{key:'accrued_site_rent',label:'Site rent accrued from obligations, after confirmed Finance rent offset',amount:extraRent,transactionCount:(siteRent.data??[]).length}]:[])],source_complete:complete,review_checks:null,
+  operating_expenses_lyd:Math.round((calculation.operatingExpensesLyd+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((calculation.operatingProfitLyd-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
+  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:[...calculation.expenseBreakdown,...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
   share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
