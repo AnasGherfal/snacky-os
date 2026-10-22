@@ -1,3 +1,3 @@
-import {CrmWorkspace,type CrmSearchParams} from '@/components/CrmWorkspace';
-export const dynamic='force-dynamic';
-export default async function Page({searchParams}:{searchParams:Promise<CrmSearchParams>}){return <CrmWorkspace section="task" searchParams={{...await searchParams,scope:'mine'}}/>;}
+import { redirect } from 'next/navigation';
+/** Field work lives in Machine issues, not a second CRM task list. */
+export default function Page(){ redirect('/operator/issues'); }
