@@ -27,6 +27,8 @@ jobs:
         run: npm ci
       - name: Test core route ledger contracts
         run: npm run test:route-ledger-core
+      - name: Test machine-fault report, assignment and claim entry points
+        run: node --test scripts/test-machine-fault-reporting.mjs
       - name: Typecheck Snacky OS
         run: npm run typecheck
       - name: Build Snacky OS
