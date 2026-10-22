@@ -34,10 +34,6 @@ export default async function OperatorIssuesPage({ searchParams }: {
   .order('created_at',{ascending:false}).limit(100) : null;
  if (mine) mine = completed ? mine.eq('status','completed') : mine.neq('status','completed');
  const {data:myTasks,error:mineError} = mine ? await mine : {data:[],error:null};
- const {data:reported,error:reportedError} = admin && memberId ? await admin.from('issues')
-  .select('id,status,priority,description,created_at,machine:machines(name,machine_code)')
-  .eq('reported_by',memberId).is('archived_at',null).order('created_at',{ascending:false}).limit(50)
-  : {data:[],error:null};
  const {data:available,error:availableError} = db && isOperatorRole(profile) && !completed
   ? await db.rpc('snacky_available_machine_issues_v1') : {data:[],error:null};
  const availableRows = (available ?? []) as Array<{
@@ -80,13 +76,5 @@ export default async function OperatorIssuesPage({ searchParams }: {
     </article>)}
    {(myTasks?.length??0)>=100?<p className="text-xs text-slate-500">{tr('Showing the latest 100 visits.','يظهر أحدث 100 زيارة.')}</p>:null}
   </section>
-  {!completed?<section className="space-y-3">
-   <h2 className="font-bold">{tr('Issues I reported','بلاغاتي')}</h2>
-   {reportedError?<p role="alert">{tr('Could not load your reports.','تعذر تحميل بلاغاتك.')}</p>:!reported?.length?<p className="text-sm text-slate-500">{tr('No reports yet.','لا توجد بلاغات بعد.')}</p>:reported.map((issue:any)=><article key={issue.id} className="space-y-2 rounded-xl border bg-white p-3">
-    <StatusBadge status={issue.status}/><h3 className="font-semibold">{issue.machine?.name}</h3>
-    <p className="text-sm">{issue.description}</p>
-    <Link className="text-sm text-sky-800 underline" href={`/issues/${issue.id}`}>{tr('Open issue','فتح البلاغ')}</Link>
-   </article>)}
-  </section>:null}
  </div>;
 }
