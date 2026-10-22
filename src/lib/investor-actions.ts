@@ -30,9 +30,32 @@ async function loadInvestorVmsProfit(client: any,dateFrom:string,dateTo:string) 
  const detailed=await client.rpc('sales_dashboard_summary',{p_date_from:dateFrom,p_date_to:dateTo});
  const detailedRow=(detailed.data ?? [])[0];
  if(!detailed.error && Number(detailedRow?.revenue_amount)>0) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
- if(!monthly.error && monthlyRow) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
- if(!detailed.error && detailedRow) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
- return {data:[],error:new Error('Monthly and detailed VMS totals could not be verified.'),source:null};
+ // The dashboard RPCs can legitimately return no rows while a verified active
+ // XY monthly file exists. Never substitute zero sales or sum superseded uploads.
+ const reader=getSupabaseAdminClient() ?? client;
+ const active=await reader.from('vms_import_batches').select('id,report_start_date,report_end_date')
+  .eq('report_type','monthly_product_profit').eq('is_active',true).eq('status','imported')
+  .lte('report_start_date',dateFrom).gte('report_end_date',dateTo);
+ if(active.error)return {data:[],error:active.error,source:null};
+ if((active.data??[]).length!==1)return {data:[],error:new Error('Exactly one active complete XY monthly profit report is required.'),source:null};
+ const batchId=active.data[0].id;
+ let all:any[]=[];
+ for(let offset=0;offset<10000;offset+=500){
+  const result=await reader.from('vms_monthly_product_profit').select('transaction_amount,cost_amount')
+   .eq('import_batch_id',batchId).gte('business_month',dateFrom).lte('business_month',dateTo)
+   .order('id').range(offset,offset+499);
+  if(result.error)return {data:[],error:result.error,source:null};
+  all=all.concat(result.data??[]);
+  if((result.data??[]).length<500)break;
+  if(offset===9500)return {data:[],error:new Error('Active monthly file exceeded safe investor read limit.'),source:null};
+ }
+ if(!all.length)return {data:[],error:new Error('Active XY monthly report has no profit rows.'),source:null};
+ const missing=all.some(row=>row.transaction_amount==null||row.cost_amount==null||
+  !Number.isFinite(Number(row.transaction_amount))||!Number.isFinite(Number(row.cost_amount)));
+ const revenue=all.reduce((sum,row)=>sum+Number(row.transaction_amount??0),0);
+ const cogs=all.reduce((sum,row)=>sum+Number(row.cost_amount??0),0);
+ const round=(n:number)=>Math.round((n+Number.EPSILON)*100)/100;
+ return {data:[{net_sales_amount:round(revenue),cogs_amount:round(cogs),gross_profit_amount:round(revenue-cogs),cost_missing:missing,source:'vms'}],error:null,source:'active_monthly_product_profit'};
 }
 
 async function pagedRows(build:(from:number,to:number)=>any): Promise<{data:any[];error:any}> {
@@ -91,7 +114,7 @@ export async function generateInvestorStatement(fd:FormData) {
  const [salesResult,manualSalesResult,priorStatementsResult]=await Promise.all([
   loadInvestorVmsProfit(supabase,bounds.start,bounds.end),
   pagedRows((from,to)=>operationalReadClient.from('route_manual_sales').select('id,machine_id,total_amount_lyd,inventory_movement_id,sale_time,status').eq('status','confirmed').gte('sale_time',`${bounds.start}T00:00:00+02:00`).lt('sale_time',`${nextDay}T00:00:00+02:00`).order('id').range(from,to)),
-  supabase.from('investor_monthly_statements').select('investor_share_due_lyd').eq('agreement_id',agreementId).neq('month_start',bounds.start).eq('calculation_status','finalized'),
+  supabase.from('investor_monthly_statements').select('month_start,investor_share_due_lyd,loss_carried_out_lyd,calculation_status,investor_share_due_usd').eq('agreement_id',agreementId).lt('month_start',bounds.start).order('month_start',{ascending:false}),
  ]);
  if(salesResult.error) fail('VMS sales could not load. No zero revenue was assumed.');
  if(manualSalesResult.error) fail('Manual route sales could not load.');
@@ -112,15 +135,41 @@ export async function generateInvestorStatement(fd:FormData) {
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
  const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
  const pendingExpenseRows=ledgerRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
- const complete=calculation.complete && pendingExpenseRows.length===0;
- const priorDue=(priorStatementsResult.data??[]).reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
+ const previousStatements=priorStatementsResult.data??[];
+ const priorFinalized=previousStatements.filter(row=>row.calculation_status==='finalized');
+ const last=previousStatements[0]??null;
+ const expectedPriorMonth=new Date(Date.parse(bounds.start+'T12:00:00Z')-86400000).toISOString().slice(0,7);
+ const priorMonthKnown=last?.month_start?.slice(0,7)===expectedPriorMonth || bounds.start==='2026-04-01';
+ const priorLoss=last && last.month_start?.slice(0,7)===expectedPriorMonth?Number(last.loss_carried_out_lyd??0):0;
+ // Profit share is zero while earlier operating losses remain unrecouped.
+ const adjustedProfit=Math.round((calculation.distributionBasisLyd+priorLoss+Number.EPSILON)*100)/100;
+ const carriedLossOut=Math.round(Math.min(0,adjustedProfit)*100)/100;
+ const grossShare=Math.round(Math.max(0,adjustedProfit)*Number(agreement.profit_share_percent))/100;
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
- const investorDue=cap===null?calculation.investorShareDueLyd:Math.min(calculation.investorShareDueLyd,Math.max(0,cap-priorDue));
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`complete=${complete}`,...calculation.accountingWarnings].join('; ');
+ const priorDue=priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
+ const investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
+ const usdCapped=agreement.payout_cap_usd!=null;
+ const requestedRate=Number(text(fd,'usd_rate_lyd_per_usd'));
+ const rate=usdCapped&&Number.isFinite(requestedRate)&&requestedRate>0?requestedRate:null;
+ const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
+  (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized') &&
+  (!usdCapped||rate!==null);
+ let shareUsd:number|null=null;
+ if(usdCapped&&rate!=null){
+  const history=await supabase.from('investor_historical_months').select('confirmed_payable_usd,payment_confirmed_at')
+   .eq('investor_user_id',agreement.investor_user_id).gte('month_start',agreement.start_date).lt('month_start',bounds.start);
+  if(history.error)fail('Could not verify historical investor entitlement before USD cap calculation.');
+  if((history.data??[]).some(h=>h.payment_confirmed_at==null||h.confirmed_payable_usd==null))
+   fail('Historical investor entitlement is incomplete.');
+  const previouslyDueUsd=(history.data??[]).reduce((sum,h)=>sum+Number(h.confirmed_payable_usd),0)
+   +priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_usd??0),0);
+  shareUsd=Math.max(0,Math.min(Math.round((grossShare/rate)*100)/100,Number(agreement.payout_cap_usd)-previouslyDueUsd));
+ }
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
   operating_expenses_lyd:calculation.operatingExpensesLyd,operating_profit_lyd:calculation.operatingProfitLyd,capital_purchases_lyd:calculation.capitalPurchasesLyd,
-  distribution_basis_lyd:calculation.distributionBasisLyd,profit_basis:calculation.profitBasis,expense_breakdown:calculation.expenseBreakdown,source_complete:complete,review_checks:null,
+  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:calculation.expenseBreakdown,source_complete:complete,review_checks:null,
   share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
