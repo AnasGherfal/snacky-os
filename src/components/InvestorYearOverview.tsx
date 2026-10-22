@@ -103,6 +103,10 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
    <h2 className="text-xl font-bold">{tr('Tayseer · Profit Ledger since January 2026','تيسير · كشف الأرباح منذ يناير 2026')}</h2>
    <p className="mt-1 text-sm text-slate-600">{tr('30% of net monthly operating profit after products, monthly location/storage rent, salaries and verified running costs. Losses roll forward. All operating figures are LYD; actual distributions are recorded in USD.','30% من صافي أرباح التشغيل بعد المنتجات، إيجارات المواقع والمخزن، الرواتب والمصاريف التشغيلية. تُرحّل الخسائر للأشهر التالية. جميع أرقام التشغيل بالدينار، وتُسجّل التوزيعات الفعلية بالدولار.')}</p>
   </div>
+  {policies.some(p=>p.item_key==='owner_salary_proposed')?<div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm">
+    <strong>{tr('Owner-manager salary proposal · not yet deducted','مقترح مرتب مدير الشركة · لم يُخصم بعد')}</strong>
+    <p className="mt-1">{tr('Proposed Anas salary: 2,500 LYD per month starting October 2026. This is not yet approved as a deductible investor-profit expense. Previously withdrawn cash is recorded separately and must not also be counted as salary.','المرتب المقترح لأنس: 2,500 د.ل شهرياً ابتداءً من أكتوبر 2026. لم يعتمد بعد كخصم من أرباح المستثمر. المبالغ التي سحبها المالك سابقاً منفصلة ولا يجوز احتسابها مرة أخرى كمرتب.')}</p>
+   </div>:null}
   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
    {[
     [tr('Original contract investment (LYD reference)','الاستثمار الأصلي (ما يعادله بالدينار)'),money(capital*rateReference)],
