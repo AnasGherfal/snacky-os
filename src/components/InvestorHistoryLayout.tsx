@@ -67,7 +67,7 @@ export async function InvestorHistoryLayout({ children, ownerOnly = false }: {
       </section> : records.length > 0 ? <section id="historical-investor-records" className="mt-8 scroll-mt-24 space-y-4" aria-labelledby="investor-history-heading">
         <div>
           <h2 id="investor-history-heading" className="text-xl font-semibold text-slate-950">{tr('Historical months · supplied figures', 'الأشهر التاريخية · الأرقام المقدّمة')}</h2>
-          <p className="mt-1 text-sm text-slate-600">{tr('The original records remain visible here, even while the ongoing agreement is not set up. They are not included in the LYD totals above.', 'تبقى السجلات الأصلية ظاهرة هنا حتى لو لم تُجهّز الاتفاقية المستمرة بعد. لا تدخل هذه الأرقام في الإجماليات بالدينار أعلاه.')}</p>
+          <p className="mt-1 text-sm text-slate-600">{tr('The original records remain visible here, even while the ongoing agreement is not set up. They are included in the 2026 year overview using their recorded historical LYD rates, but not counted twice in the new monthly ledger.', 'تبقى السجلات الأصلية ظاهرة هنا حتى لو لم تُجهّز الاتفاقية المستمرة بعد. تدخل هذه المبالغ في كشف سنة 2026 بسعر صرفها التاريخي، ولا تُحسب مرة أخرى في دفتر الأشهر الجديد.')}</p>
         </div>
         {[...groups].map(([investorId, rows]) => <InvestorHistoryTable
           key={investorId} rows={rows} investorName={names.get(investorId) || tr('Investor', 'المستثمر')} ar={ar}
