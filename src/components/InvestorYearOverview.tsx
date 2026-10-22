@@ -64,8 +64,9 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
  const projectedMonthlyLYD=Math.max(0,avgLYD-crmMonthly*.3);
  const projectedMonthlyUSD=currentRate&&currentRate>0?projectedMonthlyLYD/currentRate:null;
  const estimatedMonths=projectedMonthlyUSD&&projectedMonthlyUSD>0&&remainingCapUSD!=null?Math.ceil(remainingCapUSD/projectedMonthlyUSD):null;
- const allMonths=Array.from({length:12},(_,i)=>new Date(Date.UTC(2026,i,1)).toISOString().slice(0,10))
-  .filter(month=>month<=dateToday().slice(0,7)+'-01');
+ const thisYear=Number(dateToday().slice(0,4)),thisMonth=Number(dateToday().slice(5,7));
+ const countMonths=Math.min(180,Math.max(0,(thisYear-2026)*12+thisMonth));
+ const allMonths=Array.from({length:countMonths},(_,i)=>new Date(Date.UTC(2026,i,1)).toISOString().slice(0,10));
  const progress=cap&&cap>0?Math.min(100,Math.round(100*confirmedUSD/cap)):0;
  const status=(eligible:number,paid:number,draftMonth:boolean)=>draftMonth?tr('Estimate · not payable','تقديري · غير مستحق'):eligible<=0?tr('No payout due','لا يوجد مستحق'):paid>=eligible-0.005?tr('Paid','مدفوع'):paid>0?tr('Partially paid','مدفوع جزئياً'):tr('Unpaid','غير مدفوع');
  const payoutForm=(month:string,remaining:number)=>{
@@ -99,7 +100,7 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
  };
  return <section className="surface-card space-y-4" dir={ar?'rtl':'ltr'}>
   <div>
-   <h2 className="text-xl font-bold">{tr('Tayseer · 2026 Investment & Profit Ledger','تيسير · كشف الاستثمار والأرباح 2026')}</h2>
+   <h2 className="text-xl font-bold">{tr('Tayseer · Profit Ledger since January 2026','تيسير · كشف الأرباح منذ يناير 2026')}</h2>
    <p className="mt-1 text-sm text-slate-600">{tr('30% of net monthly operating profit after products, monthly location/storage rent, salaries and verified running costs. Losses roll forward. All operating figures are LYD; actual distributions are recorded in USD.','30% من صافي أرباح التشغيل بعد المنتجات، إيجارات المواقع والمخزن، الرواتب والمصاريف التشغيلية. تُرحّل الخسائر للأشهر التالية. جميع أرقام التشغيل بالدينار، وتُسجّل التوزيعات الفعلية بالدولار.')}</p>
   </div>
   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -107,7 +108,7 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
     [tr('Original contract investment (LYD reference)','الاستثمار الأصلي (ما يعادله بالدينار)'),money(capital*rateReference)],
     [tr('Maximum distributions, 150% (LYD reference)','سقف التوزيعات 150% (ما يعادله بالدينار)'),cap==null?'—':money(cap*rateReference)],
     [tr('Approved historical / finalized shares','المستحقات التاريخية والمعتمدة'),money(confirmedLYD)],
-    [tr('April–September provisional shares','الحصص التقديرية من أبريل إلى سبتمبر'),money(estimateLYD)]
+    [tr('Provisional monthly shares (not payable)','الحصص الشهرية التقديرية (غير مستحقة بعد)'),money(estimateLYD)]
    ].map(([label,value])=><div className="rounded-xl border p-3" key={label}><p className="text-xs text-slate-600">{label}</p><strong className="mt-2 block text-lg">{value}</strong></div>)}
   </div>
   <div className="grid gap-3 sm:grid-cols-3">
