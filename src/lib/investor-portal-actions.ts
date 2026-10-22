@@ -51,7 +51,7 @@ export async function recordActualInvestorUsdPayout(formData:FormData) {
  const date=val(formData,"payout_date"),reference=val(formData,"payment_reference"),notes=val(formData,"notes");
  const account=val(formData,"payment_account"),method=val(formData,"payment_method");
  const cmd=val(formData,"client_submission_id");
- if(!validUuid.test(cmd)||!Number.isFinite(amount)||amount<=0||Math.round(amount*100)!==amount*100||
+ if(!validUuid.test(cmd)||!Number.isFinite(amount)||amount<=0||Math.abs(Math.round(amount*100)-amount*100)>1e-6||
   !Number.isFinite(rate)||rate<=0||rate>=100000 || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
   reference.length<3||reference.length>200||notes.length>2000)redirect(back(agreementId,"Invalid amount, FX rate, date or actual payment reference.",true));
  const db=await getAuthenticatedSupabaseServerClient();
