@@ -115,6 +115,17 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
    <div className="rounded-lg border p-3"><p className="text-xs">{tr('Paid to date, USD payments (LYD equivalent)','المدفوع فعلياً بالدولار (القيمة بالدينار)')}</p><strong>{money(paidLYD)}</strong></div>
    <div className="rounded-lg border p-3"><p className="text-xs">{tr('Confirmed but still unpaid (USD-denominated)','المستحق المعتمد وغير المدفوع (أصله بالدولار)')}</p><strong>{dollars(capUnpaidUSD)}</strong></div>
   </div>
+  {admin?<form action={saveInvestorMonthlyFxRate} className="rounded-xl border border-sky-200 p-4">
+    <h3 className="font-semibold">{tr('Current LYD → USD exchange rate','سعر الصرف الحالي من الدينار إلى الدولار')}</h3>
+    <p className="mt-1 text-xs text-slate-600">{tr('Enter how many LYD buy one USD. This is for monthly USD estimates and the timeline; it does not itself mark anything paid.','اكتب كم دينار يساوي دولاراً واحداً. يستخدم للتقدير ومدة الوصول للسقف، ولا يُسجل أي مبلغ كمدفوع.')}</p>
+    <input type="hidden" name="agreement_id" value={agreementId}/>
+    <input type="hidden" name="month_start" value={dateToday().slice(0,7)+'-01'}/>
+    <div className="mt-3 flex flex-wrap items-end gap-3">
+     <label className="text-sm">1 USD = <input className="field-input mt-1 w-40" name="lyd_per_usd" type="number" required min="0.000001" step="0.000001" defaultValue={rateMap.get(dateToday().slice(0,7)+'-01')?.lyd_per_usd??''} placeholder="LYD"/></label>
+     <label className="text-sm">{tr('FX source / date (optional for estimate)','المصدر / التاريخ (اختياري للتقدير)')}<input className="field-input mt-1" name="rate_source" maxLength={500} defaultValue={rateMap.get(dateToday().slice(0,7)+'-01')?.rate_source??''}/></label>
+     <button type="submit" className="btn-primary">{tr('Save exchange rate','حفظ سعر الصرف')}</button>
+    </div>
+   </form>:null}
   <div className="rounded-xl border p-4">
    <div className="flex flex-wrap justify-between gap-3"><strong>{tr('Progress to 150% earned cap','نسبة الوصول لسقف الاستحقاق 150%')}</strong><span>{progress}%</span></div>
    <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-700" style={{width:progress+'%'}}/></div>
