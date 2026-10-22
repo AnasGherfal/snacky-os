@@ -164,6 +164,23 @@ export async function generateInvestorStatement(fd:FormData) {
  const cleanLedger=agreement.investment_amount_usd!=null?ledgerRows.filter(r=>!isOwnerOrNonOperating(r)):ledgerRows;
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
  const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows:cleanLedger,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
+ // For this investor's confirmed policy, recognize explicitly classified salary
+ // and operating cash items; do not automatically deduct personal drawings,
+ // charity, machine freight, capital equipment or unverified adjustments.
+ const approvedOperations=(row:any)=>{
+  const category=String(row.category??'').toLowerCase();
+  const description=String(row.description??'').trim().toLowerCase();
+  return (category.includes('salary')||category==='other'&&description==='car battery'||category==='uncategorized'&&description==='machine moving')
+   && row.direction==='money_out' && row.transaction_effect==='expense' && row.transaction_status==='active'
+   && row.voided_at==null && !row.is_void && ['confirmed','reviewed'].includes(String(row.review_status??''))
+   && String(row.currency??'LYD').toUpperCase()==='LYD' && Number.isFinite(Number(row.amount));
+ };
+ const policyOperatingExpenses=agreement.investment_amount_usd!=null
+   ? cleanLedger.filter(approvedOperations).reduce((sum:number,r:any)=>sum+Number(r.amount),0)
+   : calculation.operatingExpensesLyd;
+ const operatingExpensesBeforeAccrual=Math.round(policyOperatingExpenses*100)/100;
+ const profitBeforeAccrual=Math.round((calculation.grossProfitLyd-operatingExpensesBeforeAccrual)*100)/100;
+
  const pendingExpenseRows=ledgerRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
  const previousStatements=priorStatementsResult.data??[];
  const priorFinalized=previousStatements.filter(row=>row.calculation_status==='finalized');
@@ -172,16 +189,19 @@ export async function generateInvestorStatement(fd:FormData) {
  const priorMonthKnown=last?.month_start?.slice(0,7)===expectedPriorMonth || bounds.start==='2026-04-01';
  const priorLoss=last && last.month_start?.slice(0,7)===expectedPriorMonth?Number(last.loss_carried_out_lyd??0):0;
  // Profit share is zero while earlier operating losses remain unrecouped.
- const adjustedProfit=Math.round((calculation.distributionBasisLyd-additionalAccrual+priorLoss+Number.EPSILON)*100)/100;
+ const adjustedProfit=Math.round((profitBeforeAccrual-additionalAccrual+(agreement.profit_basis==='operating_profit_after_capex'?-calculation.capitalPurchasesLyd:0)+priorLoss+Number.EPSILON)*100)/100;
  const carriedLossOut=Math.round(Math.min(0,adjustedProfit)*100)/100;
  const grossShare=Math.round(Math.max(0,adjustedProfit)*Number(agreement.profit_share_percent))/100;
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
  const priorDue=priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
  let investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
  const usdCapped=agreement.payout_cap_usd!=null;
- const requestedRate=Number(text(fd,'usd_rate_lyd_per_usd'));
+ const savedFx=usdCapped ? await supabase.from('investor_monthly_fx_rates').select('lyd_per_usd,rate_source').eq('agreement_id',agreementId).eq('month_start',bounds.start).maybeSingle() : {data:null,error:null};
+ if(savedFx.error)fail('Could not load saved investor exchange rate.');
+ const enteredRate=text(fd,'usd_rate_lyd_per_usd');
+ const requestedRate=enteredRate?Number(enteredRate):Number(savedFx.data?.lyd_per_usd??NaN);
  const rate=usdCapped&&Number.isFinite(requestedRate)&&requestedRate>0?requestedRate:null;
- const rateSource=text(fd,'usd_rate_source');
+ const rateSource=text(fd,'usd_rate_source')||String(savedFx.data?.rate_source??'');
  const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
   (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized') &&
   (!usdCapped||(rate!==null&&rateSource.length>=8));
@@ -200,8 +220,8 @@ export async function generateInvestorStatement(fd:FormData) {
  const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`,`excluded_cashbook_entries: ${ledgerRows.length-cleanLedger.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
-  operating_expenses_lyd:Math.round((calculation.operatingExpensesLyd+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((calculation.operatingProfitLyd-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
-  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:[...calculation.expenseBreakdown,...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
+  operating_expenses_lyd:Math.round((operatingExpensesBeforeAccrual+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((profitBeforeAccrual-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
+  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:[...(agreement.investment_amount_usd!=null?[{key:'ledger_checked_operating',label:'Confirmed salaries and operating charges excluding owner drawings, charity, new-machine freight and capital items',amount:operatingExpensesBeforeAccrual,transactionCount:null}]:calculation.expenseBreakdown),...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
   share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
