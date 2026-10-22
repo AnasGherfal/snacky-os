@@ -23,13 +23,13 @@ function tone(state:string|null){
  return 'border-amber-200 bg-amber-50 text-amber-900';
 }
 
-export function CrmDispatchTaskPanel(props:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number}){
+export function CrmDispatchTaskPanel(props:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number;compact?:boolean}){
  const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
  if(!hydrated)return <section className="surface-card"><p role="status">{props.ar?'جارٍ تحميل الإجراء الميداني…':'Loading field dispatch…'}</p></section>;
  return <CrmDispatchTaskPanelClient {...props}/>;
 }
 
-function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number}){
+function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages,compact=false}:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number;compact?:boolean}){
  const router=useRouter(),key='snacky:crm-dispatch:v1:'+userId+':'+task.id,lock=useRef(false);
  const [pending,setPending]=useState<CrmDispatchCommand|null>(()=>{try{const raw=sessionStorage.getItem(key);return raw?validateCrmDispatchCommand(JSON.parse(raw)):null;}catch{return null;}});
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
@@ -68,18 +68,18 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
   return null;
  },[state]);
 
- return <section className="surface-card space-y-4" id="field-dispatch">
-  <div className="flex flex-wrap items-start justify-between gap-3">
+ return <section className={compact ? "space-y-4" : "surface-card space-y-4"} id="field-dispatch">
+  {!compact ? <div className="flex flex-wrap items-start justify-between gap-3">
    <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{ar?'الإجراء الميداني':'Field dispatch'}</p><h2 className="mt-1 text-lg font-semibold">{task.title}</h2></div>
    <span className={'rounded-full border px-3 py-1 text-sm font-semibold '+tone(state)}>{crmDispatchLabel(state,ar)}</span>
-  </div>
+  </div> : null}
 
-  <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+  {!compact ? <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
    <div><span className="text-xs text-slate-500">{ar?'موعد القبول':'Accept by'}</span><p className={ackOverdue?'font-semibold text-rose-700':''}>{fmt(task.ack_due_at,ar)}{ackOverdue?' · '+(ar?'متأخر':'overdue'):''}</p></div>
    <div><span className="text-xs text-slate-500">{ar?'تم القبول':'Accepted'}</span><p>{fmt(task.acknowledged_at,ar)}</p></div>
    <div><span className="text-xs text-slate-500">{ar?'بدء العمل':'Work started'}</span><p>{fmt(task.work_started_at,ar)}</p></div>
    <div><span className="text-xs text-slate-500">{ar?'تم الإصلاح':'Fixed'}</span><p>{fmt(task.fixed_at,ar)}</p></div>
-  </div>
+  </div> : null}
 
   {task.dispatch_state==='blocked'&&task.blocked_reason?<div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm"><strong>{ar?'سبب التوقف':'Blocked by'}</strong><p className="mt-1 whitespace-pre-wrap">{task.blocked_reason}</p></div>:null}
   {task.dispatch_state==='fixed'&&task.result?<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm"><strong>{ar?'تقرير المشغّل':'Operator report'}</strong><p className="mt-1 whitespace-pre-wrap">{task.result}</p></div>:null}
