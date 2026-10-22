@@ -106,6 +106,12 @@ export async function generateInvestorStatement(fd:FormData) {
  if(agreementError || !agreement) fail('Investor agreement could not be verified.');
  if(agreement.status!=='active' || !agreement.profit_basis_confirmed) fail('Confirm the profit basis on the active agreement first.');
  if(bounds.start<agreement.start_date || (agreement.end_date && bounds.end>agreement.end_date)) fail('Select a full month within the agreement. No partial-month entitlement is inferred.');
+ if(agreement.investment_amount_usd!=null){
+  const priorHistory=await supabase.from('investor_historical_months').select('id').eq('investor_user_id',agreement.investor_user_id).eq('month_start',bounds.start).limit(1);
+  if(priorHistory.error)fail('Could not check linked historical investor records.');
+  if((priorHistory.data??[]).length)fail('This month is already preserved in confirmed historical investor records; do not create a duplicate draft.');
+ }
+
  const {data:existing,error:existingError}=await supabase.from('investor_monthly_statements').select('id,calculation_status').eq('agreement_id',agreementId).eq('month_start',bounds.start).maybeSingle();
  if(existingError) fail('Could not check the existing statement.');
  if(existing?.calculation_status === "finalized") fail('This month is finalized and cannot be recalculated.');
@@ -151,9 +157,10 @@ export async function generateInvestorStatement(fd:FormData) {
  const usdCapped=agreement.payout_cap_usd!=null;
  const requestedRate=Number(text(fd,'usd_rate_lyd_per_usd'));
  const rate=usdCapped&&Number.isFinite(requestedRate)&&requestedRate>0?requestedRate:null;
+ const rateSource=text(fd,'usd_rate_source');
  const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
   (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized') &&
-  (!usdCapped||rate!==null);
+  (!usdCapped||(rate!==null&&rateSource.length>=8));
  let shareUsd:number|null=null;
  if(usdCapped&&rate!=null){
   const history=await supabase.from('investor_historical_months').select('confirmed_payable_usd,payment_confirmed_at')
@@ -165,7 +172,7 @@ export async function generateInvestorStatement(fd:FormData) {
    +priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_usd??0),0);
   shareUsd=Math.max(0,Math.min(Math.round((grossShare/rate)*100)/100,Number(agreement.payout_cap_usd)-previouslyDueUsd));
  }
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
   operating_expenses_lyd:calculation.operatingExpensesLyd,operating_profit_lyd:calculation.operatingProfitLyd,capital_purchases_lyd:calculation.capitalPurchasesLyd,
