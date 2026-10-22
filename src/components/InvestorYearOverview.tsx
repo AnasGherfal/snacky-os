@@ -2,7 +2,7 @@
 import { getAuthenticatedSupabaseServerClient } from '@/lib/auth';
 
 const fmtLYD = (n: number) => new Intl.NumberFormat('en-US', {minimumFractionDigits:2,maximumFractionDigits:2}).format(n) + ' LYD';
-const fmtUSD = (n: number) => '$' + new Intl.NumberFormat('en-US', {minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
+const referenceRate = 7.5; // January–March 2026 owner-supplied historical FX. Indicative for contract capital, not a fixed 2026 settlement rate.
 const amount = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0;
 const monthLabel = (month: string, ar: boolean) => new Intl.DateTimeFormat(ar ? 'ar-LY' : 'en-US', {month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(month+'T12:00:00Z'));
 type Input = { agreementId: string; investorUserId: string; investmentUsd?: number|string|null; capUsd?: number|string|null; ar: boolean };
@@ -21,12 +21,14 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
   const monthly = new Map((statements.data??[]).map(s=>[s.month_start,s]));
   const confirmedHistory = (history.data??[]).filter(h=>h.payment_confirmed_at && h.confirmed_payable_usd != null && h.confirmed_paid_usd != null);
   const historicalDueUSD = confirmedHistory.reduce((sum,h)=>sum+amount(h.confirmed_payable_usd),0);
-  const historicalPaidUSD = confirmedHistory.reduce((sum,h)=>sum+amount(h.confirmed_paid_usd),0);
+  const historicalPaidLyd = confirmedHistory.reduce((sum,h)=>sum+amount(h.confirmed_paid_usd)*amount(h.exchange_rate_lyd_per_usd),0);
+  const historicalDueLyd = confirmedHistory.reduce((sum,h)=>sum+amount(h.confirmed_payable_usd)*amount(h.exchange_rate_lyd_per_usd),0);
   const finalizedUSD = (statements.data??[]).filter(s=>s.calculation_status==='finalized' && s.investor_share_due_usd != null).reduce((sum,s)=>sum+amount(s.investor_share_due_usd),0);
   const settledLYD = (payments.data??[]).filter(p=>p.finance_posting_status==='posted'&&p.finance_transaction_id).reduce((sum,p)=>sum+amount(p.amount_lyd),0);
   const drafts = (statements.data??[]).filter(s=>s.calculation_status!=='finalized');
   const estimateLyd = drafts.reduce((sum,s)=>sum+amount(s.investor_share_due_lyd),0);
   const knownUSD = historicalDueUSD+finalizedUSD;
+  const verifiedLyd = historicalDueLyd + (statements.data??[]).filter(s=>s.calculation_status==='finalized').reduce((sum,s)=>sum+amount(s.investor_share_due_lyd),0);
   const cap=capUsd == null ? null : amount(capUsd);
   const progress=cap && cap>0 ? Math.min(100,100*knownUSD/cap):0;
   const today=new Date().toLocaleDateString('en-CA',{timeZone:'Africa/Tripoli'});
@@ -40,16 +42,17 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
         <h2 id="tayseer-year-overview" className="text-xl font-bold">{tr('2026 · Monthly profit & investor share','2026 · الأرباح الشهرية وحصة المستثمر')}</h2>
         <p className="mt-1 text-sm text-slate-600">{tr('30% of net operating profit after products, rent, payroll and recorded operating costs. Any operating loss reduces profits in subsequent months before a share becomes due.','30% من صافي الربح التشغيلي بعد المنتجات والإيجار والمرتبات والمصاريف التشغيلية المسجلة. تُرحّل الخسارة وتُخصم من أرباح الأشهر التالية قبل احتساب الحصة.')}</p>
       </div>
-      <span className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-950">{tr('Contract investment', 'الاستثمار المتفق عليه')}: {fmtUSD(amount(investmentUsd))}</span>
+      <span className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-950">{tr('Contract investment', 'الاستثمار المتفق عليه')}: {fmtLYD(amount(investmentUsd)*referenceRate)}</span>
     </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Maximum cumulative share (150%)','الحد الأقصى الإجمالي للحصة (150%)')}</p><strong>{cap!=null?fmtUSD(cap):'—'}</strong></div>
-      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Confirmed historical USD entitlement, Jan–Mar','المستحق التاريخي المؤكد بالدولار، يناير–مارس')}</p><strong>{fmtUSD(historicalDueUSD)}</strong></div>
-      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Remaining USD entitlement capacity (excluding drafts)','المتبقي من سقف الدولار (دون المسودات)')}</p><strong>{cap!=null?fmtUSD(Math.max(0,cap-knownUSD)):'—'}</strong></div>
+      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Maximum cumulative share (150%)','الحد الأقصى الإجمالي للحصة (150%)')}</p><strong>{cap!=null?fmtLYD(cap*referenceRate):'—'}</strong></div>
+      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Historical Jan–Mar entitlement (LYD)','مستحق يناير–مارس التاريخي بالدينار')}</p><strong>{fmtLYD(historicalDueLyd)}</strong></div>
+      <div className="rounded-xl border p-3"><p className="text-xs">{tr('Indicative remaining cap (historical LYD rate)','المتبقي التقريبي من السقف (بسعر الصرف التاريخي)')}</p><strong>{cap!=null?fmtLYD(Math.max(0,cap-knownUSD)*referenceRate):'—'}</strong></div>
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs">{tr('Apr–Sep provisional LYD shares — NOT payable yet','الحصص التقديرية بالدينار من أبريل–سبتمبر — ليست مستحقة بعد')}</p><strong>{fmtLYD(estimateLyd)}</strong></div>
     </div>
+    <p className="text-xs text-amber-900">{tr('Capital and cap are shown as LYD references using the owner-supplied historical rate of 7.5 LYD/USD. The original contract cap remains USD-denominated internally; it is checked with documented rates when payouts are finalized, so the displayed LYD reference is not a fixed settlement limit.','قيمة الاستثمار وسقف التوزيع ظاهران بالدينار على أساس السعر التاريخي 7.5 د.ل للدولار الذي قدمه المالك. يبقى السقف في العقد الأصلي مقوماً بالدولار ويُراجع بأسعار الصرف الموثقة عند اعتماد التوزيعات، وليس الرقم بالدينار سقف دفع ثابتاً.')}</p>
     <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label={tr('USD cap progress for verified entitlements','نسبة المستحق المؤكد من سقف الدولار')}><div className="h-full rounded-full bg-emerald-700" style={{width:progress+'%'}}/></div>
-    <p className="text-xs text-slate-600">{tr('Confirmed January–March payouts recorded: ', 'الدفعات المؤكدة من يناير إلى مارس: ')}{fmtUSD(historicalPaidUSD)}. {tr('Posted payouts in the new LYD ledger: ','الدفعات المرحلة في دفتر الدينار الجديد: ')}{fmtLYD(settledLYD)}. {tr('These are separate currencies and are never added without a verified exchange rate.','العملتان منفصلتان ولا يتم جمعهما دون سعر صرف موثق.')}</p>
+    <p className="text-xs text-slate-600">{tr('Confirmed January–March payouts recorded: ', 'الدفعات المؤكدة من يناير إلى مارس: ')}{fmtLYD(historicalPaidLyd)}. {tr('Posted payouts since April: ','الدفعات المرحلة منذ أبريل: ')}{fmtLYD(settledLYD)}. {tr('Confirmed historical and finalized entitlements: ','المستحق التاريخي والمعتمد: ')}{fmtLYD(verifiedLyd)}. {tr('Draft shares are excluded from verified payable amounts.','الحصص التقديرية ليست ضمن المستحقات المعتمدة.')}</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-sm">
       <thead><tr className="border-b bg-slate-50 text-start">
         {[tr('Month','الشهر'),tr('Sales / original profit','المبيعات / الربح الأصلي'),tr('Products','تكلفة المنتجات'),tr('Operating expenses','المصاريف التشغيلية'),tr('Net profit after costs','صافي الربح بعد المصاريف'),tr('Loss carried in → out','الخسارة المرحلة دخول ← خروج'),tr('Investor 30%','حصة المستثمر 30%'),tr('Status','الحالة')].map(h=><th key={h} className="p-3 text-start font-semibold">{h}</th>)}
@@ -64,7 +67,7 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
             <td className="p-3">{fmtLYD(Math.abs(amount(h.other_opex_lyd)))}</td>
             <td className="p-3">{fmtLYD(amount(h.net_profit_lyd))}</td>
             <td className="p-3">{h.previous_month_lyd==null?'—':fmtLYD(amount(h.previous_month_lyd))} → {amount(h.net_profit_lyd)<0?fmtLYD(amount(h.net_profit_lyd)):'0.00 LYD'}</td>
-            <td className="p-3 font-semibold">{h.confirmed_payable_usd==null?'—':fmtUSD(amount(h.confirmed_payable_usd))}</td>
+            <td className="p-3 font-semibold">{h.confirmed_payable_usd==null||h.exchange_rate_lyd_per_usd==null?'—':fmtLYD(amount(h.confirmed_payable_usd)*amount(h.exchange_rate_lyd_per_usd))}</td>
             <td className="p-3 text-emerald-800">{tr('Historical · owner confirmed','تاريخي · مؤكد من المالك')}</td>
           </> : s ? <>
             <td className="p-3">{fmtLYD(amount(s.revenue_lyd))}</td>
@@ -72,12 +75,12 @@ export async function InvestorYearOverview({agreementId,investorUserId,investmen
             <td className="p-3">{fmtLYD(amount(s.operating_expenses_lyd))}</td>
             <td className="p-3">{fmtLYD(amount(s.operating_profit_lyd))}</td>
             <td className="p-3">{fmtLYD(amount(s.loss_carried_in_lyd))} → {fmtLYD(amount(s.loss_carried_out_lyd))}</td>
-            <td className="p-3 font-semibold">{fmtLYD(amount(s.investor_share_due_lyd))}{s.calculation_status==='draft'?<p className="text-xs font-normal text-amber-800">{tr('Estimate, not yet due','تقدير، غير مستحق حالياً')}</p>:s.investor_share_due_usd!=null?<p className="text-xs">{fmtUSD(amount(s.investor_share_due_usd))}</p>:null}</td>
+            <td className="p-3 font-semibold">{fmtLYD(amount(s.investor_share_due_lyd))}{s.calculation_status==='draft'?<p className="text-xs font-normal text-amber-800">{tr('Estimate, not yet due','تقدير، غير مستحق حالياً')}</p>:null}</td>
             <td className="p-3">{s.calculation_status==='finalized'?tr('Finalized','معتمد'):tr('Draft · source/FX review','مسودة · مراجعة المصاريف والصرف')}</td>
           </> : <td colSpan={7} className="p-3 text-slate-500">{mon===currentMonth?tr('Current month: waiting for verified complete sales and expense records. No payout is accrued yet.','الشهر الحالي: بانتظار بيانات المبيعات والمصاريف المعتمدة. لا يُحسب استحقاق حتى الآن.'):tr('No verified monthly figures available.','لا تتوفر أرقام شهرية معتمدة.')}</td>}
         </tr>;
       })}</tbody>
     </table></div>
-    <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{tr('Important: April–September calculations are draft estimates from active XY monthly reports and currently categorized Finance expenses. Some expenses and manual sales costs remain unresolved. These amounts must not be recorded as verified debt or paid until costs are reconciled and the USD exchange rate used for the $8,280 cap is documented. New machines are capital investment, not automatically a full operating expense.','مهم: حسابات أبريل–سبتمبر تقديرية بناءً على ملفات XY الشهرية النشطة والمصاريف المصنفة حالياً. توجد مصاريف وتكلفة مبيعات يدوية تحتاج تسوية. لا تُعتبر الأرقام ديناً معتمداً ولا تُدفع قبل مراجعة جميع المصاريف وتوثيق سعر الصرف لحساب سقف 8,280 دولار. شراء الماكينات الجديدة استثمار رأسمالي وليس بالضرورة مصروفاً تشغيلياً كاملاً.')}</p>
+    <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{tr('Important: April–September calculations are draft estimates from active XY monthly reports and currently categorized Finance expenses. Some expenses and manual sales costs remain unresolved. These amounts must not be recorded as verified debt or paid until costs are reconciled and the documented exchange rate for the contract cap is verified. New machines are capital investment, not automatically a full operating expense.','مهم: حسابات أبريل–سبتمبر تقديرية بناءً على ملفات XY الشهرية النشطة والمصاريف المصنفة حالياً. توجد مصاريف وتكلفة مبيعات يدوية تحتاج تسوية. لا تُعتبر الأرقام ديناً معتمداً ولا تُدفع قبل مراجعة جميع المصاريف وتوثيق سعر الصرف لحساب السقف التعاقدي. شراء الماكينات الجديدة استثمار رأسمالي وليس بالضرورة مصروفاً تشغيلياً كاملاً.')}</p>
   </section>;
 }
