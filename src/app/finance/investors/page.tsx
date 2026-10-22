@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ChartCard, TrendChart } from "@/components/DecisionCharts";
 import { InvestorMoneyForm, type InvestorFundingReceipt } from "@/components/InvestorMoneyForm";
 import { InvestorStatementCard, type InvestorStatementRecord } from "@/components/InvestorStatementCard";
+import { InvestorYearOverview } from "@/components/InvestorYearOverview";
 import { EmptyState, ErrorState, FormField, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -66,6 +67,7 @@ export default async function InvestorsPage({searchParams}:{searchParams:Promise
  return <>
   <PageHeader title={tr('Investors','المستثمرون')} subtitle={tr('Capital received → monthly profit review → agreed share → payouts and unpaid balances.','رأس المال المستلم ← مراجعة الربح الشهري ← النسبة المتفق عليها ← الدفعات والمستحقات.')} action={<Link href="/team/new" className="btn-secondary">{tr('Create investor login','إنشاء دخول مستثمر')}</Link>} />
   <div className="space-y-5">
+   {selected?<InvestorYearOverview agreementId={selected.id} investorUserId={selected.investor_user_id} investmentUsd={selected.investment_amount_usd} capUsd={selected.payout_cap_usd} ar={ar}/>:null}
    {notice?<p role="status" className={`rounded-lg border p-4 text-sm ${params.error?'border-rose-200 bg-rose-50 text-rose-900':params.warning?'border-amber-200 bg-amber-50 text-amber-950':'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>{notice}</p>:null}
    <nav aria-label={tr('Investor agreements','اتفاقيات المستثمرين')} className="flex flex-wrap gap-2">{agreements.map(a=><Link className={selected?.id===a.id?'btn-primary':'btn-secondary'} key={a.id} href={`/finance/investors?agreement=${a.id}`}>{a.investor_name} · {a.profit_share_percent}%</Link>)}</nav>
    <details className="surface-card" open={!selected}>
