@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Link from "next/link";
+import { CashPickupPlanner } from "@/components/CashPickupPlanner";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -840,6 +841,8 @@ export default async function CashReconciliationPage({
         subtitle="Compare VMS sales with cash physically removed from machines during the same selected collection dates."
         action={<SecondaryButton href="/cash-collections">Cash collections</SecondaryButton>}
       />
+
+      <CashPickupPlanner />
 
       <SectionCard>
         <div className="space-y-4 p-4">
