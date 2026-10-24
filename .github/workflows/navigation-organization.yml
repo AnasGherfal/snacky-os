@@ -1,0 +1,32 @@
+name: Snacky navigation and storage organization
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/components/ModuleTabs.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "src/components/app-navigation.ts"
+      - "src/components/Sidebar.tsx"
+      - "src/app/inventory/page.tsx"
+      - "scripts/test-navigation-organization.mjs"
+      - ".github/workflows/navigation-organization.yml"
+  workflow_dispatch:
+jobs:
+  navigation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Navigation regression tests
+        run: node --test scripts/test-navigation-organization.mjs
+      - name: Lint changed components
+        run: npx eslint src/components/ModuleTabs.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts src/components/Sidebar.tsx src/app/inventory/page.tsx
+      - name: Typecheck
+        run: npm run typecheck
