@@ -4,7 +4,7 @@ import { ReactNode, useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ModuleTabs } from "@/components/ModuleTabs";
 import { getModuleTabGroupForPath, pathnameFromHref } from "@/components/module-tabs-config";
-import { AppRole, canAccessPath } from "@/lib/authz";
+import { AppRole, canAccessPath, hasRole } from "@/lib/authz";
 
 type ModuleTabsProfile = {
   id: string;
@@ -30,7 +30,10 @@ export function ModuleTabsLayout({ children, profile }: { children: ReactNode; p
         activeStatus: profile.active_status,
       };
 
-      return tabGroup?.tabs.filter((tab) => canAccessPath(userContext, pathnameFromHref(tab.href))) ?? [];
+      return tabGroup?.tabs.filter((tab) =>
+        canAccessPath(userContext, pathnameFromHref(tab.href)) &&
+        (tab.href !== "/admin/testing-lab" || hasRole(userContext, "owner"))
+      ) ?? [];
     },
     [profile.active_status, profile.can_add_products, profile.id, profile.role, profile.roles, profile.team_member_id, tabGroup],
   );
