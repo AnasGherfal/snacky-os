@@ -1,0 +1,40 @@
+name: Management mobile navigation and RTL Storage
+on:
+  pull_request:
+    branches: [master, release/snacky-os-combined-staging-20261024]
+    paths:
+      - "src/components/OwnerMobileNavigation.tsx"
+      - "src/components/ShellChrome.tsx"
+      - "src/components/ModuleTabs.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "src/app/inventory/page.tsx"
+      - "scripts/test-owner-mobile-navigation.mjs"
+      - "scripts/test-navigation-organization.mjs"
+      - "scripts/test-assigned-storage-stocktake.mjs"
+      - "scripts/test-simple-monthly-stock-check.mjs"
+      - "scripts/test-stock-reconciliation.mjs"
+      - ".github/workflows/management-mobile-ux.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mobile-ux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Run mobile navigation and bilingual Storage contracts
+        run: node --experimental-strip-types --test scripts/test-owner-mobile-navigation.mjs scripts/test-navigation-organization.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
+      - name: Lint new mobile navigation and shell
+        run: npx eslint src/components/OwnerMobileNavigation.tsx src/components/ShellChrome.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts
+      - name: Lint Storage layout (legacy any typing deferred)
+        run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

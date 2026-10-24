@@ -55,11 +55,22 @@ test("cash handling and health stay discoverable when sidebar is simplified", ()
   assert.match(sidebar, /items: \[operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem/);
 });
 
-test("storage's key workflows remain accessible without crowding the main screen", () => {
-  assert.match(storage, /href="\/restock-priority\/purchase-list">What to buy/);
-  assert.match(storage, /href="\/inventory\/stocktake">Count storage/);
-  assert.match(storage, /href="\/inventory\/movements\/new">Manual adjustment/);
-  assert.match(storage, /<summary[^>]*>More storage tools and help<\/summary>/);
-  assert.match(storage, /<span>Operator bag stock/);
-  assert.match(storage, /<span>Recent stock movements/);
+test("Storage keeps only daily actions while advanced tools live in grouped More", () => {
+  assert.match(storage, /href="\/restock-priority\/purchase-list"/);
+  assert.match(storage, /href="\/inventory\/stocktake"/);
+  assert.match(storage, /tr\("What to buy",/);
+  assert.match(storage, /tr\("Count storage",/);
+  assert.doesNotMatch(storage, /More storage tools and help/);
+  assert.doesNotMatch(storage, /href="\/inventory\/movements\/new"/);
+  for (const href of [
+    "/restock-priority/purchase-list", "/inventory/stocktake", "/inventory/stock-check",
+    "/inventory/machine-storage", "/inventory/movements", "/inventory/movements/new",
+    "/storage-locations", "/product-planning", "/suppliers",
+  ]) {
+    assert.ok(moduleItems("stockTabs").includes(href), `Missing advanced stock destination: ${href}`);
+  }
+  assert.match(config, /group: "Buying", groupAr: "الشراء"/);
+  assert.match(config, /group: "Stock checks", groupAr: "الجرد ومراجعة المخزون"/);
+  assert.match(tabs, /tab\.group/);
+  assert.match(tabs, /tab\.groupAr/);
 });
