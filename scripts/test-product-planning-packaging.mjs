@@ -233,7 +233,7 @@ test("Product Planning page exposes a persistent buy list ordered by monthly sal
   assert.match(planningPage, /\.lte\("business_month", planningMonth\)/);
   assert.match(planningPage, /\.lte\("sales_month", planningMonth\)/);
   assert.match(planningHelper, /New product — keep testing/);
-  assert.match(moduleTabs, /label:\s*"Product Planning",\s*href:\s*"\/product-planning"/);
+  assert.doesNotMatch(moduleTabs, /href:\s*"\/product-planning"/);
   assert.match(authz, /matchesPrefix\(pathname, \["\/product-planning"\]\)/);
 });
 
