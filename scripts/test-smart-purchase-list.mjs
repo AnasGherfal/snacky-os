@@ -150,12 +150,13 @@ test("UI defaults to 22 days, keeps other coverage choices, explains Elite deman
   const tabs = read("src/components/module-tabs-config.ts");
   assert.match(page, /coverageChoices = \[7, 14, 22, 30\]/);
   assert.match(page, /params\.days \?\? 22/);
-  assert.match(page, /Elite Future School demand is included/);
-  assert.match(page, /22-day stock cover by default/);
+  assert.match(page, /Elite Future School demand includes/);
+  assert.match(page, /One sales-based purchase list/);
+  assert.match(page, /How quantities are calculated/);
   assert.match(page, /Current storage could not be verified/);
   assert.match(page, /CreatePurchaseListButton/);
   assert.match(page, /b\.demandDailyRate - a\.demandDailyRate|Buy these first/);
-  assert.match(tabs, /Purchase List/);
-  assert.match(tabs, /قائمة الشراء/);
+  assert.match(tabs, /What to Buy/);
+  assert.match(tabs, /شن نشتري/);
   assert.match(tabs, /\/restock-priority\/purchase-list/);
 });
