@@ -41,7 +41,7 @@ export async function loadPhysicalStorageData(client: SupabaseClient): Promise<P
     });
   }
   if (products.error) return { ok: false, items: [], error: `Product catalog unavailable: ${products.error}` };
-  if (products.data.length >= ROW_LIMIT || products.count > products.data.length) return { ok: false, items: [], error: "Product catalog read is incomplete" };
+  if (products.data.length >= ROW_LIMIT || products.count !== products.data.length) return { ok: false, items: [], error: "Product catalog read is incomplete" };
 
   const stock = await safeSupabaseQuery<StorageBalance>({
     label: "storage.physical-ledger",
@@ -50,7 +50,7 @@ export async function loadPhysicalStorageData(client: SupabaseClient): Promise<P
       .limit(ROW_LIMIT),
   });
   if (stock.error) return { ok: false, items: [], error: `Physical ledger unavailable: ${stock.error}` };
-  if (stock.data.length >= ROW_LIMIT || stock.count > stock.data.length) return { ok: false, items: [], error: "Physical ledger read is incomplete" };
+  if (stock.data.length >= ROW_LIMIT || stock.count !== stock.data.length) return { ok: false, items: [], error: "Physical ledger read is incomplete" };
 
   try {
     return {
