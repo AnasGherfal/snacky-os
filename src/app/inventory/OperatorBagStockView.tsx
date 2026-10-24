@@ -38,7 +38,7 @@ function matchesBagSearch(row: BagDisplayRow, q: string) {
  * checked inventory access. This read-only screen must never post ledger rows.
  */
 export async function OperatorBagStockView({
-  client, locale, q, page, pageSize, searchParams,
+  client, locale, q, page, pageSize, searchParams, canSeeMovementHistory,
 }: {
   client: SupabaseClient;
   locale: string;
@@ -46,6 +46,7 @@ export async function OperatorBagStockView({
   page: number;
   pageSize: number;
   searchParams: SearchParamsRecord;
+  canSeeMovementHistory: boolean;
 }) {
   const tr = (en: string, ar: string) => labelError(locale, en, ar);
   const balances = await safeSupabaseQuery<BagLedgerRow>({
@@ -139,12 +140,25 @@ export async function OperatorBagStockView({
           <MobileField label={tr("Recorded quantity", "الكمية المسجلة")}>{renderUnits(r, locale === "ar")}</MobileField>
           <MobileField label={tr("SKU", "الرمز")}>{r.sku ?? "—"}</MobileField>
         </div>
+        {canSeeMovementHistory ? (
+          <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+            className="mt-3 inline-block text-sm font-semibold text-emerald-800 underline underline-offset-2">
+            {tr("Inspect movement history", "مراجعة حركات المنتج")}
+          </Link>
+        ) : null}
       </MobileRecordCard>)}</MobileCardList>
       <DataTable className="hidden md:block" headers={[
         tr("Operator", "المشغّل"), tr("Product", "المنتج"),
         tr("SKU", "الرمز"), tr("Recorded quantity", "الكمية المسجلة"),
       ]}>{rows.map((r) => <tr key={`${r.operatorId}:${r.productId}`}>
-        <td>{r.operatorName}</td><td>{r.productName}</td><td>{r.sku ?? "—"}</td>
+        <td>{r.operatorName}</td><td>
+          <div>{r.productName}</div>
+          {canSeeMovementHistory ? <Link
+            href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+            className="text-xs font-semibold text-emerald-800 underline underline-offset-2">
+            {tr("Movement history", "سجل الحركات")}
+          </Link> : null}
+        </td><td>{r.sku ?? "—"}</td>
         <td className={r.quantity < 0 ? "font-semibold text-rose-800" : "font-semibold"}>
           {renderUnits(r, locale === "ar")}
         </td>
@@ -153,8 +167,8 @@ export async function OperatorBagStockView({
     <PaginationControls basePath="/inventory" searchParams={searchParams}
       page={currentPage} pageSize={pageSize} totalCount={visible.length}
       itemLabel={tr("operator product balances", "أرصدة منتجات المشغلين")} />
-    <div className="mt-4">
+    {canSeeMovementHistory ? <div className="mt-4">
       <SecondaryButton href="/inventory/movements">{tr("Open Movement Log", "فتح سجل الحركات")}</SecondaryButton>
-    </div>
+    </div> : null}
   </div>;
 }
