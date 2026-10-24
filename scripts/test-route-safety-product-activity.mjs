@@ -104,7 +104,7 @@ test("product activity dashboard explains sales, damage, returns, and safety pro
   assert.match(activityPage, /Combined total sales/);
   assert.match(activityPage, /Damaged products/);
   assert.match(activityPage, /Compressor safety compliance/);
-  assert.match(tabs, /label:\s*"Product Activity",\s*href:\s*"\/reports\/route-product-activity"/);
+  assert.match(tabs, /label:\s*"Route Product Activity",\s*href:\s*"\/reports\/route-product-activity"/);
 });
 
 test("confirmed route-entered sales are added visibly to VMS totals without rewriting VMS", () => {
