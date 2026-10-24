@@ -179,13 +179,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const storageResult = await loadPhysicalStorageData(inventoryReadClient);
   if (!storageResult.ok) {
-    console.error("[inventory] Physical Storage could not be verified", { error: storageResult.error });
+    console.error("[inventory] Recorded Storage balance could not be verified", { error: storageResult.error });
     return (
       <ErrorState
         title={tr("Storage inventory could not be verified", "تعذر التحقق من مخزون المخزن")}
         body={tr(
-          "Physical stock could not be verified from the ledger. No quantities have been changed or treated as zero. Retry or check Data Health.",
-          "تعذر التحقق من كميات المخزن من سجل المخزون. لم تتغير أي كميات ولم نعتبر البيانات المفقودة صفراً. أعد المحاولة أو راجع سلامة البيانات."
+          "Recorded Storage balances could not be verified from the ledger. No quantities have been changed or treated as zero. Retry or check Data Health.",
+          "تعذر التحقق من رصيد المخزن المسجل بالنظام. لم تتغير أي كميات ولم نعتبر البيانات المفقودة صفراً. أعد المحاولة أو راجع سلامة البيانات."
         )}
         action={<SecondaryButton href="/inventory">{tr("Retry", "إعادة المحاولة")}</SecondaryButton>}
       />
@@ -232,7 +232,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           key: "route_reservations",
           label: "Route reservations unavailable",
           table: "route_stock_lines",
-          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; physical stock is still shown.",
+          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; the recorded Storage balance is still shown.",
         }
       : null,
     movementsError
@@ -250,7 +250,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           key: "minimum_thresholds",
           label: "Minimum stock thresholds unavailable",
           table: "products.min_storage_qty",
-          message: "Minimum stock thresholds are unavailable; low-stock labels are disabled, but physical quantities are verified.",
+          message: "Minimum stock thresholds are unavailable; threshold labels are disabled, but the ledger balance is available.",
         }
       : null,
   ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
@@ -369,7 +369,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     <div dir={direction}>
       <PageHeader
         title={tr("Storage", "المخزون")}
-        subtitle={tr("See what is on the shelves, what is reserved for routes, and what is available to use.", "اعرف الكميات الموجودة في المخزن والمحجوزة للجولات والمتاحة للاستخدام.")}
+        subtitle={tr("Recorded balances from inventory movements—not a physical shelf count.", "الرصيد المسجل من حركات المخزون، وليس جرداً فعلياً للرفوف.")}
         action={
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/restock-priority/purchase-list">{tr("What to buy", "شن نشتري؟")}</PrimaryButton>
@@ -429,22 +429,22 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         <div className="surface-card">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("In storage", "في المخزن")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Physical units currently on the storage shelves", "وحدات موجودة فعلياً على رفوف المخزن")}</p>
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Calculated from recorded receipts, picks and returns", "محسوب من الاستلام والسحب والإرجاع المسجل")}</p>
         </div>
         <div className="surface-card border-amber-200 bg-amber-50">
           <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{tr("Reserved in storage", "محجوز للجولات")}</div>
           <div className="mt-2 text-2xl font-semibold text-amber-950">{reservationsKnown ? filteredInventoryRows.reduce((sum, row) => sum + (row.reservedQty ?? 0), 0) : tr("Unavailable", "غير متاح")}</div>
-          <p className="mt-1 hidden text-sm text-amber-800 sm:block">{tr("Still in storage, but attached to active routes", "موجودة في المخزن ومخصصة لجولات")}</p>
+          <p className="mt-1 hidden text-sm text-amber-800 sm:block">{tr("Recorded units reserved for active routes", "كميات مسجلة ومحجوزة للجولات النشطة")}</p>
         </div>
         <div className="surface-card border-emerald-200 bg-emerald-50">
           <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr("Available — no route", "متاح بدون حجز")}</div>
           <div className="mt-2 text-2xl font-semibold text-emerald-950">{reservationsKnown ? filteredInventoryRows.reduce((sum, row) => sum + (row.availableQty ?? 0), 0) : tr("Unavailable", "غير متاح")}</div>
-          <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Free units that can be assigned to a new route", "وحدات يمكن تخصيصها لجولة جديدة")}</p>
+          <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Unreserved system quantity; check before picking", "الرصيد غير المحجوز بالنظام؛ تحقق منه عند السحب")}</p>
         </div>
       </div>
       <p className="mb-4 text-xs text-slate-600">{reservationsKnown
-        ? tr("Reserved units remain physically in storage. Available quantities exclude those route reservations.", "الكميات المحجوزة موجودة في المخزن فعلياً، والمتاح يستثني ما خُصص للجولات.")
-        : tr("Route reservations are unverified. Physical stock is shown, but reservable stock is hidden until verification.", "تعذر التحقق من حجوزات الجولات. نعرض المخزون الفعلي، لكن المتاح غير ظاهر حتى التحقق.")}</p>
+        ? tr("These balances come from stock movements, not a physical count. Available excludes active route reservations; use Count Storage to verify shelves.", "هذه أرصدة محسوبة من حركات المخزون وليست جرداً فعلياً. المتاح لا يشمل حجوزات الجولات؛ تحقق من الرفوف بجرد المخزن.")
+        : tr("Route reservations are unverified. Recorded Storage is shown, but unreserved stock is hidden until verification.", "تعذر التحقق من حجوزات الجولات. نعرض رصيد المخزن المسجل، لكن الكمية غير المحجوزة مخفية حتى التحقق.")}</p>
       {filterCounts.review > 0 && filter !== "review" ? (
         <Link href={inventoryFilterHref("review", q)} className="mb-4 block rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-950">
           {tr("Stock needs review", "مخزون يحتاج مراجعة")} ({filterCounts.review}) — {tr("Open exceptions", "عرض الحالات")}
