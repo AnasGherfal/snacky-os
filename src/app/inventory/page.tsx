@@ -14,7 +14,7 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "reserved" | "review";
+type InventoryFilter = "stocked" | "out" | "reserved" | "review";
 
 type InventoryQueryIssue = {
   key: string;
@@ -55,12 +55,12 @@ type InventoryRow = {
 };
 
 const inventoryFilterNamesAr: Record<InventoryFilter, string> = {
-  all: "كل المنتجات", out: "نافد", reserved: "محجوز",
+  stocked: "موجود في المخزن", out: "نافد", reserved: "محجوز",
   review: "تحتاج متابعة",
 };
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
-  { key: "all", label: "All products" },
+  { key: "stocked", label: "In Storage" },
   { key: "out", label: "Out of stock" },
   { key: "reserved", label: "Reserved for routes" },
   { key: "review", label: "Needs attention" },
@@ -114,7 +114,7 @@ function logInventoryQueryError({
 
 function inventoryFilterHref(filter: InventoryFilter, q: string) {
   const params = new URLSearchParams();
-  if (filter !== "all") params.set("filter", filter);
+  if (filter !== "stocked") params.set("filter", filter);
   if (q.trim()) params.set("q", q.trim());
   const query = params.toString();
   return query ? `/inventory?${query}` : "/inventory";
@@ -138,6 +138,7 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
   return rows.filter((row) => {
     const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
+    if (filter === "stocked") return row.currentQty !== 0;
     if (filter === "out") return row.status === "out_of_stock";
     if (filter === "reserved") return row.reservedQty !== null && row.reservedQty > 0;
     if (filter === "review") return row.status === "review" || row.status === "unverified" || row.status === "low_stock";
@@ -152,7 +153,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const { page, pageSize } = getPagination(params);
   const q = String(params.q ?? "");
   const rawFilter = String(params.filter ?? "");
-  const filter = inventoryFilters.some((item) => item.key === rawFilter) ? (rawFilter as InventoryFilter) : "all";
+  const filter = inventoryFilters.some((item) => item.key === rawFilter) ? (rawFilter as InventoryFilter) : "stocked";
   const profile = await getCurrentProfile();
   const userContext = profile
     ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
@@ -312,7 +313,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const inventoryRows = filteredInventoryRows.slice((visibleInventoryPage - 1) * pageSize, visibleInventoryPage * pageSize);
 
   const filterCounts: Record<InventoryFilter, number> = {
-    all: allInventoryRows.length,
+    stocked: allInventoryRows.filter((row) => row.currentQty !== 0).length,
     out: allInventoryRows.filter((row) => row.status === "out_of_stock").length,
     reserved: allInventoryRows.filter((row) => row.reservedQty !== null && row.reservedQty > 0).length,
     review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified" || row.status === "low_stock").length,
@@ -388,7 +389,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       <section className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <form action="/inventory" className="flex flex-wrap items-center gap-2">
-            {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
+            {filter !== "stocked" ? <input type="hidden" name="filter" value={filter} /> : null}
             <input type="hidden" name="pageSize" value={pageSize} />
             <div className="min-w-0 flex-1"><SearchInput defaultValue={q} placeholder={tr("Search product or SKU...", "ابحث باسم المنتج أو رمزه...")} /></div>
             <button className="btn-secondary" type="submit">{tr("Search", "بحث")}</button>
@@ -447,9 +448,9 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       {!inventoryRows.length ? (
         <EmptyState
-          title={q || filter !== "all" ? tr("No products match this inventory view", "لا توجد منتجات مطابقة") : tr("No storage inventory yet", "لا توجد بيانات مخزون بعد")}
-          body={q || filter !== "all" ? tr("Try a broader search or switch filters.", "جرّب بحثاً أوسع أو غيّر الفلتر.") : tr("Create inventory movements into storage to populate calculated balances.", "تظهر الكميات بعد تسجيل حركات المخزون الفعلية.")}
-          action={q || filter !== "all" ? <SecondaryButton href="/inventory">{tr("Reset filters", "إعادة تعيين الفلاتر")}</SecondaryButton> : undefined}
+          title={q || filter !== "stocked" ? tr("No products match this inventory view", "لا توجد منتجات مطابقة") : tr("No storage inventory yet", "لا توجد بيانات مخزون بعد")}
+          body={q || filter !== "stocked" ? tr("Try a broader search or switch filters.", "جرّب بحثاً أوسع أو غيّر الفلتر.") : tr("Create inventory movements into storage to populate calculated balances.", "تظهر الكميات بعد تسجيل حركات المخزون الفعلية.")}
+          action={q || filter !== "stocked" ? <SecondaryButton href="/inventory">{tr("Reset filters", "إعادة تعيين الفلاتر")}</SecondaryButton> : undefined}
         />
       ) : (
         <>
