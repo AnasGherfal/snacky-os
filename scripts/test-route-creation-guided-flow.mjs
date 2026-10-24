@@ -11,6 +11,7 @@ const pageSource = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/page.
 const apiSource = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
 const inventoryPageSource = fs.readFileSync(path.join(repoRoot, "src/app/inventory/page.tsx"), "utf8");
 const restockLoaderSource = fs.readFileSync(path.join(repoRoot, "src/lib/restock-priority-data.ts"), "utf8");
+const physicalStorageLoaderSource = fs.readFileSync(path.join(repoRoot, "src/lib/storage-inventory-data.ts"), "utf8");
 const resilienceMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20260827153537_route_builder_timeout_resilience.sql"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
@@ -105,8 +106,10 @@ test("inventory failures cannot masquerade as zero stock", () => {
   assert.match(restockLoaderSource, /getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(restockLoaderSource, /from\("route_storage_stock_by_product"\)/);
   assert.match(restockLoaderSource, /storageLoaded: !storage\.error/);
-  assert.match(inventoryPageSource, /if \(!restockResult\.storageLoaded\)/);
-  assert.match(inventoryPageSource, /no missing result is being shown as zero/i);
+  assert.match(inventoryPageSource, /if \(!storageResult\.ok\)/);
+  assert.match(inventoryPageSource, /No quantities have been changed or treated as zero/i);
+  assert.match(physicalStorageLoaderSource, /stock\.count > stock\.data\.length/);
+  assert.doesNotMatch(inventoryPageSource, /loadRestockPriorityData\(/);
 });
 
 test("route planning uses narrow storage balances and the latest active VMS batch", () => {
