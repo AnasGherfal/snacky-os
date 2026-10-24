@@ -84,3 +84,12 @@ test("Stock page shows partial independent data only with visible uncertainty", 
   assert.match(page, /Inactive product still has stock/);
   assert.match(page, /minStorageQty/);
 });
+
+test("Storage defaults to physically stocked goods instead of every catalog product", () => {
+  const page = readFileSync("src/app/inventory/page.tsx", "utf8");
+  assert.match(page, /type InventoryFilter = "stocked" \| "out" \| "reserved" \| "review"/);
+  assert.match(page, /const filter = inventoryFilters\.some[\s\S]*: "stocked"/);
+  assert.match(page, /if \(filter === "stocked"\) return row\.currentQty !== 0/);
+  assert.match(page, /\{ key: "stocked", label: "In Storage" \}/);
+  assert.doesNotMatch(page, /\{ key: "low", label:/);
+});
