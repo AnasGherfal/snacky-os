@@ -4,8 +4,7 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { getServerI18n } from "@/lib/i18n/server";
-import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
-import { lyd } from "@/lib/format";
+import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { type RestockPriorityItem } from "@/lib/restock-priority";
@@ -192,7 +191,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   // not evaluate the same profile policy once per movement row.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
 
-  const canSeeCost = canViewFinancials(userContext);
   const restockResult = await loadRestockPriorityData(inventoryReadClient);
   if (!restockResult.storageLoaded) {
     return (
