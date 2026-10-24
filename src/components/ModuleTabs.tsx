@@ -1,8 +1,7 @@
 "use client";
 
 import Link, { useLinkStatus } from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
 
 export type ModuleTab = {
@@ -63,13 +62,14 @@ export function ModuleTabs({
   moduleName: string;
   moduleNameAr?: string;
 }) {
-  const router = useRouter();
   const { locale } = useLanguage();
   const [optimisticNavigation, setOptimisticNavigation] = useState<{ href: string; path: string; search: string } | null>(null);
   const optimisticHref = optimisticNavigation?.path === currentPath && optimisticNavigation.search === currentSearch
     ? optimisticNavigation.href
     : null;
   const activePath = optimisticHref ?? currentPath;
+  const primaryTabs = tabs.slice(0, 4);
+  const extraTabs = tabs.slice(primaryTabs.length);
   const activeIndex = useMemo(() => {
     let bestIndex = -1;
     let bestScore = -1;
@@ -83,30 +83,28 @@ export function ModuleTabs({
     return bestIndex;
   }, [activePath, tabs]);
 
-  useEffect(() => {
-    tabs.forEach((tab) => router.prefetch(tab.href));
-  }, [router, tabs]);
-
   if (!tabs.length) return null;
 
   const displayModuleName = locale === "ar" && moduleNameAr ? moduleNameAr : moduleName;
+  const extraTabActive = activeIndex >= primaryTabs.length;
 
   return (
     <nav
       aria-label={`${moduleName} navigation`}
-      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+      className="relative rounded-xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="border-b border-slate-100 px-3 py-2 sm:px-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           {displayModuleName}
         </div>
       </div>
+      <div className="flex min-w-0 items-stretch px-2 sm:px-3">
       <div
         role="tablist"
         aria-label={`${moduleName} tabs`}
-        className="flex gap-1 overflow-x-auto whitespace-nowrap px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-3"
+        className="flex min-w-0 flex-1 gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {tabs.map((tab, index) => {
+        {primaryTabs.map((tab, index) => {
           const active = index === activeIndex;
 
           return (
@@ -132,6 +130,46 @@ export function ModuleTabs({
             </Link>
           );
         })}
+      </div>
+      {extraTabs.length ? (
+        <details key={currentPath} className="group relative ms-1 shrink-0 border-s border-slate-100">
+          <summary
+            className={`flex min-h-11 cursor-pointer list-none items-center gap-1 border-b-2 px-3 py-2 text-sm font-semibold [&::-webkit-details-marker]:hidden ${
+              extraTabActive
+                ? "border-[var(--snacky-primary)] text-slate-950"
+                : "border-transparent text-slate-600 hover:text-slate-950"
+            }`}
+            aria-label={locale === "ar" ? "المزيد من الصفحات" : "More pages"}
+          >
+            {locale === "ar" ? "المزيد" : "More"}
+            <span aria-hidden="true" className="text-xs">{extraTabActive ? "●" : "⌄"}</span>
+          </summary>
+          <div className="absolute end-0 top-full z-40 mt-1 max-h-[min(65vh,28rem)] w-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+            {extraTabs.map((tab, index) => {
+              const active = activeIndex === primaryTabs.length + index;
+              return (
+                <Link
+                  key={`${tab.label}-${tab.href}`}
+                  href={tab.href}
+                  prefetch={false}
+                  aria-current={active ? "page" : undefined}
+                  onClick={(event) => {
+                    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                    setOptimisticNavigation({ href: tab.href, path: currentPath, search: currentSearch });
+                  }}
+                  className={`block rounded-lg px-3 py-2.5 text-sm transition ${
+                    active
+                      ? "bg-emerald-50 font-semibold text-emerald-950"
+                      : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+                  }`}
+                >
+                  {locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}
+                </Link>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
       </div>
     </nav>
   );
