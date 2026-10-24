@@ -248,7 +248,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) {
     work.push(warehouseOperationsItem);
   }
-  if (hasPermission(context, "cash.receive") && !hasPermission(context, "finance.view")) {
+  if (hasPermission(context, "cash.receive") && !hasPermission(context, "finance.view") && !isOperatorRole(context) && !hasAnyRole(context, ["warehouse", "purchasing"])) {
     work.push(cashCustodyItem);
   }
   if (hasPermission(context, "finance.view")) {
