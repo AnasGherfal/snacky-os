@@ -260,12 +260,25 @@ await check('seal exceptions remain flagged for owner review after counting', as
   assert.equal(core(exception.id).reconciliation, 'variance_review'); assert.equal((await workspace('owner', exception.id)).rows[0].seal_exception, true);
 });
 const revoked = await removal(); await assign(revoked); await drop(revoked); await pickup(revoked);
-await check('grant revocation blocks counting; an explicit owner takeover preserves custody', async () => {
+await check('revoking count keeps courier delivery possible, but takeover requires physical delivery', async () => {
   await grant('warehouse', false);
   await failed('warehouse', command('count', revoked.id, 3, { amount: '40', cash_location: 'Safe' }), '42501');
-  assert.equal((await workspace('operator', revoked.id)).rows[0].assignee_active, false);
-  await execute('owner', command('takeover', revoked.id, 3, { confirm_bag_id: revoked.bag, seal_condition: 'intact', notes: 'Physically received this box from the former coordinator' }));
-  await execute('owner', command('count', revoked.id, 4, { amount: '40', cash_location: 'Owner safe' }));
+  const courierView = await workspace('warehouse', revoked.id);
+  assert.equal(courierView.can_count, false);
+  assert.equal(courierView.can_transport, true);
+  assert.equal(courierView.rows[0].actions.includes('count'), false);
+  assert.equal(courierView.rows[0].actions.includes('deliver'), true);
+  // A warehouse role remains an authorized courier even after its separate
+  // counting grant is revoked. Showing it as fully inactive would be incorrect.
+  assert.equal((await workspace('operator', revoked.id)).rows[0].assignee_active, true);
+  const takeoverPayload = { confirm_bag_id: revoked.bag, seal_condition: 'intact', notes: 'Physically received this box from the former coordinator' };
+  await failed('owner', command('takeover', revoked.id, 3, takeoverPayload), '23514');
+  await execute('warehouse', command('deliver', revoked.id, 3, {
+    delivery_location: 'Owner handover desk',
+    notes: 'Courier delivered this sealed box to the owner',
+  }));
+  await execute('owner', command('takeover', revoked.id, 4, takeoverPayload));
+  await execute('owner', command('count', revoked.id, 5, { amount: '40', cash_location: 'Owner safe' }));
   assert.equal(core(revoked.id).counted_by, accounts.owner.member); await grant('warehouse');
 });
 const inactive = await removal(); await assign(inactive, 'purchasing'); await drop(inactive, 'purchasing'); await pickup(inactive, 'purchasing');
