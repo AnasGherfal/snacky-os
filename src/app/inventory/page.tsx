@@ -45,6 +45,8 @@ type InventoryRow = {
   category: string | null;
   brand: string | null;
   caseQuantity: number;
+  active: boolean;
+  unmapped: boolean;
   currentQty: number;
   reservedQty: number | null;
   availableQty: number | null;
@@ -290,11 +292,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         category: item.category,
         brand: item.brand,
         caseQuantity: item.caseQuantity,
+        active: item.active,
+        unmapped: item.unmapped,
         currentQty,
         reservedQty,
         availableQty,
         reservations,
-        status: physicalStockStatus(currentQty, reservedQty, item.minStorageQty, item.unmapped),
+        status: physicalStockStatus(currentQty, reservedQty, item.minStorageQty, item.unmapped || !item.active),
       };
     })
     .sort((left, right) => {
@@ -454,7 +458,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
               <MobileRecordCard key={row.productId}>
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="break-words text-base font-semibold text-slate-900">{row.productName}</h2>
+                    <h2 className="break-words text-base font-semibold text-slate-900">{row.unmapped ? tr("Unmapped product", "منتج غير مطابق") + " · " + row.productId.slice(0, 8) : row.productName}</h2>
+                    {!row.active && row.currentQty !== 0 ? <p className="mt-1 text-xs font-semibold text-amber-900">{tr("Inactive product still has stock", "منتج غير مفعّل وما زال فيه مخزون")}</p> : null}
                     <p className="mt-1 break-words text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</p>
                   </div>
                   <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
@@ -485,7 +490,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             {inventoryRows.map((row) => (
               <tr key={row.productId}>
                 <td>
-                  <div className="font-medium text-slate-900">{row.productName}</div>
+                  <div className="font-medium text-slate-900">{row.unmapped ? tr("Unmapped product", "منتج غير مطابق") + " · " + row.productId.slice(0, 8) : row.productName}</div>
+                  {!row.active && row.currentQty !== 0 ? <p className="mt-1 text-xs font-semibold text-amber-900">{tr("Inactive product still has stock", "منتج غير مفعّل وما زال فيه مخزون")}</p> : null}
                   <div className="text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
