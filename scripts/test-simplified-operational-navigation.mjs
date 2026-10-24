@@ -4,6 +4,7 @@ import test from "node:test";
 
 const config=readFileSync("src/components/module-tabs-config.ts","utf8");
 const storage=readFileSync("src/app/inventory/page.tsx","utf8");
+const bagView=readFileSync("src/app/inventory/OperatorBagStockView.tsx","utf8");
 const buying=readFileSync("src/app/restock-priority/purchase-list/page.tsx","utf8");
 const reconciliation=readFileSync("src/app/inventory/reconciliation/page.tsx","utf8");
 const stocktake=readFileSync("src/app/inventory/stocktake/page.tsx","utf8");
@@ -42,7 +43,10 @@ test("Storage cards contain physical stock only; buying logic stays on the purch
   assert.match(buying,/This month/);
 });
 test("Inventory auditing and operator custody are preserved, not deleted",()=>{
-  assert.match(storage,/Operator bag stock/);
+  assert.match(storage,/if \(operatorBagView\)/);
+  assert.match(storage,/href="\/inventory\?view=operator-bags"/);
+  assert.match(bagView,/current_inventory_by_location/);
+  assert.match(bagView,/quantity < 0/);
   // Full movement history and corrections are kept in their dedicated audited page.
   assert.doesNotMatch(storage, /\.from\("inventory_movements"\)/);
   assert.match(storage, /href="\/inventory\/movements"/);
