@@ -978,13 +978,13 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   if (restockSummary.critical > 0) {
     actionItems.push({
       key: "critical-restock",
-      title: t("Buy critical products"),
+      title: localize("Check stock and buying needs", "راجع المخزون واحتياجات الشراء"),
       detail: localize(
-        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
-        `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
+        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} flagged by refill or stock signals. Verify against recent sales and Storage before buying.`,
+        `هناك ${restockSummary.critical} منتج بحاجة لمراجعة إشارات التعبئة أو المخزون. قارن المبيعات الحديثة بالمخزون قبل الشراء.`,
       ),
-      href: "/restock-priority?filter=critical",
-      cta: t("Open restock priority"),
+      href: "/restock-priority/purchase-list",
+      cta: localize("Open What to Buy", "افتح قائمة الشراء"),
     });
   }
   if (machinesNeedingRefillCount > 0) {
@@ -1035,7 +1035,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         action={(
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/routes/new">{t("Create Route")}</PrimaryButton>
-            <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
+            <SecondaryButton href="/restock-priority/purchase-list">{localize("What to buy", "شن نشتري؟")}</SecondaryButton>
           </div>
         )}
       />
