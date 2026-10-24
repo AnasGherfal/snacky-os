@@ -15,9 +15,10 @@ export type PhysicalStorageLoadResult =
   | { ok: false; items: []; error: string };
 
 /**
- * Read-only physical Storage loader. No sales data, no XY snapshot, no route
- * stock repair and no inventory write. A failed or truncated ledger query is
- * surfaced as unavailable, never a fake empty/zero balance.
+ * Read-only recorded Storage loader. This calculates balances from movement
+ * entries; it does not certify that units were physically counted. No sales,
+ * XY data, route-stock repair or stock writes. A failed or truncated ledger
+ * query is unavailable, never represented as a fake empty/zero balance.
  */
 export async function loadPhysicalStorageData(client: SupabaseClient): Promise<PhysicalStorageLoadResult> {
   let products = await safeSupabaseQuery<StorageProduct>({
