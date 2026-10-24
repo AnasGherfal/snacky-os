@@ -300,8 +300,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       };
     })
     .sort((left, right) => {
-      const rank = (status: string) => ({ review: 0, unverified: 1, out_of_stock: 2, low_stock: 3, reserved: 4, available: 5 })[status] ?? 6;
-      return rank(left.status) - rank(right.status) || left.productName.localeCompare(right.productName);
+      const rank: Record<string, number> = { review: 0, unverified: 1, out_of_stock: 2, low_stock: 3, reserved: 4, available: 5 };
+      return (rank[left.status] ?? 6) - (rank[right.status] ?? 6) || left.productName.localeCompare(right.productName);
     });
 
   const filteredInventoryRows = filterInventoryRows(allInventoryRows, filter, q);
