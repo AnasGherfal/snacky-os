@@ -12,6 +12,7 @@ on:
       - "scripts/test-navigation-organization.mjs"
       - "scripts/test-assigned-storage-stocktake.mjs"
       - "scripts/test-simple-monthly-stock-check.mjs"
+      - "scripts/test-stock-reconciliation.mjs"
       - ".github/workflows/management-mobile-ux.yml"
   workflow_dispatch:
 permissions:
@@ -28,7 +29,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run mobile navigation and bilingual Storage contracts
-        run: node --experimental-strip-types --test scripts/test-owner-mobile-navigation.mjs scripts/test-navigation-organization.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs
+        run: node --experimental-strip-types --test scripts/test-owner-mobile-navigation.mjs scripts/test-navigation-organization.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
       - name: Lint new mobile navigation and shell
         run: npx eslint src/components/OwnerMobileNavigation.tsx src/components/ShellChrome.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts
       - name: Lint Storage layout (legacy any typing deferred)
