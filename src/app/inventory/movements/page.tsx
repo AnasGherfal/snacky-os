@@ -9,6 +9,7 @@ import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
 import { inventoryMovementReasonLabel } from "@/lib/inventory-movement";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { formatSignedProductQuantity } from "@/lib/product-quantity";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,21 @@ const movementReasons = [
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+/** The ledger stores units; retain any negative adjustment instead of showing zero. */
+function movementDisplayQuantity(movement: {
+  quantity: number | string | null;
+  product?: { name?: string | null; category?: string | null; case_quantity?: number | null } | null;
+}): string {
+  if (movement.quantity === null) return "Unverified quantity";
+  const value = Number(movement.quantity);
+  if (!Number.isSafeInteger(value)) return "Unverified quantity";
+  return formatSignedProductQuantity(value, {
+    caseQuantity: movement.product?.case_quantity ?? 1,
+    productName: movement.product?.name ?? null,
+    category: movement.product?.category ?? null,
+  }, { compact: true });
 }
 
 function shortId(value: string | null | undefined) {
@@ -288,7 +304,7 @@ export default async function InventoryMovementsPage({
     const matchingProductIds = await matchingProductIdsPromise;
     let movementQuery = supabase
       .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name, case_quantity, category), created_by_member:team_members(id, full_name)", { count: "exact" })
       .order("created_at", { ascending: false });
 
     if (params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
@@ -425,7 +441,7 @@ export default async function InventoryMovementsPage({
                   </div>
                   <div className="rounded-lg bg-slate-100 px-3 py-2 text-center">
                     <div className="text-xs text-slate-500">Qty</div>
-                    <div className="text-lg font-semibold text-slate-900">{movement.quantity}</div>
+                    <div className="text-base font-semibold text-slate-900">{movementDisplayQuantity(movement)}</div>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3">
@@ -478,7 +494,7 @@ export default async function InventoryMovementsPage({
                     )}
                   </td>
                   <td>{movement.product?.sku ?? "-"}</td>
-                  <td className="font-semibold">{movement.quantity}</td>
+                  <td className="font-semibold">{movementDisplayQuantity(movement)}</td>
                   <td><StatusBadge status={entityTypeLabel(movement.from_entity_type)} /></td>
                   <td>{entityLabel(movement.from_entity_type, movement.from_entity_id, labelMaps)}</td>
                   <td><StatusBadge status={entityTypeLabel(movement.to_entity_type)} /></td>
