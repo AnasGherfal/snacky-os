@@ -368,7 +368,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         action={
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/restock-priority/purchase-list">{tr("What to buy", "شن نشتري؟")}</PrimaryButton>
-            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">{tr("Count storage", "جرد المخزن")}</SecondaryButton> : null}
+            {canAccessPath(userContext, "/inventory/stocktake") ? <SecondaryButton href="/inventory/stocktake">{isOwnerAdminRole(profile) ? tr("Count storage", "جرد المخزن") : tr("My assigned counts", "الجرد المسند لي")}</SecondaryButton> : null}
           </div>
         }
       />
