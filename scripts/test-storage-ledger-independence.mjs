@@ -35,6 +35,7 @@ test("inactive products with physical stock remain visible", () => {
     [{ product_id: "inactive", quantity_on_hand: 15 }]);
   assert.deepEqual(rows.map(r => r.productId), ["inactive"]);
   assert.equal(rows[0].active, false);
+  assert.equal(physicalStockStatus(rows[0].currentQty, 0, 0, !rows[0].active), "review");
 });
 
 test("unmapped products with ledger quantity show an investigation row", () => {
@@ -80,5 +81,6 @@ test("Stock page shows partial independent data only with visible uncertainty", 
   assert.match(page, /reservationsKnown \? filteredInventoryRows\.reduce/);
   assert.match(page, /row\.availableQty === null \? tr\("Unverified"/);
   assert.match(page, /filterCounts\.review/);
+  assert.match(page, /Inactive product still has stock/);
   assert.match(page, /minStorageQty/);
 });
