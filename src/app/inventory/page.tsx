@@ -5,7 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileR
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { getServerI18n } from "@/lib/i18n/server";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
-import { formatProductQuantity } from "@/lib/product-quantity";
+import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { loadPhysicalStorageData } from "@/lib/storage-inventory-data";
 import { physicalStockStatus } from "@/lib/storage-inventory-model";
@@ -121,7 +121,7 @@ function inventoryFilterHref(filter: InventoryFilter, q: string) {
 }
 
 function packagedQuantity(quantity: unknown, row: { productName?: string | null; product_name?: string | null; category?: string | null; caseQuantity?: number | null; case_quantity?: number | null }) {
-  return formatProductQuantity(quantity, {
+  return formatSignedProductQuantity(Number(quantity), {
     caseQuantity: row.caseQuantity ?? row.case_quantity ?? 1,
     productName: row.productName ?? row.product_name ?? null,
     category: row.category ?? null,
