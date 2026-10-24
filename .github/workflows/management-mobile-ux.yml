@@ -3,12 +3,15 @@ on:
   pull_request:
     branches: [master, release/snacky-os-combined-staging-20261024]
     paths:
-      - "src/components/OwnerMobileNavigation.tsx"
+      - "src/components/RoleMobileNavigation.tsx"
+      - "src/lib/role-mobile-navigation.ts"
+      - "src/components/Sidebar.tsx"
+      - "src/components/app-navigation.ts"
       - "src/components/ShellChrome.tsx"
       - "src/components/ModuleTabs.tsx"
       - "src/components/module-tabs-config.ts"
       - "src/app/inventory/page.tsx"
-      - "scripts/test-owner-mobile-navigation.mjs"
+      - "scripts/test-role-mobile-navigation.mjs"
       - "scripts/test-navigation-organization.mjs"
       - "scripts/test-assigned-storage-stocktake.mjs"
       - "scripts/test-simple-monthly-stock-check.mjs"
@@ -29,9 +32,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run mobile navigation and bilingual Storage contracts
-        run: node --experimental-strip-types --test scripts/test-owner-mobile-navigation.mjs scripts/test-navigation-organization.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
+        run: node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-role-mobile-navigation.mjs scripts/test-navigation-organization.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
       - name: Lint new mobile navigation and shell
-        run: npx eslint src/components/OwnerMobileNavigation.tsx src/components/ShellChrome.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts
+        run: npx eslint src/components/RoleMobileNavigation.tsx src/lib/role-mobile-navigation.ts src/components/ShellChrome.tsx src/components/Sidebar.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts
       - name: Lint Storage layout (legacy any typing deferred)
         run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Typecheck
