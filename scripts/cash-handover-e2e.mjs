@@ -360,7 +360,7 @@ try {
     await p.screenshot({ path: `${out}/operator-dropoff-mobile.png`, fullPage: true });
   });
   await check('real Arabic coordinator form acknowledges pickup and restores a lost count response', async () => {
-    const p = counter.page; await p.reload(); await p.getByRole('button', { name: 'استلام العلبة', exact: true }).click();
+    const p = counter.page; await p.reload(); await p.getByRole('button', { name: 'استلام من المخزن · توصيل للمالك', exact: true }).click();
     await p.getByLabel('اكتب الرقم الموجود على العلبة / الختم', { exact: true }).fill(browserBox.bag);
     await p.locator('form input[type=checkbox]').check(); await p.getByRole('button', { name: 'تأكيد الإجراء', exact: true }).click();
     await p.getByRole('status').filter({ hasText: 'تم تسجيل الإجراء' }).waitFor();
