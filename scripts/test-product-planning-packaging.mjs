@@ -233,16 +233,17 @@ test("Product Planning page exposes a persistent buy list ordered by monthly sal
   assert.match(planningPage, /\.lte\("business_month", planningMonth\)/);
   assert.match(planningPage, /\.lte\("sales_month", planningMonth\)/);
   assert.match(planningHelper, /New product — keep testing/);
-  assert.match(moduleTabs, /label:\s*"Product Planning",\s*href:\s*"\/product-planning"/);
+  // The unused manual monthly-plan module remains available by URL but no longer competes with What to Buy.
+  assert.doesNotMatch(moduleTabs, /href:\s*"\/product-planning"/);
   assert.match(authz, /matchesPrefix\(pathname, \["\/product-planning"\]\)/);
 });
 
 test("inventory and route pickup use case_quantity packaging displays", () => {
   assert.match(inventoryPage, /formatProductQuantity/);
-  assert.match(inventoryPage, /case_quantity/);
-  assert.match(inventoryPage, /packagedQuantity\(row\.currentQty/);
-  assert.match(inventoryPage, /packagedQuantity\(row\.quantity_on_hand/);
-  assert.match(inventoryPage, /packagedQuantity\(movement\.quantity/);
+  assert.match(inventoryPage, /caseQuantity/);
+  assert.match(inventoryPage, /packagingHint\(row\)/);
+  // Operator bag movements have their own audit screen now, not a second table in Storage.
+  assert.doesNotMatch(inventoryPage, /filteredOperatorBagRows|filteredMovements/);
 
   assert.match(pickupApi, /case_quantity/);
   assert.match(pickupApi, /caseQuantity:\s*Math\.max\(1, unitQuantity\(product\.case_quantity/);

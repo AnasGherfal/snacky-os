@@ -23,7 +23,7 @@ function moduleItems(name) {
 
 test("daily workflows have consistent primary tab order", () => {
   const expected = {
-    stockTabs: ["/inventory", "/restock-priority", "/purchases", "/products"],
+    stockTabs: ["/inventory", "/restock-priority/purchase-list", "/purchases", "/inventory/stocktake"],
     crmTabs: ["/issues/new", "/my-work", "/locations-pipeline", "/issues"],
     financeTabs: ["/finance", "/finance/transactions", "/finance/expenses", "/finance/rent"],
     adminTabs: ["/admin", "/team", "/settings", "/vms-import"],
@@ -55,22 +55,30 @@ test("cash handling and health stay discoverable when sidebar is simplified", ()
   assert.match(sidebar, /items: \[operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem/);
 });
 
-test("Storage keeps only daily actions while advanced tools live in grouped More", () => {
+test("daily Stock menu contains genuine actions rather than duplicate forecasts", () => {
+  assert.deepEqual(moduleItems("stockTabs"), [
+    "/inventory", "/restock-priority/purchase-list", "/purchases", "/inventory/stocktake",
+    "/buying-lists", "/products", "/inventory/movements", "/suppliers",
+  ]);
+  for (const deadEnd of ["/restock-priority", "/product-planning", "/inventory/stock-check", "/inventory/machine-storage", "/inventory/movements/new"]) {
+    assert.equal(moduleItems("stockTabs").includes(deadEnd), false, `Redundant daily nav link: ${deadEnd}`);
+  }
+  assert.match(config, /group: "Do the work"/);
+  assert.match(config, /group: "Records"/);
+});
+
+test("Storage itself displays ledger balances without competing forecasts or movement tables", () => {
+  assert.match(storage, /loadStorageOverview/);
   assert.match(storage, /href="\/restock-priority\/purchase-list"/);
   assert.match(storage, /href="\/inventory\/stocktake"/);
-  assert.match(storage, /tr\("What to buy",/);
-  assert.match(storage, /tr\("Count storage",/);
-  assert.doesNotMatch(storage, /More storage tools and help/);
-  assert.doesNotMatch(storage, /href="\/inventory\/movements\/new"/);
-  for (const href of [
-    "/restock-priority/purchase-list", "/inventory/stocktake", "/inventory/stock-check",
-    "/inventory/machine-storage", "/inventory/movements", "/inventory/movements/new",
-    "/storage-locations", "/product-planning", "/suppliers",
-  ]) {
-    assert.ok(moduleItems("stockTabs").includes(href), `Missing advanced stock destination: ${href}`);
-  }
-  assert.match(config, /group: "Buying", groupAr: "الشراء"/);
-  assert.match(config, /group: "Stock checks", groupAr: "الجرد ومراجعة المخزون"/);
-  assert.match(tabs, /tab\.group/);
-  assert.match(tabs, /tab\.groupAr/);
+  assert.match(storage, /href="\/inventory\/movements"/);
+  assert.match(storage, /reservationWarning/);
+  assert.doesNotMatch(storage, /loadRestockPriorityData|filteredOperatorBagRows|filteredMovements|suggestedBuyQty/);
+});
+
+test("physical count leads to specialist monthly comparisons without duplicating tabs", () => {
+  const count = source("src/components/StorageStocktakeWorkspace.tsx");
+  assert.match(count, /href="\/inventory\/stock-check"/);
+  assert.match(count, /href="\/inventory\/reconciliation"/);
+  assert.match(tabs, /extraTabs\.map/);
 });

@@ -6,12 +6,19 @@ const inventoryPage = fs.readFileSync(new URL("../src/app/inventory/page.tsx", i
 const newMovementPage = fs.readFileSync(new URL("../src/app/inventory/movements/new/page.tsx", import.meta.url), "utf8");
 const stockMovementForm = fs.readFileSync(new URL("../src/components/StockMovementForm.tsx", import.meta.url), "utf8");
 const restockLoader = fs.readFileSync(new URL("../src/lib/restock-priority-data.ts", import.meta.url), "utf8");
+const storageLoader = fs.readFileSync(new URL("../src/lib/storage-overview-data.ts", import.meta.url), "utf8");
 const rlsMigration = fs.readFileSync(new URL("../supabase/migrations/20260904082626_optimize_inventory_rls_reads.sql", import.meta.url), "utf8");
 
 test("authorized inventory pages use protected server reads for expensive aggregates", () => {
-  assert.match(inventoryPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
-  assert.match(inventoryPage, /inventoryReadClient\s*\.from\("current_inventory_by_location"\)/);
-  assert.match(inventoryPage, /inventoryReadClient\s*\.from\("inventory_movements"\)/);
+  assert.match(inventoryPage, /canAccessPath\(context, "\/inventory"\)/);
+  assert.match(inventoryPage, /loadStorageOverview\(db\)/);
+  assert.match(storageLoader, /getSupabaseAdminClient\(\) \?\? userClient/);
+  assert.match(storageLoader, /db\.from\("current_inventory_by_location"\)/);
+  assert.match(storageLoader, /db\.from\("route_stock_lines"\)/);
+  assert.match(storageLoader, /db\.from\("route_stop_items"\)/);
+  assert.match(storageLoader, /reservationsVerified/);
+  assert.doesNotMatch(storageLoader, /db\.from\("inventory_movements"\)|\.insert\(|\.update\(|\.upsert\(/);
+  assert.doesNotMatch(inventoryPage, /loadRestockPriorityData/);
   assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors\)/);
   assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
   assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);

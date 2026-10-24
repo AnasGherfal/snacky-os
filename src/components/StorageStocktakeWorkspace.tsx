@@ -1,5 +1,6 @@
 'use client';
 import {useEffect,useMemo,useRef,useState,useSyncExternalStore,type FormEvent} from 'react';
+import Link from 'next/link';
 import {useLanguage} from '@/components/I18nProvider';
 import {stocktakeError,stocktakeReceiptMatches,validateStocktakeCommand,type StocktakeCommand,type StocktakeLine,type StocktakeWorkspace} from '@/lib/storage-stocktake';
 
@@ -112,6 +113,15 @@ function StorageStocktakeClient({userId,initialId}:{userId:string;initialId:stri
    <div><p className="text-sm font-semibold text-orange-600">{ar?'المخزون والمشتريات':'Stock & Purchasing'}</p><h1 className="text-2xl font-semibold text-slate-950">{ar?'جرد المخزن':'Storage Count'}</h1><p className="mt-1 max-w-3xl text-sm text-slate-600">{ar?'جرد فعلي مسند. الموظف يعدّ بدون رؤية كمية النظام، وأي فرق لا يغيّر المخزون إلا بعد اعتماد المالك.':'Assigned physical count. The counter works blind; no stock changes until owner approval.'}</p></div>
    {selected?<button className="btn-secondary" onClick={()=>{setSelected(null);setLoading(true);}}>{ar?'كل عمليات الجرد':'All stocktakes'}</button>:null}
   </header>
+  {!selected&&workspace.manager?<details className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
+   <summary className="cursor-pointer font-semibold text-slate-700">{ar?'تحتاج إلى مراجعة أخرى؟':'Need a different stock check?'}</summary>
+   <p className="mt-2 text-slate-600">{ar?'هذا الجرد يثبت الكمية الفعلية. المقارنة الشهرية والتحقيق في الفروقات أداتان منفصلتان.':'This count records physical quantities. Monthly buying-versus-sales review and discrepancy investigation are separate tasks.'}</p>
+   <div className="mt-3 flex flex-wrap gap-3">
+    <Link href="/inventory" className="text-emerald-800 underline">{ar?'العودة للمخزن':'Back to Storage'}</Link>
+    <Link href="/inventory/stock-check" className="text-emerald-800 underline">{ar?'مقارنة الشهر':'Monthly stock comparison'}</Link>
+    <Link href="/inventory/reconciliation" className="text-emerald-800 underline">{ar?'التحقيق في الفروقات':'Investigate stock differences'}</Link>
+   </div>
+  </details>:null}
 
   {error?<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>:null}
   {pending?<div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{ar?'يوجد إجراء محفوظ لم نتأكد من نتيجته. أعد نفس الطلب قبل أي تغيير آخر.':'A saved action has an uncertain result. Retry the exact same action before doing anything else.'}</p><button className="btn-primary mt-3" disabled={busy} onClick={()=>void send(pending)}>{ar?'إعادة الطلب المحفوظ':'Retry saved action'}</button></div>:null}
