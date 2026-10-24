@@ -75,6 +75,17 @@ test("failed reservation reads show unknown availability, not false zero or unre
   assert.equal(row(x,"chips").status,"negative");
 });
 
+test("inactive products with pending route stock still surface as shortages",()=>{
+  const x=computeStorageOverview({
+    ...input,
+    products:[...products,{id:"inactive-reserved",name:"Old But Reserved",active:false}],
+    routeLines:[...input.routeLines,{route_id:"route2",product_id:"inactive-reserved",planned_qty:5,picked_qty:0,routes:later}],
+  });
+  assert.equal(row(x,"inactive-reserved").physical,0);
+  assert.equal(row(x,"inactive-reserved").reserved,5);
+  assert.equal(row(x,"inactive-reserved").status,"overbooked");
+});
+
 test("no active warehouse or malformed quantities fail closed",()=>{
   assert.throws(()=>computeStorageOverview({...input,locations:[{id:QA,name:"[TEST ONLY] QA",active:true}]}));
   assert.throws(()=>computeStorageOverview({...input,balances:[{product_id:"water",location_id:MAIN,quantity_on_hand:"NaN"}]}));
