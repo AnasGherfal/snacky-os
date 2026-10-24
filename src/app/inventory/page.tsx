@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
+import { getServerI18n } from "@/lib/i18n/server";
 import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatProductQuantity } from "@/lib/product-quantity";
@@ -59,6 +60,8 @@ type InventoryRow = {
   reasons: string[];
   status: string;
 };
+
+const inventoryFilterNamesAr: Record<InventoryFilter, string> = { all: "كل المنتجات", out: "نافد", critical: "حرج", low: "منخفض", reserved: "محجوز", fast: "الأكثر مبيعاً" };
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "all", label: "All products" },
@@ -159,6 +162,8 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
 }
 
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const { locale, direction } = await getServerI18n();
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize } = getPagination(params);
   const q = String(params.q ?? "");
@@ -379,46 +384,37 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     movement.related_route_id,
   ], q));
 
+  const movementReasonLabelsAr: Record<string, string> = { purchase_received: "استلام مشتريات", storage_to_operator_bag: "سحب من المخزن", operator_bag_to_machine: "تعبئة ماكينة", operator_bag_to_storage: "إرجاع للمخزن", stock_count_adjustment: "تسوية جرد", opening_balance: "رصيد افتتاحي", manual_sale: "بيع يدوي", returned_from_machine: "إرجاع من ماكينة", manual_correction: "تصحيح يدوي", damaged: "تالف", operator_personal_purchase: "شراء شخصي" };
+  const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", critical: "حرج", low_stock: "منخفض", available: "متاح" };
   const inventoryHeaders = [
-    "Product",
-    "In storage",
-    "Reserved in storage",
-    "Available — no route",
-    "Suggested buy",
-    "Velocity",
-    ...(canSeeCost ? ["Last cost"] : []),
-    "Status",
+    tr("Product", "المنتج"),
+    tr("In storage", "في المخزن"),
+    tr("Reserved in storage", "محجوز للجولات"),
+    tr("Available — no route", "متاح بدون حجز"),
+    tr("Suggested buy", "الشراء المقترح"),
+    tr("Velocity", "المبيعات اليومية"),
+    ...(canSeeCost ? [tr("Last cost", "آخر تكلفة")] : []),
+    tr("Status", "الحالة"),
   ];
 
   return (
-    <>
+    <div dir={direction}>
       <PageHeader
-        title="Storage"
-        subtitle="See what is on the shelves, what is reserved for routes, and what is available to use."
+        title={tr("Storage", "المخزون")}
+        subtitle={tr("See what is on the shelves, what is reserved for routes, and what is available to use.", "اعرف الكميات الموجودة في المخزن والمحجوزة للجولات والمتاحة للاستخدام.")}
         action={
           <div className="flex flex-wrap gap-2">
-            <PrimaryButton href="/restock-priority/purchase-list">What to buy</PrimaryButton>
-            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">Count storage</SecondaryButton> : null}
+            <PrimaryButton href="/restock-priority/purchase-list">{tr("What to buy", "شن نشتري؟")}</PrimaryButton>
+            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">{tr("Count storage", "جرد المخزن")}</SecondaryButton> : null}
           </div>
         }
       />
 
-      <details className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-slate-900">More storage tools and help</summary>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <SecondaryButton href="/product-planning">Product planning</SecondaryButton>
-          <SecondaryButton href="/inventory/stock-check">Monthly stock check</SecondaryButton>
-          <SecondaryButton href="/inventory/machine-storage">Machine stock</SecondaryButton>
-          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">Full movement log</SecondaryButton> : null}
-          {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">Manual adjustment</SecondaryButton> : null}
-        </div>
-        <p className="mt-3 leading-6">Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.</p>
-      </details>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <div className="font-semibold">Inventory partially loaded</div>
-          <div className="mt-1">Some supporting signals could not load. The working sections remain visible below.</div>
+          <div className="font-semibold">{tr("Inventory partially loaded", "تعذر تحميل بعض بيانات المخزون")}</div>
+          <div className="mt-1">{tr("Some supporting signals could not load. The working sections remain visible below.", "تعذر تحميل بعض مؤشرات المخزون، وستبقى البيانات المتاحة ظاهرة أدناه.")}</div>
           <ul className="mt-3 list-disc space-y-1 pl-5">
             {queryIssues.map((issue) => (
               <li key={issue.key}>{issue.message}</li>
@@ -429,29 +425,30 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       <section className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <form action="/inventory" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <form action="/inventory" className="flex flex-wrap items-center gap-2">
             {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
             <input type="hidden" name="pageSize" value={pageSize} />
-            <SearchInput defaultValue={q} placeholder="Search product, SKU, category, operator, or movement reason..." />
-            <button className="btn-secondary" type="submit">Search</button>
-            {q ? <Link href={inventoryFilterHref(filter, "")} className="btn-secondary">Clear search</Link> : null}
+            <div className="min-w-0 flex-1"><SearchInput defaultValue={q} placeholder={tr("Search product or SKU...", "ابحث باسم المنتج أو رمزه...")} /></div>
+            <button className="btn-secondary" type="submit">{tr("Search", "بحث")}</button>
+            {q ? <Link href={inventoryFilterHref(filter, "")} className="btn-secondary">{tr("Clear", "مسح")}</Link> : null}
           </form>
           <div className="text-sm text-slate-500">
-            {filteredInventoryRows.length} products match this view.
+            {filteredInventoryRows.length} {tr("products match this view.", "منتج ضمن هذه النتائج.")}
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1 whitespace-nowrap overscroll-x-contain" aria-label={tr("Stock filters", "تصفية المخزون")}>
           {inventoryFilters.map((item) => (
             <Link
               key={item.key}
               href={inventoryFilterHref(item.key, q)}
+              aria-current={filter === item.key ? "page" : undefined}
               className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition ${
                 filter === item.key
                   ? "border-slate-900 bg-slate-900 text-white"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
               }`}
             >
-              <span>{item.label}</span>
+              <span>{locale === "ar" ? inventoryFilterNamesAr[item.key] : item.label}</span>
               <span className={`rounded-full px-2 py-0.5 text-xs ${filter === item.key ? "bg-white/15 text-white" : "bg-white text-slate-600"}`}>
                 {filterCounts[item.key]}
               </span>
@@ -460,34 +457,35 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4" aria-label={tr("Storage summary for selected products", "ملخص مخزون المنتجات المعروضة")}>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">In storage</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("In storage", "في المخزن")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Physical units currently on the storage shelves</p>
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Physical units currently on the storage shelves", "وحدات موجودة فعلياً على رفوف المخزن")}</p>
         </div>
         <div className="surface-card border-amber-200 bg-amber-50">
-          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Reserved in storage</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{tr("Reserved in storage", "محجوز للجولات")}</div>
           <div className="mt-2 text-2xl font-semibold text-amber-950">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
-          <p className="mt-1 text-sm text-amber-800">Still in storage, but attached to active routes</p>
+          <p className="mt-1 hidden text-sm text-amber-800 sm:block">{tr("Still in storage, but attached to active routes", "موجودة في المخزن ومخصصة لجولات")}</p>
         </div>
         <div className="surface-card border-emerald-200 bg-emerald-50">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Available — no route</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr("Available — no route", "متاح بدون حجز")}</div>
           <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
-          <p className="mt-1 text-sm text-emerald-800">Free units that can be assigned to a new route</p>
+          <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Free units that can be assigned to a new route", "وحدات يمكن تخصيصها لجولة جديدة")}</p>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Products with reservations</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Products with reservations", "منتجات محجوزة")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
-          <p className="mt-1 text-sm text-slate-500">Use the Reserved filter to review them</p>
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Use the Reserved filter to review them", "استخدم فلتر المحجوز للمراجعة")}</p>
         </div>
       </div>
+      <p className="mb-4 text-xs text-slate-600">{tr("Reserved units are still on the storage shelves. Only Available stock can be assigned to another route.", "الكميات المحجوزة ما زالت موجودة في المخزن، لكن المتاح فقط يمكن تخصيصه لجولة جديدة.")}</p>
 
       {!inventoryRows.length ? (
         <EmptyState
-          title={q || filter !== "all" ? "No products match this inventory view" : "No storage inventory yet"}
-          body={q || filter !== "all" ? "Try a broader search or switch filters." : "Create inventory movements into storage to populate calculated balances."}
-          action={q || filter !== "all" ? <SecondaryButton href="/inventory">Reset filters</SecondaryButton> : undefined}
+          title={q || filter !== "all" ? tr("No products match this inventory view", "لا توجد منتجات مطابقة") : tr("No storage inventory yet", "لا توجد بيانات مخزون بعد")}
+          body={q || filter !== "all" ? tr("Try a broader search or switch filters.", "جرّب بحثاً أوسع أو غيّر الفلتر.") : tr("Create inventory movements into storage to populate calculated balances.", "تظهر الكميات بعد تسجيل حركات المخزون الفعلية.")}
+          action={q || filter !== "all" ? <SecondaryButton href="/inventory">{tr("Reset filters", "إعادة تعيين الفلاتر")}</SecondaryButton> : undefined}
         />
       ) : (
         <>
@@ -497,48 +495,46 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="break-words text-base font-semibold text-slate-900">{row.productName}</h2>
-                    <p className="mt-1 break-words text-xs text-slate-500">{row.sku ?? "No SKU"} - {row.category ?? "Uncategorized"}</p>
+                    <p className="mt-1 break-words text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</p>
                   </div>
-                  <StatusBadge status={row.status} />
+                  <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
                 </div>
                 <div className="mb-3 flex flex-wrap gap-2">
-                  {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
-                  {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Reserved in storage</span> : null}
-                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
+                  {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">{tr("Fast seller", "الأكثر مبيعاً")}</span> : null}
+                  {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">{tr("Reserved in storage", "محجوز للجولات")}</span> : null}
+                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr("Buy", "اشترِ")} {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <MobileField label="In storage">{packagedQuantity(row.currentQty, row)}</MobileField>
-                  <MobileField label="Reserved in storage">{packagedQuantity(row.reservedQty, row)}</MobileField>
-                  <MobileField label="Available — no route"><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
-                  <MobileField label="Suggested buy">{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
-                  <MobileField label="Velocity">{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</MobileField>
+                  <MobileField label={tr("In storage", "في المخزن")}>{packagedQuantity(row.currentQty, row)}</MobileField>
+                  <MobileField label={tr("Reserved in storage", "محجوز للجولات")}>{packagedQuantity(row.reservedQty, row)}</MobileField>
+                  <MobileField label={tr("Available — no route", "متاح بدون حجز")}><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
+                  <MobileField label={tr("Suggested buy", "الشراء المقترح")}>{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
+                  <MobileField label={tr("Velocity", "مبيعات/يوم")}>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</MobileField>
                 </div>
                 {row.reservations.length ? (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Attached route reservations</div>
+                  <details className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-amber-800">{tr("Route reservations", "حجوزات الجولات")} ({row.reservations.length})</summary>
                     <div className="mt-2 space-y-2">
                       {row.reservations.map((reservation) => (
                         <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm hover:border-amber-300">
-                          <span className="font-medium text-slate-900">Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)}</span>
+                          <span className="font-medium text-slate-900">{tr("Route", "جولة")} {reservation.routeDate ?? reservation.routeId.slice(0, 8)}</span>
                           <span className="shrink-0 text-amber-900">{packagedQuantity(reservation.remainingQty, row)} · {reservation.status.replaceAll("_", " ")}</span>
                         </Link>
                       ))}
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-amber-800">Open a route to change or release its reservation.</p>
-                  </div>
-                ) : row.availableQty > 0 ? (
-                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">Available units have no route attached.</div>
+                    <p className="mt-2 text-xs leading-5 text-amber-800">{tr("Open a route to change or release its reservation.", "افتح الجولة لتغيير الحجز أو إلغائه.")}</p>
+                  </details>
                 ) : null}
-                {canSeeCost ? <div className="mt-3"><MobileField label="Last cost">{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
+                {canSeeCost ? <div className="mt-3"><MobileField label={tr("Last cost", "آخر تكلفة")}>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
                 {row.reasons.length ? (
-                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why it matters</div>
+                  <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-600">{tr("Why it matters", "أسباب الأولوية")}</summary>
                     <ul className="mt-2 space-y-1 text-sm text-slate-700">
                       {row.reasons.map((reason) => (
                         <li key={reason}>{reason}</li>
                       ))}
                     </ul>
-                  </div>
+                  </details>
                 ) : null}
               </MobileRecordCard>
             ))}
@@ -548,17 +544,17 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
               <tr key={row.productId}>
                 <td>
                   <div className="font-medium text-slate-900">{row.productName}</div>
-                  <div className="text-xs text-slate-500">{row.sku ?? "No SKU"} - {row.category ?? "Uncategorized"}</div>
-                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || "No extra restock signals"}</div>
+                  <div className="text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</div>
+                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || tr("No extra restock signals", "لا توجد مؤشرات إضافية للشراء")}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
                 <td>
-                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : "None"}</div>
+                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : tr("None", "لا يوجد")}</div>
                   {row.reservations.length ? (
                     <div className="mt-2 space-y-1">
                       {row.reservations.map((reservation) => (
                         <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="block text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:text-amber-950">
-                          Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
+                          {tr("Route", "جولة")} {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
                         </Link>
                       ))}
                     </div>
@@ -566,34 +562,34 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 </td>
                 <td className="font-semibold text-emerald-800">
                   {packagedQuantity(row.availableQty, row)}
-                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? "No route attached" : row.reservedQty > 0 ? "All in-storage units reserved" : "No stock"}</div>
+                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? tr("No route attached", "غير محجوز لجولة") : row.reservedQty > 0 ? tr("All in-storage units reserved", "كل المخزون محجوز") : tr("No stock", "لا يوجد مخزون")}</div>
                 </td>
                 <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
-                <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</td>
+                <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</td>
                 {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
                 <td>
                   <div className="flex flex-col items-start gap-1">
-                    <StatusBadge status={row.status} />
-                    {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label="Reserved in storage" /> : null}
+                    <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
+                    {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label={tr("Reserved in storage", "محجوز للجولات")} /> : null}
                   </div>
                 </td>
               </tr>
             ))}
           </DataTable>
-          <PaginationControls basePath="/inventory" searchParams={params} page={visibleInventoryPage} pageSize={pageSize} totalCount={filteredInventoryRows.length} itemLabel="products" />
+          <PaginationControls basePath="/inventory" searchParams={params} page={visibleInventoryPage} pageSize={pageSize} totalCount={filteredInventoryRows.length} itemLabel={tr("products", "منتج")} />
         </>
       )}
 
       <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>Operator bag stock <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} rows)</span></span>
-          <span className="text-xs text-slate-500">Show details ↓</span>
+          <span>{tr("Operator bag stock", "مخزون حقائب المشغلين")} <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} {tr("rows", "صف")})</span></span>
+          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
         </summary>
         <div className="mt-4">
         {!filteredOperatorBagRows.length ? (
           <EmptyState
-            title={q ? "No operator bag rows match this search" : "No operator bag stock"}
-            body={q ? "Try a broader search or clear the search box." : "Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned."}
+            title={q ? tr("No operator bag rows match this search", "لا توجد حقائب مطابقة للبحث") : tr("No operator bag stock", "لا يوجد مخزون في حقائب المشغلين")}
+            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned.", "تظهر الكميات بعد سحب البضاعة للجولات، وتقل عند التعبئة أو إرجاع المتبقي.")}
           />
         ) : (
           <>
@@ -603,23 +599,23 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="break-words text-base font-semibold text-slate-900">{row.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{row.sku ?? "No SKU"}</p>
+                      <p className="mt-1 text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")}</p>
                     </div>
                     {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
-                    <MobileField label="Operator">{row.location_name ?? "Unknown operator"}</MobileField>
-                    <MobileField label="Quantity"><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
+                    <MobileField label={tr("Operator", "المشغّل")}>{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</MobileField>
+                    <MobileField label={tr("Quantity", "الكمية")}><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
                   </div>
                 </MobileRecordCard>
               ))}
             </MobileCardList>
-            <DataTable className="hidden md:block" headers={["Operator", "Product", "SKU", "Quantity"]}>
+            <DataTable className="hidden md:block" headers={[tr("Operator", "المشغّل"), tr("Product", "المنتج"), tr("SKU", "رمز المنتج"), tr("Quantity", "الكمية")]}>
               {filteredOperatorBagRows.map((row: any) => (
                 <tr key={`${row.location_id}-${row.product_id}`}>
-                  <td className="font-medium text-slate-900">{row.location_name ?? "Unknown operator"}</td>
+                  <td className="font-medium text-slate-900">{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</td>
                   <td>{row.product_name}</td>
-                  <td>{row.sku ?? "No SKU"}</td>
+                  <td>{row.sku ?? tr("No SKU", "بدون رمز")}</td>
                   <td className="font-semibold">{packagedQuantity(row.quantity_on_hand, row)}</td>
                 </tr>
               ))}
@@ -631,14 +627,14 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>Recent stock movements <span className="text-sm font-normal text-slate-500">({filteredMovements.length} records)</span></span>
-          <span className="text-xs text-slate-500">Show details ↓</span>
+          <span>{tr("Recent stock movements", "حركات المخزون الأخيرة")} <span className="text-sm font-normal text-slate-500">({filteredMovements.length} {tr("records", "سجل")})</span></span>
+          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
         </summary>
         <div className="mt-4">
         {!filteredMovements.length ? (
           <EmptyState
-            title={q ? "No movement rows match this search" : "No movements recorded"}
-            body={q ? "Try a broader search or clear the search box." : "New purchase receipts, route picks, returns, adjustments, and waste movements will appear here."}
+            title={q ? tr("No movement rows match this search", "لا توجد حركات مطابقة للبحث") : tr("No movements recorded", "لا توجد حركات مسجلة")}
+            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("New purchase receipts, route picks, returns, adjustments, and waste movements will appear here.", "تظهر هنا حركات استلام المشتريات، وسحب الجولات، والإرجاع، والجرد، والتالف.")}
           />
         ) : (
           <>
@@ -648,28 +644,28 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="break-words text-base font-semibold text-slate-900">{movement.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString("en-US")}</p>
+                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</p>
                     </div>
-                    <StatusBadge status={movement.reason} />
+                    <StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <MobileField label="Qty">{packagedQuantity(movement.quantity, movement)}</MobileField>
-                    <MobileField label="Route">{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</MobileField>
-                    <MobileField label="From">{movement.from_label}</MobileField>
-                    <MobileField label="To">{movement.to_label}</MobileField>
+                    <MobileField label={tr("Qty", "كمية")}>{packagedQuantity(movement.quantity, movement)}</MobileField>
+                    <MobileField label={tr("Route", "الجولة")}>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</MobileField>
+                    <MobileField label={tr("From", "من")}>{movement.from_label}</MobileField>
+                    <MobileField label={tr("To", "إلى")}>{movement.to_label}</MobileField>
                   </div>
                 </MobileRecordCard>
               ))}
             </MobileCardList>
-            <DataTable className="hidden md:block" headers={["Created", "Product", "Qty", "From", "To", "Reason", "Route"]}>
+            <DataTable className="hidden md:block" headers={[tr("Created", "التاريخ"), tr("Product", "المنتج"), tr("Qty", "الكمية"), tr("From", "من"), tr("To", "إلى"), tr("Reason", "السبب"), tr("Route", "الجولة")]}>
               {filteredMovements.map((movement: any) => (
                 <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString("en-US")}</td>
+                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
                   <td className="font-medium">{movement.product_name}</td>
                   <td>{packagedQuantity(movement.quantity, movement)}</td>
                   <td>{movement.from_label}</td>
                   <td>{movement.to_label}</td>
-                  <td><StatusBadge status={movement.reason} /></td>
+                  <td><StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} /></td>
                   <td>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</td>
                 </tr>
               ))}
@@ -678,6 +674,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         )}
         </div>
       </details>
-    </>
+    </div>
   );
 }

@@ -153,15 +153,35 @@ if(issueIds.length&&db){
  const taskDispatch=section==='task'&&d.task_type==='field_action'&&d.dispatch_state?{...d,id:row.id,title:row.title,updated_at:d.updated_at??d.version??row.updated_at}:null;
  const taskProofImages=section==='task'?(context.documents??[]).filter((doc:any)=>String(doc.mime_type??'').toLowerCase().startsWith('image/')).length:0;
  const fieldWorkReadyForCrm=section==='issue'&&latestDispatch?.dispatch_state==='fixed';
+ const workMetrics = [
+  ['issue_action','Issues requiring action','مشاكل تحتاج إجراء','/issues?status=open'],
+  ['issue_waiting','Waiting on someone else','بانتظار طرف آخر','/issues?status=waiting'],
+  ['leads_today','Lead follow-ups today','متابعات الجهات اليوم','/locations-pipeline?window=today'],
+  ['leads_overdue','Overdue leads','جهات متأخرة','/locations-pipeline?window=overdue'],
+  ['locations_today','Location follow-ups','متابعات المواقع','/relationships?window=today'],
+  ['admin_today','Administrative tasks','مهام إدارية','/follow-ups?type=admin&window=today'],
+  ['rent_week','Rent / payments due soon','دفعات المواقع القريبة','/relationships/obligations?window=week'],
+  ['meetings_today','Meetings today','مواعيد اليوم','/follow-ups?type=meeting&window=today'],
+  ['recent_completed','Recently completed','أُنجز مؤخراً','/follow-ups?window=completed']
+ ].filter(x=>context.staff||['issue_action','recent_completed'].includes(x[0]));
+ const workExtraFiltersSelected=Boolean(filters.assigned_to||filters.status||filters.created_from||filters.created_to||filters.archived==='true'||filters.practice==='true');
  return <div className="min-w-0 space-y-5" dir={ar?'rtl':'ltr'}>
   <CrmRefresh/>
   <PageHeader title={title} subtitle={row?tr('Ownership, next action and complete relationship history.','المسؤول والخطوة القادمة وسجل العلاقة.'):machineReport?tr('Report the fault. Active operators will see a shared alert and can claim it. They record what happened and close a machine-only issue when fixed.','سجّل العطل. يظهر البلاغ للمشغّلين النشطين ليستلمه أحدهم، ويسجّل ما حدث ويغلق بلاغ الماكينة بعد إصلاحها.'):create&&section==='issue'?tr('Record only the essentials now. After saving, open the case to assign field work, follow up with the customer, record compensation and close it.','سجّل الأساسيات فقط الآن. بعد الحفظ افتح البلاغ لتعيين العمل الميداني ومتابعة العميل وتسجيل التعويض ثم إغلاقه.'):tr('External conversations happen by phone, WhatsApp and visits. The outcome and next action live here.','التواصل الخارجي بالمكالمات وواتساب والزيارات. النتيجة والخطوة القادمة تُسجّلان هنا.')} action={row||create?<Link className="btn-secondary" href={listHref}>{tr('Back to list','العودة للقائمة')}</Link>:canCreate?<Link className="btn-primary" href={`${listHref}/new`}>+ {section==='issue'?tr('Quick customer issue','بلاغ عميل سريع'):section==='lead'?tr('Add lead','إضافة جهة'):tr('Add record','إضافة سجل')}</Link>:null}/>
   {section==='work'&&context.staff?<CrmWelcome userId={profile.id}/>:null}
   {section==='work'&&context.staff&&support?<CustomerSupportPanel data={support} ar={ar}/>:null}
   {!row&&!create&&section==='work'?<>
-   <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">{[
-    ['issue_action','Issues requiring action','مشاكل تحتاج إجراء','/issues?status=open'],['issue_waiting','Waiting on someone else','بانتظار طرف آخر','/issues?status=waiting'],['leads_today','Lead follow-ups today','متابعات الجهات اليوم','/locations-pipeline?window=today'],['leads_overdue','Overdue leads','جهات متأخرة','/locations-pipeline?window=overdue'],['locations_today','Location follow-ups','متابعات المواقع','/relationships?window=today'],['admin_today','Administrative tasks','مهام إدارية','/follow-ups?type=admin&window=today'],['rent_week','Rent / payments due soon','دفعات المواقع القريبة','/relationships/obligations?window=week'],['meetings_today','Meetings today','مواعيد اليوم','/follow-ups?type=meeting&window=today'],['recent_completed','Recently completed','أُنجز مؤخراً','/follow-ups?window=completed']
-   ].filter(x=>context.staff||['issue_action','recent_completed'].includes(x[0])).map(([key,en,arabic,href])=><Link key={key} href={`${href}&scope=mine`} className="surface-card block"><span className="text-xs font-medium text-slate-500">{tr(en,arabic)}</span><strong className="mt-2 block text-2xl">{context.counts[key]??0}</strong></Link>)}</div>
+   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{workMetrics.slice(0,4).map(([key,en,arabic,href])=>
+    <Link key={key} href={`${href}&scope=mine`} className="block min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <span className="text-xs font-medium text-slate-600">{tr(en,arabic)}</span><strong className="mt-1 block text-2xl text-slate-950">{context.counts[key]??0}</strong>
+    </Link>)}</div>
+   {workMetrics.length>4?<details className="rounded-xl border border-slate-200 bg-white p-3">
+    <summary className="cursor-pointer text-sm font-semibold text-slate-700">{tr('More work metrics','مؤشرات العمل الأخرى')} ({workMetrics.length-4})</summary>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{workMetrics.slice(4).map(([key,en,arabic,href])=>
+      <Link key={key} href={`${href}&scope=mine`} className="block min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <span className="text-xs font-medium text-slate-600">{tr(en,arabic)}</span><strong className="mt-1 block text-xl text-slate-950">{context.counts[key]??0}</strong>
+      </Link>)}</div>
+   </details>:null}
    <div className="flex flex-wrap gap-2">{context.staff?<><Link className="btn-secondary" href="/locations-pipeline/new">+ {tr('Add lead','إضافة جهة')}</Link><Link className="btn-secondary" href="/follow-ups/new">+ {tr('Follow-up','متابعة')}</Link></>:null}{context.manager?<Link className="btn-secondary" href="/my-work/team">{tr('Management view','عرض الإدارة')}</Link>:null}</div>
   </>:null}
   {create?canCreate?<section className="surface-card"><CrmRecordForm kind={kind} context={context} userId={profile.id} ar={ar} machineReport={machineReport}/></section>:<ErrorState title={tr('Not permitted','غير مسموح')} body={tr('Your role cannot create this record.','دورك لا يسمح بإنشاء هذا السجل.')}/>:null}
@@ -170,7 +190,10 @@ if(issueIds.length&&db){
     <label className="text-sm">{tr('Search name, phone or notes','البحث بالاسم أو الهاتف أو الملاحظات')}<input name="q" defaultValue={filters.q} className="field-input mt-1" placeholder={tr('Search…','بحث…')}/></label>
     <label className="text-sm">{tr('Ownership','المسؤولية')}<select name="scope" defaultValue={filters.scope??'all'} className="field-input mt-1"><option value="mine">{tr('Mine','المسند إليّ')}</option><option value="all">{tr('All permitted records','كل السجلات المسموح بها')}</option></select></label>
     <label className="text-sm">{tr('When','الوقت')}<select name="window" defaultValue={filters.window??'all'} className="field-input mt-1">{[['all','All','الكل'],['attention','Needs attention','يحتاج متابعة'],['today','Today','اليوم'],['overdue','Overdue','متأخر'],['week','This week','هذا الأسبوع'],['completed','Completed','مكتمل']].map(([v,en,arabic])=><option key={v} value={v}>{tr(en,arabic)}</option>)}</select></label>
-    {['lead','issue','task'].includes(section)?<label className="text-sm">{tr('Status','الحالة')}<select name="status" defaultValue={filters.status??''} className="field-input mt-1"><option value="">{tr('All statuses','كل الحالات')}</option>{crmOptionRows(section==='lead'?leadStatuses:section==='issue'?issueStatuses:taskStatuses,ar).map(o=><option value={o.value} key={o.value}>{o.label}</option>)}</select></label>:null}
+    <details className="sm:col-span-2 lg:col-span-4" open={section!=='work'||workExtraFiltersSelected}>
+     <summary className="cursor-pointer rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">{tr('More filters','فلاتر إضافية')}</summary>
+     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+     {['lead','issue','task'].includes(section)?<label className="text-sm">{tr('Status','الحالة')}<select name="status" defaultValue={filters.status??''} className="field-input mt-1"><option value="">{tr('All statuses','كل الحالات')}</option>{crmOptionRows(section==='lead'?leadStatuses:section==='issue'?issueStatuses:taskStatuses,ar).map(o=><option value={o.value} key={o.value}>{o.label}</option>)}</select></label>:null}
     {context.staff?<label className="text-sm">{tr('Assigned employee','الموظف المسؤول')}<select name="assigned_to" defaultValue={filters.assigned_to??''} className="field-input mt-1"><option value="">{tr('Everyone permitted','كل المسؤولين المسموحين')}</option>{context.directory.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>:null}
     {context.staff&&['issue','location','obligation'].includes(section)?<label className="text-sm">{tr('Location','الموقع')}<select className="field-input mt-1" name="location_id" defaultValue={filters.location_id??''}><option value="">{tr('All locations','كل المواقع')}</option>{context.options.locations?.map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label>:null}
     {section==='issue'?<label className="text-sm">{tr('Machine','الماكينة')}<select name="machine_id" defaultValue={filters.machine_id??''} className="field-input mt-1"><option value="">{tr('All machines','كل الماكينات')}</option>{context.options.machines?.filter((m:any)=>!filters.location_id||m.location_id===filters.location_id).map((m:any)=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label>:null}
@@ -182,6 +205,8 @@ if(issueIds.length&&db){
     </>}
     {section==='lead'?<label className="text-sm">{tr('Area','المنطقة')}<input name="area" defaultValue={filters.area} className="field-input mt-1"/></label>:null}
     <div className="flex flex-wrap items-center gap-3 text-sm"><label className="flex items-center gap-2"><input type="checkbox" name="archived" value="true" defaultChecked={filters.archived==='true'}/>{tr('Include archived','إظهار المؤرشف')}</label><label className="flex items-center gap-2"><input type="checkbox" name="practice" value="true" defaultChecked={filters.practice==='true'}/>{tr('Include practice','إظهار التدريب')}</label></div>
+     </div>
+    </details>
     <div className="flex items-end gap-2"><button className="btn-primary">{tr('Apply','تطبيق')}</button><Link className="btn-secondary" href={listHref}>{tr('Reset','إعادة ضبط')}</Link></div>
    </form>
    {section==='management'?<section className="surface-card"><h2 className="font-semibold">{tr('Team activity — last 30 days','نشاط الفريق — آخر 30 يوماً')}</h2><p className="mt-2 text-xs text-slate-500">{tr('Activity since this connected workflow was introduced; practice records are excluded. Handled and overdue counts show the current position.','النشاط المسجّل منذ بدء العمل المترابط؛ تُستبعد سجلات التدريب. أعداد المسؤوليات والمتأخرات تمثل الوضع الحالي.')}</p><div className="mt-4 grid gap-3 lg:grid-cols-2">{context.performance?.map((p:any)=><div key={p.id} className="rounded-xl border p-4"><strong>{p.name}</strong><dl className="mt-3 grid grid-cols-2 gap-2 text-sm">{[['issues_handled','Current issues','المشاكل المسندة'],['issues_resolved','Resolved','تم حلها'],['average_resolution_hours','Average hours to resolve','متوسط ساعات الحل'],['leads_contacted','Leads contacted','جهات تم التواصل معها'],['proposals_sent','Proposals sent','العروض المرسلة'],['accepted','Accepted locations','الجهات المقبولة'],['tasks_completed','Tasks completed','المتابعات المكتملة'],['overdue_followups','Overdue follow-ups','المتابعات المتأخرة']].map(([key,en,arabic])=><div key={key}><dt className="text-xs text-slate-500">{tr(en,arabic)}</dt><dd className="font-semibold">{p[key]??'—'}</dd></div>)}</dl></div>)}</div></section>:null}

@@ -10,6 +10,8 @@ export type ModuleTab = {
   href: string;
   exact?: boolean;
   match?: string[];
+  group?: string;
+  groupAr?: string;
 };
 
 function pathnameFromHref(href: string) {
@@ -147,9 +149,16 @@ export function ModuleTabs({
           <div className="absolute end-0 top-full z-40 mt-1 max-h-[min(65vh,28rem)] w-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
             {extraTabs.map((tab, index) => {
               const active = activeIndex === primaryTabs.length + index;
+              const group = tab.group ?? "Other tools";
+              const previousGroup = extraTabs[index - 1]?.group ?? "Other tools";
               return (
-                <Link
-                  key={`${tab.label}-${tab.href}`}
+                <div key={`${tab.label}-${tab.href}`}>
+                  {index === 0 || group !== previousGroup ? (
+                    <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {locale === "ar" ? (tab.groupAr ?? "أدوات أخرى") : group}
+                    </div>
+                  ) : null}
+                  <Link
                   href={tab.href}
                   prefetch={false}
                   aria-current={active ? "page" : undefined}
@@ -164,7 +173,8 @@ export function ModuleTabs({
                   }`}
                 >
                   {locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}
-                </Link>
+                  </Link>
+                </div>
               );
             })}
           </div>
