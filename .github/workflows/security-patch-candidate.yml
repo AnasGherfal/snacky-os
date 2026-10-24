@@ -1,0 +1,52 @@
+name: Prepare audited security lockfile
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/security-patch-candidate.yml"
+permissions:
+  contents: write
+jobs:
+  lockfile:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'security/patch-production-dependencies-20261024'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Generate security-patched candidate
+        run: |
+          mkdir -p diagnostics
+          npm install --package-lock-only --ignore-scripts --no-audit
+          npm audit fix --package-lock-only --ignore-scripts --omit=dev
+          npm ci
+          npm audit --omit=dev --audit-level=high --json > diagnostics/production-audit.json
+      - name: Verify TypeScript compilation
+        run: npm run typecheck
+      - name: Upload candidate lockfile and audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audited-lockfile-candidate
+          path: |
+            package.json
+            package-lock.json
+            diagnostics/production-audit.json
+          retention-days: 7
+      - name: Commit audited lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update lockfile for patched production dependencies"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
