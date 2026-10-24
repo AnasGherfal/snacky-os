@@ -83,7 +83,7 @@ export function computeStorageOverview(input: {
     slots.set(route.id, { routeId: route.id, date: route.date, status: route.status, units: (previous?.units ?? 0) + outstanding });
     grouped.set(need.product_id, slots);
   }
-  const rows = input.products.filter(p => p.active || physical.has(p.id)).map<StorageOverviewRow>(product => {
+  const rows = input.products.filter(p => p.active || physical.has(p.id) || grouped.has(p.id)).map<StorageOverviewRow>(product => {
     const onHand = physical.get(product.id) ?? 0; // Zero is known only because the storage ledger loaded successfully.
     const reservations = [...(grouped.get(product.id)?.values() ?? [])]
       .sort((a,b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.routeId.localeCompare(b.routeId));
