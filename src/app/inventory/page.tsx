@@ -150,6 +150,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const q = String(params.q ?? "");
   const rawFilter = String(params.filter ?? "");
   const filter = inventoryFilters.some((item) => item.key === rawFilter) ? (rawFilter as InventoryFilter) : "stocked";
+  const operatorBagView = String(params.view ?? "") === "operator-bags";
   const profile = await getCurrentProfile();
   const userContext = profile
     ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
@@ -188,43 +189,28 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     );
   }
 
-  const [
-    { data: operatorBagRowsData, error: operatorBagError },
-    { data: routeReservationsData, error: routeReservationsError, count: routeReservationsCount },
-  ] = await Promise.all([
-    inventoryReadClient.from("current_inventory_by_location")
-      .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
-      .eq("location_type", "operator_bag").order("location_name").order("product_name").limit(2000),
-    inventoryReadClient.from("route_stock_lines")
-      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
-      // Exclude the two universal terminal statuses before loading. Other
-      // terminal/legacy statuses are still excluded by isRouteReservationStatus
-      // below: never narrow this to only newly introduced enum values.
-      .neq("routes.status", "completed")
-      .neq("routes.status", "cancelled")
-      .limit(10001),
-  ]);
+  const {
+    data: routeReservationsData,
+    error: routeReservationsError,
+    count: routeReservationsCount,
+  } = await inventoryReadClient.from("route_stock_lines")
+    .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
+    // Completed or cancelled routes are not reservations. The definitive
+    // legacy/status filter below remains in isRouteReservationStatus.
+    .neq("routes.status", "completed")
+    .neq("routes.status", "cancelled")
+    .limit(10001);
   let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
     && routeReservationsCount <= (routeReservationsData?.length ?? 0)
     && (routeReservationsData?.length ?? 0) < 10001;
 
   const queryIssues: InventoryQueryIssue[] = [
-    operatorBagError
-      ? logInventoryQueryError({
-          key: "operator_bags",
-          label: "Could not load operator bag stock",
-          table: "current_inventory_by_location",
-          error: operatorBagError,
-          profile,
-          params: { location_type: "operator_bag", limit: 2000 },
-        })
-      : null,
     !reservationsKnown
       ? {
           key: "route_reservations",
           label: "Route reservations unavailable",
           table: "route_stock_lines",
-          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; the recorded Storage balance is still shown.",
+          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; the recorded Storage balance remains visible.",
         }
       : null,
     !storageResult.minimumThresholdsVerified
@@ -232,12 +218,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           key: "minimum_thresholds",
           label: "Minimum stock thresholds unavailable",
           table: "products.min_storage_qty",
-          message: "Minimum stock thresholds are unavailable; threshold labels are disabled, but the ledger balance is available.",
+          message: "Minimum stock thresholds are unavailable; threshold labels are disabled but recorded stock remains visible.",
         }
       : null,
   ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
 
-  const productById = new Map(storageResult.items.map((product) => [product.productId, product]));
   const reservationsByProductId = new Map<string, InventoryRouteReservation[]>();
   ((routeReservationsData ?? []) as RouteReservationSourceRow[]).forEach((row) => {
     const route = Array.isArray(row.routes) ? row.routes[0] : row.routes;
@@ -305,21 +290,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     reserved: allInventoryRows.filter((row) => row.reservedQty !== null && row.reservedQty > 0).length,
     review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified" || row.status === "low_stock").length,
   };
-
-  const operatorBagRows = (operatorBagRowsData ?? [])
-    .filter((row: any) => row.location_type === "operator_bag" && Number(row.quantity_on_hand ?? 0) > 0)
-    .map((row: any) => {
-      const product = productById.get(String(row.product_id ?? ""));
-      return {
-        ...row,
-        product_name: row.product_name ?? product?.productName ?? "Unknown product",
-        sku: product?.sku ?? null,
-        category: product?.category ?? null,
-        case_quantity: product?.caseQuantity ?? 1,
-      };
-    })
-    .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
-  const filteredOperatorBagRows = operatorBagRows.filter((row: any) => matchesText([row.product_name, row.location_name, row.sku], q));
 
   const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", low_stock: "منخفض", available: "متاح", review: "يحتاج مراجعة", unverified: "غير مؤكد" };
   const inventoryHeaders = [
