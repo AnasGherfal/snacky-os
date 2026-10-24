@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { OperatorBagStockView } from "@/app/inventory/OperatorBagStockView";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
@@ -173,6 +174,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   // client for the operational ledger reads so large security-invoker views do
   // not evaluate the same profile policy once per movement row.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
+
+  // Operator bag custody is a separate on-demand read, never part of routine
+  // Storage loading. It remains available if the warehouse balance view fails.
+  if (operatorBagView) {
+    return <OperatorBagStockView
+      client={inventoryReadClient} locale={locale}
+      q={q} page={page} pageSize={pageSize} searchParams={params}
+    />;
+  }
 
   const storageResult = await loadPhysicalStorageData(inventoryReadClient);
   if (!storageResult.ok) {
@@ -465,58 +475,24 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </>
       )}
 
-      <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>{tr("Operator bag stock", "مخزون حقائب المشغلين")} <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} {tr("rows", "صف")})</span></span>
-          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
-        </summary>
-        <div className="mt-4">
-        {!filteredOperatorBagRows.length ? (
-          <EmptyState
-            title={q ? tr("No operator bag rows match this search", "لا توجد حقائب مطابقة للبحث") : tr("No operator bag stock", "لا يوجد مخزون في حقائب المشغلين")}
-            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned.", "تظهر الكميات بعد سحب البضاعة للجولات، وتقل عند التعبئة أو إرجاع المتبقي.")}
-          />
-        ) : (
-          <>
-            <MobileCardList>
-              {filteredOperatorBagRows.map((row: any) => (
-                <MobileRecordCard key={`${row.location_id}-${row.product_id}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="break-words text-base font-semibold text-slate-900">{row.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")}</p>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <MobileField label={tr("Operator", "المشغّل")}>{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</MobileField>
-                    <MobileField label={tr("Quantity", "الكمية")}><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
-                  </div>
-                </MobileRecordCard>
-              ))}
-            </MobileCardList>
-            <DataTable className="hidden md:block" headers={[tr("Operator", "المشغّل"), tr("Product", "المنتج"), tr("SKU", "رمز المنتج"), tr("Quantity", "الكمية")]}>
-              {filteredOperatorBagRows.map((row: any) => (
-                <tr key={`${row.location_id}-${row.product_id}`}>
-                  <td className="font-medium text-slate-900">{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</td>
-                  <td>{row.product_name}</td>
-                  <td>{row.sku ?? tr("No SKU", "بدون رمز")}</td>
-                  <td className="font-semibold">{packagedQuantity(row.quantity_on_hand, row)}</td>
-                </tr>
-              ))}
-            </DataTable>
-          </>
-        )}
-        </div>
-      </details>
-
-      {canAccessPath(userContext, "/inventory/movements") ? (
+      <div className="mt-4 flex flex-wrap gap-2">
         <Link
-          href="/inventory/movements"
-          className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
+          href="/inventory?view=operator-bags"
+          className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
         >
-          {tr("View full movement history", "عرض سجل حركات المخزون الكامل")}
+          {tr("Operator bag balances", "رصيد حقائب المشغلين")}
         </Link>
-      ) : null}
+        {canAccessPath(userContext, "/inventory/movements") ? (
+          <Link
+            href="/inventory/movements"
+            className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
+          >
+            {tr("View movement history", "عرض سجل حركات المخزون")}
+          </Link>
+        ) : null}
+      </div>
+
+
     </div>
   );
 }
