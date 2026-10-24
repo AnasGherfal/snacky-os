@@ -391,9 +391,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     tr("In storage", "في المخزن"),
     tr("Reserved in storage", "محجوز للجولات"),
     tr("Available — no route", "متاح بدون حجز"),
-    tr("Suggested buy", "الشراء المقترح"),
-    tr("Velocity", "المبيعات اليومية"),
-    ...(canSeeCost ? [tr("Last cost", "آخر تكلفة")] : []),
     tr("Status", "الحالة"),
   ];
 
@@ -457,7 +454,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4" aria-label={tr("Storage summary for selected products", "ملخص مخزون المنتجات المعروضة")}>
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={tr("Storage summary for selected products", "ملخص مخزون المنتجات المعروضة")}>
         <div className="surface-card">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("In storage", "في المخزن")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
@@ -472,11 +469,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr("Available — no route", "متاح بدون حجز")}</div>
           <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
           <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Free units that can be assigned to a new route", "وحدات يمكن تخصيصها لجولة جديدة")}</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Products with reservations", "منتجات محجوزة")}</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
-          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Use the Reserved filter to review them", "استخدم فلتر المحجوز للمراجعة")}</p>
         </div>
       </div>
       <p className="mb-4 text-xs text-slate-600">{tr("Reserved units are still on the storage shelves. Only Available stock can be assigned to another route.", "الكميات المحجوزة ما زالت موجودة في المخزن، لكن المتاح فقط يمكن تخصيصه لجولة جديدة.")}</p>
@@ -500,16 +492,12 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
                 </div>
                 <div className="mb-3 flex flex-wrap gap-2">
-                  {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">{tr("Fast seller", "الأكثر مبيعاً")}</span> : null}
                   {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">{tr("Reserved in storage", "محجوز للجولات")}</span> : null}
-                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr("Buy", "اشترِ")} {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <MobileField label={tr("In storage", "في المخزن")}>{packagedQuantity(row.currentQty, row)}</MobileField>
                   <MobileField label={tr("Reserved in storage", "محجوز للجولات")}>{packagedQuantity(row.reservedQty, row)}</MobileField>
                   <MobileField label={tr("Available — no route", "متاح بدون حجز")}><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
-                  <MobileField label={tr("Suggested buy", "الشراء المقترح")}>{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
-                  <MobileField label={tr("Velocity", "مبيعات/يوم")}>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</MobileField>
                 </div>
                 {row.reservations.length ? (
                   <details className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
@@ -525,7 +513,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                     <p className="mt-2 text-xs leading-5 text-amber-800">{tr("Open a route to change or release its reservation.", "افتح الجولة لتغيير الحجز أو إلغائه.")}</p>
                   </details>
                 ) : null}
-                {canSeeCost ? <div className="mt-3"><MobileField label={tr("Last cost", "آخر تكلفة")}>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
                 {row.reasons.length ? (
                   <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <summary className="cursor-pointer text-xs font-semibold text-slate-600">{tr("Why it matters", "أسباب الأولوية")}</summary>
@@ -545,7 +532,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 <td>
                   <div className="font-medium text-slate-900">{row.productName}</div>
                   <div className="text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</div>
-                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || tr("No extra restock signals", "لا توجد مؤشرات إضافية للشراء")}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
                 <td>
@@ -564,9 +550,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   {packagedQuantity(row.availableQty, row)}
                   <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? tr("No route attached", "غير محجوز لجولة") : row.reservedQty > 0 ? tr("All in-storage units reserved", "كل المخزون محجوز") : tr("No stock", "لا يوجد مخزون")}</div>
                 </td>
-                <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
-                <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</td>
-                {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
                 <td>
                   <div className="flex flex-col items-start gap-1">
                     <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
