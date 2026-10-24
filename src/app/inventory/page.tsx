@@ -384,6 +384,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     movement.related_route_id,
   ], q));
 
+  const movementReasonLabelsAr: Record<string, string> = { purchase_received: "استلام مشتريات", storage_to_operator_bag: "سحب من المخزن", operator_bag_to_machine: "تعبئة ماكينة", operator_bag_to_storage: "إرجاع للمخزن", stock_count_adjustment: "تسوية جرد", opening_balance: "رصيد افتتاحي", manual_sale: "بيع يدوي", returned_from_machine: "إرجاع من ماكينة", manual_correction: "تصحيح يدوي", damaged: "تالف", operator_personal_purchase: "شراء شخصي" };
   const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", critical: "حرج", low_stock: "منخفض", available: "متاح" };
   const inventoryHeaders = [
     tr("Product", "المنتج"),
@@ -554,16 +555,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 <td>
                   <div className="font-medium text-slate-900">{row.productName}</div>
                   <div className="text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</div>
-                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || "No extra restock signals"}</div>
+                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || tr("No extra restock signals", "لا توجد مؤشرات إضافية للشراء")}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
                 <td>
-                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : "None"}</div>
+                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : tr("None", "لا يوجد")}</div>
                   {row.reservations.length ? (
                     <div className="mt-2 space-y-1">
                       {row.reservations.map((reservation) => (
                         <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="block text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:text-amber-950">
-                          Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
+                          {tr("Route", "جولة")} {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
                         </Link>
                       ))}
                     </div>
@@ -571,34 +572,34 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 </td>
                 <td className="font-semibold text-emerald-800">
                   {packagedQuantity(row.availableQty, row)}
-                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? "No route attached" : row.reservedQty > 0 ? "All in-storage units reserved" : "No stock"}</div>
+                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? tr("No route attached", "غير محجوز لجولة") : row.reservedQty > 0 ? tr("All in-storage units reserved", "كل المخزون محجوز") : tr("No stock", "لا يوجد مخزون")}</div>
                 </td>
                 <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
                 <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</td>
                 {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
                 <td>
                   <div className="flex flex-col items-start gap-1">
-                    <StatusBadge status={row.status} />
+                    <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
                     {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label={tr("Reserved in storage", "محجوز للجولات")} /> : null}
                   </div>
                 </td>
               </tr>
             ))}
           </DataTable>
-          <PaginationControls basePath="/inventory" searchParams={params} page={visibleInventoryPage} pageSize={pageSize} totalCount={filteredInventoryRows.length} itemLabel="products" />
+          <PaginationControls basePath="/inventory" searchParams={params} page={visibleInventoryPage} pageSize={pageSize} totalCount={filteredInventoryRows.length} itemLabel={tr("products", "منتج")} />
         </>
       )}
 
       <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>Operator bag stock <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} rows)</span></span>
-          <span className="text-xs text-slate-500">Show details ↓</span>
+          <span>{tr("Operator bag stock", "مخزون حقائب المشغلين")} <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} {tr("rows", "صف")})</span></span>
+          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
         </summary>
         <div className="mt-4">
         {!filteredOperatorBagRows.length ? (
           <EmptyState
-            title={q ? "No operator bag rows match this search" : "No operator bag stock"}
-            body={q ? "Try a broader search or clear the search box." : "Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned."}
+            title={q ? tr("No operator bag rows match this search", "لا توجد حقائب مطابقة للبحث") : tr("No operator bag stock", "لا يوجد مخزون في حقائب المشغلين")}
+            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned.", "تظهر الكميات بعد سحب البضاعة للجولات، وتقل عند التعبئة أو إرجاع المتبقي.")}
           />
         ) : (
           <>
@@ -613,16 +614,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                     {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
-                    <MobileField label={tr("Operator", "المشغّل")}>{row.location_name ?? "Unknown operator"}</MobileField>
+                    <MobileField label={tr("Operator", "المشغّل")}>{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</MobileField>
                     <MobileField label={tr("Quantity", "الكمية")}><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
                   </div>
                 </MobileRecordCard>
               ))}
             </MobileCardList>
-            <DataTable className="hidden md:block" headers={["Operator", "Product", "SKU", "Quantity"]}>
+            <DataTable className="hidden md:block" headers={[tr("Operator", "المشغّل"), tr("Product", "المنتج"), tr("SKU", "رمز المنتج"), tr("Quantity", "الكمية")]}>
               {filteredOperatorBagRows.map((row: any) => (
                 <tr key={`${row.location_id}-${row.product_id}`}>
-                  <td className="font-medium text-slate-900">{row.location_name ?? "Unknown operator"}</td>
+                  <td className="font-medium text-slate-900">{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</td>
                   <td>{row.product_name}</td>
                   <td>{row.sku ?? tr("No SKU", "بدون رمز")}</td>
                   <td className="font-semibold">{packagedQuantity(row.quantity_on_hand, row)}</td>
@@ -636,14 +637,14 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>Recent stock movements <span className="text-sm font-normal text-slate-500">({filteredMovements.length} records)</span></span>
-          <span className="text-xs text-slate-500">Show details ↓</span>
+          <span>{tr("Recent stock movements", "حركات المخزون الأخيرة")} <span className="text-sm font-normal text-slate-500">({filteredMovements.length} {tr("records", "سجل")})</span></span>
+          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
         </summary>
         <div className="mt-4">
         {!filteredMovements.length ? (
           <EmptyState
-            title={q ? "No movement rows match this search" : "No movements recorded"}
-            body={q ? "Try a broader search or clear the search box." : "New purchase receipts, route picks, returns, adjustments, and waste movements will appear here."}
+            title={q ? tr("No movement rows match this search", "لا توجد حركات مطابقة للبحث") : tr("No movements recorded", "لا توجد حركات مسجلة")}
+            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("New purchase receipts, route picks, returns, adjustments, and waste movements will appear here.", "تظهر هنا حركات استلام المشتريات، وسحب الجولات، والإرجاع، والجرد، والتالف.")}
           />
         ) : (
           <>
@@ -653,9 +654,9 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="break-words text-base font-semibold text-slate-900">{movement.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString("en-US")}</p>
+                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</p>
                     </div>
-                    <StatusBadge status={movement.reason} />
+                    <StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <MobileField label={tr("Qty", "كمية")}>{packagedQuantity(movement.quantity, movement)}</MobileField>
@@ -666,15 +667,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 </MobileRecordCard>
               ))}
             </MobileCardList>
-            <DataTable className="hidden md:block" headers={["Created", "Product", "Qty", "From", "To", "Reason", "Route"]}>
+            <DataTable className="hidden md:block" headers={[tr("Created", "التاريخ"), tr("Product", "المنتج"), tr("Qty", "الكمية"), tr("From", "من"), tr("To", "إلى"), tr("Reason", "السبب"), tr("Route", "الجولة")]}>
               {filteredMovements.map((movement: any) => (
                 <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString("en-US")}</td>
+                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
                   <td className="font-medium">{movement.product_name}</td>
                   <td>{packagedQuantity(movement.quantity, movement)}</td>
                   <td>{movement.from_label}</td>
                   <td>{movement.to_label}</td>
-                  <td><StatusBadge status={movement.reason} /></td>
+                  <td><StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} /></td>
                   <td>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</td>
                 </tr>
               ))}
