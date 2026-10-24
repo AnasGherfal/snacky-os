@@ -205,6 +205,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .order("created_at", { ascending: false }).limit(250),
     inventoryReadClient.from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
+      // Exclude the two universal terminal statuses before loading. Other
+      // terminal/legacy statuses are still excluded by isRouteReservationStatus
+      // below: never narrow this to only newly introduced enum values.
+      .neq("routes.status", "completed")
+      .neq("routes.status", "cancelled")
       .limit(10001),
   ]);
   let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
