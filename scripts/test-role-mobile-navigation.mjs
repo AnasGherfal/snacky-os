@@ -78,6 +78,7 @@ test("active state differentiates Available routes and ledger from their parent 
   const op = getRoleMobileDestinations(profile("operator"));
   assert.equal(activeMobileShortcutIndex(op, "/operator/routes", "", null), 0);
   assert.equal(activeMobileShortcutIndex(op, "/operator/routes", "view=available", null), 1);
+  assert.equal(activeMobileShortcutIndex(op, "/operator/routes", "view=unknown", null), 0);
   assert.equal(activeMobileShortcutIndex(op, "/operator/routes/abc", "", null), 0);
   const fin = getRoleMobileDestinations(profile("finance"));
   assert.equal(activeMobileShortcutIndex(fin, "/finance/transactions", "", "finance"), 1);
