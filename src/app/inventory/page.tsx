@@ -194,7 +194,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const [
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },
-    { data: routeReservationsData, error: routeReservationsError },
+    { data: routeReservationsData, error: routeReservationsError, count: routeReservationsCount },
   ] = await Promise.all([
     inventoryReadClient.from("current_inventory_by_location")
       .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
@@ -203,10 +203,12 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
       .order("created_at", { ascending: false }).limit(250),
     inventoryReadClient.from("route_stock_lines")
-      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
+      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
       .limit(10001),
   ]);
-  const reservationsKnown = !routeReservationsError && (routeReservationsData?.length ?? 0) < 10001;
+  let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
+    && routeReservationsCount <= (routeReservationsData?.length ?? 0)
+    && (routeReservationsData?.length ?? 0) < 10001;
 
   const queryIssues: InventoryQueryIssue[] = [
     operatorBagError
@@ -254,13 +256,23 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     const routeId = String(route?.id ?? row.route_id ?? "").trim();
     const productId = String(row.product_id ?? "").trim();
     const status = String(route?.status ?? "").trim();
-    const remainingQty = Math.max(0, Math.floor(Number(row.planned_qty ?? 0)) - Math.floor(Number(row.picked_qty ?? 0)));
-    if (!routeId || !productId || remainingQty <= 0 || !isRouteReservationStatus(status)) return;
+    if (!isRouteReservationStatus(status)) return;
+    const planned = Number(row.planned_qty), picked = Number(row.picked_qty ?? 0);
+    if (!routeId || !productId || !Number.isSafeInteger(planned) || !Number.isSafeInteger(picked)
+        || planned < 0 || picked < 0) {
+      reservationsKnown = false;
+      return;
+    }
+    const remainingQty = Math.max(0, planned - picked);
+    if (remainingQty <= 0) return;
     reservationsByProductId.set(productId, [
       ...(reservationsByProductId.get(productId) ?? []),
       { routeId, routeDate: route?.route_date ?? null, status, remainingQty },
     ]);
   });
+  if (!reservationsKnown && !queryIssues.some((issue) => issue.key === "route_reservations")) {
+    queryIssues.push({ key: "route_reservations", label: "Reservation data unverified", table: "route_stock_lines", message: "Reservation quantities are incomplete. Available stock is hidden until verified." });
+  }
   reservationsByProductId.forEach((reservations) => reservations.sort((left, right) =>
     String(left.routeDate ?? "").localeCompare(String(right.routeDate ?? "")) || left.routeId.localeCompare(right.routeId)
   ));
@@ -337,7 +349,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   ], q));
 
   const movementReasonLabelsAr: Record<string, string> = { purchase_received: "استلام مشتريات", storage_to_operator_bag: "سحب من المخزن", operator_bag_to_machine: "تعبئة ماكينة", operator_bag_to_storage: "إرجاع للمخزن", stock_count_adjustment: "تسوية جرد", opening_balance: "رصيد افتتاحي", manual_sale: "بيع يدوي", returned_from_machine: "إرجاع من ماكينة", manual_correction: "تصحيح يدوي", damaged: "تالف", operator_personal_purchase: "شراء شخصي" };
-  const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", critical: "حرج", low_stock: "منخفض", available: "متاح" };
+  const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", low_stock: "منخفض", available: "متاح", review: "يحتاج مراجعة", unverified: "غير مؤكد" };
   const inventoryHeaders = [
     tr("Product", "المنتج"),
     tr("In storage", "في المخزن"),
