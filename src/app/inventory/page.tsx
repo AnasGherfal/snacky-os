@@ -139,6 +139,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     return <OperatorBagStockView
       client={inventoryReadClient} locale={locale}
       q={q} page={page} pageSize={pageSize} searchParams={params}
+      canSeeMovementHistory={canAccessPath(userContext, "/inventory/movements")}
     />;
   }
 
