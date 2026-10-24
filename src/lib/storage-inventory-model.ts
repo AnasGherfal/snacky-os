@@ -1,5 +1,6 @@
 /**
- * Physical Storage balances are ledger facts, not VMS sales forecasts.
+ * Recorded Storage quantities are derived from movement-ledger entries.
+ * They are not independent physical shelf counts or VMS sales forecasts.
  * This module does no IO and never changes inventory records.
  */
 export type StorageProduct = {
