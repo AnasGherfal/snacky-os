@@ -176,72 +176,56 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   // not evaluate the same profile policy once per movement row.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
 
-  const restockResult = await loadRestockPriorityData(inventoryReadClient);
-  if (!restockResult.storageLoaded) {
+  const storageResult = await loadPhysicalStorageData(inventoryReadClient);
+  if (!storageResult.ok) {
+    console.error("[inventory] Physical Storage could not be verified", { error: storageResult.error });
     return (
       <ErrorState
-        title="Storage inventory could not be verified"
-        body="Snacky OS did not receive an authoritative ledger balance. No products have been changed and no missing result is being shown as zero. Retry to load the real storage quantities."
-        action={<SecondaryButton href="/inventory">Retry</SecondaryButton>}
+        title={tr("Storage inventory could not be verified", "تعذر التحقق من مخزون المخزن")}
+        body={tr(
+          "Physical stock could not be verified from the ledger. No quantities have been changed or treated as zero. Retry or check Data Health.",
+          "تعذر التحقق من كميات المخزن من سجل المخزون. لم تتغير أي كميات ولم نعتبر البيانات المفقودة صفراً. أعد المحاولة أو راجع سلامة البيانات."
+        )}
+        action={<SecondaryButton href="/inventory">{tr("Retry", "إعادة المحاولة")}</SecondaryButton>}
       />
     );
   }
+
   const [
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },
-    { data: packagingRowsData, error: packagingError },
     { data: routeReservationsData, error: routeReservationsError },
   ] = await Promise.all([
-    inventoryReadClient
-      .from("current_inventory_by_location")
+    inventoryReadClient.from("current_inventory_by_location")
       .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
-      .eq("location_type", "operator_bag")
-      .order("location_name")
-      .order("product_name")
-      .limit(2000),
-    inventoryReadClient
-      .from("inventory_movements")
+      .eq("location_type", "operator_bag").order("location_name").order("product_name").limit(2000),
+    inventoryReadClient.from("inventory_movements")
       .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
-      .order("created_at", { ascending: false })
-      .limit(250),
-    inventoryReadClient
-      .from("products")
-      .select("id, name, category, case_quantity")
-      .eq("active", true)
-      .order("name")
-      .limit(5000),
-    inventoryReadClient
-      .from("route_stock_lines")
+      .order("created_at", { ascending: false }).limit(250),
+    inventoryReadClient.from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
-      .limit(10000),
+      .limit(10001),
   ]);
+  const reservationsKnown = !routeReservationsError && (routeReservationsData?.length ?? 0) < 10001;
 
   const queryIssues: InventoryQueryIssue[] = [
-    ...Object.entries(restockResult.errors).map(([key, message]) => ({
-      key: `restock-${key}`,
-      label: "Restock signal unavailable",
-      table: key,
-      message: `${key}: ${message}`,
-    })),
     operatorBagError
       ? logInventoryQueryError({
-          key: "ledger_inventory",
+          key: "operator_bags",
           label: "Could not load operator bag stock",
           table: "current_inventory_by_location",
           error: operatorBagError,
           profile,
-          params: { location_type: "operator_bag", order: ["location_name", "product_name"], limit: 2000 },
+          params: { location_type: "operator_bag", limit: 2000 },
         })
       : null,
-    routeReservationsError
-      ? logInventoryQueryError({
+    !reservationsKnown
+      ? {
           key: "route_reservations",
-          label: "Could not load route reservation details",
-          table: "route_stock_lines + routes",
-          error: routeReservationsError,
-          profile,
-          params: { active_status_rule: "isRouteReservationStatus", limit: 10000 },
-        })
+          label: "Route reservations unavailable",
+          table: "route_stock_lines",
+          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; physical stock is still shown.",
+        }
       : null,
     movementsError
       ? logInventoryQueryError({
@@ -253,24 +237,17 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           params: { order: "created_at desc", limit: 250 },
         })
       : null,
-    packagingError
-      ? logInventoryQueryError({
-          key: "product_packaging",
-          label: "Could not load product box quantities",
-          table: "products",
-          error: packagingError,
-          profile,
-          params: { select: "id,name,category,case_quantity", limit: 5000 },
-        })
+    !storageResult.minimumThresholdsVerified
+      ? {
+          key: "minimum_thresholds",
+          label: "Minimum stock thresholds unavailable",
+          table: "products.min_storage_qty",
+          message: "Minimum stock thresholds are unavailable; low-stock labels are disabled, but physical quantities are verified.",
+        }
       : null,
   ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
 
-  const priorityByProductId = new Map(restockResult.items.map((item) => [item.productId, item]));
-  const packagingByProductId = new Map((packagingRowsData ?? []).map((row: any) => [String(row.id), {
-    productName: row.name ?? null,
-    category: row.category ?? null,
-    caseQuantity: Math.max(1, Number(row.case_quantity ?? 1)),
-  }]));
+  const productById = new Map(storageResult.items.map((product) => [product.productId, product]));
   const reservationsByProductId = new Map<string, InventoryRouteReservation[]>();
   ((routeReservationsData ?? []) as RouteReservationSourceRow[]).forEach((row) => {
     const route = Array.isArray(row.routes) ? row.routes[0] : row.routes;
