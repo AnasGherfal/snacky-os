@@ -265,64 +265,56 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     String(left.routeDate ?? "").localeCompare(String(right.routeDate ?? "")) || left.routeId.localeCompare(right.routeId)
   ));
 
-  const allInventoryRows = restockResult.items
+  const allInventoryRows = storageResult.items
     .map<InventoryRow>((item) => {
-      const currentQty = Math.max(0, Number(item.storageQty ?? 0));
+      const currentQty = item.currentQty; // signed verified ledger quantity; never clamp a negative balance
       const reservations = reservationsByProductId.get(item.productId) ?? [];
-      const reservedQty = routeReservationsError
-        ? Math.max(0, Number(item.activeRouteNeedQty ?? 0))
-        : reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0);
-      const availableQty = Math.max(0, currentQty - reservedQty);
-      const isCritical = item.section === "critical" || item.status === "critical";
+      const reservedQty = reservationsKnown
+        ? reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0)
+        : null;
+      const availableQty = reservedQty === null ? null : Math.max(0, currentQty - reservedQty);
       return {
         productId: item.productId,
-        productName: item.name,
+        productName: item.productName,
         sku: item.sku,
         category: item.category,
         brand: item.brand,
-        caseQuantity: packagingByProductId.get(item.productId)?.caseQuantity ?? 1,
+        caseQuantity: item.caseQuantity,
         currentQty,
         reservedQty,
         availableQty,
         reservations,
-        suggestedBuyQty: Math.max(0, Number(item.suggestedBuyQty ?? 0)),
-        routeNeedQty: Math.max(0, Number(item.activeRouteNeedQty ?? 0)),
-        salesVelocity: Math.max(0, Number(item.salesVelocity ?? 0)),
-        isFastSeller: Boolean(item.isFastSeller),
-        restockStatus: item.status,
-        restockSection: item.section,
-        lastPurchaseCost: item.lastPurchaseCost,
-        reasons: item.reasons.slice(0, 3),
-        status: inventoryStatus(currentQty, reservedQty, availableQty, isCritical),
+        status: physicalStockStatus(currentQty, reservedQty, item.minStorageQty, item.unmapped),
       };
     })
-    .sort((a, b) => a.productName.localeCompare(b.productName));
+    .sort((left, right) => {
+      const rank = (status: string) => ({ review: 0, unverified: 1, out_of_stock: 2, low_stock: 3, reserved: 4, available: 5 })[status] ?? 6;
+      return rank(left.status) - rank(right.status) || left.productName.localeCompare(right.productName);
+    });
 
   const filteredInventoryRows = filterInventoryRows(allInventoryRows, filter, q);
   const totalInventoryPages = Math.max(1, Math.ceil(filteredInventoryRows.length / pageSize));
   const visibleInventoryPage = Math.min(page, totalInventoryPages);
   const inventoryRows = filteredInventoryRows.slice((visibleInventoryPage - 1) * pageSize, visibleInventoryPage * pageSize);
 
-  const filterCounts = {
+  const filterCounts: Record<InventoryFilter, number> = {
     all: allInventoryRows.length,
-    out: allInventoryRows.filter((row) => row.currentQty <= 0).length,
-    critical: allInventoryRows.filter((row) => row.restockSection === "critical" || row.status === "critical").length,
-    low: allInventoryRows.filter((row) => row.status === "low_stock" || row.restockStatus === "low").length,
-    reserved: allInventoryRows.filter((row) => row.reservedQty > 0).length,
-    fast: allInventoryRows.filter((row) => row.isFastSeller).length,
+    out: allInventoryRows.filter((row) => row.status === "out_of_stock").length,
+    low: allInventoryRows.filter((row) => row.status === "low_stock").length,
+    reserved: allInventoryRows.filter((row) => row.reservedQty !== null && row.reservedQty > 0).length,
+    review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified").length,
   };
 
   const operatorBagRows = (operatorBagRowsData ?? [])
     .filter((row: any) => row.location_type === "operator_bag" && Number(row.quantity_on_hand ?? 0) > 0)
     .map((row: any) => {
-      const product = priorityByProductId.get(String(row.product_id ?? ""));
+      const product = productById.get(String(row.product_id ?? ""));
       return {
         ...row,
-        product_name: row.product_name ?? product?.name ?? "Unknown product",
+        product_name: row.product_name ?? product?.productName ?? "Unknown product",
         sku: product?.sku ?? null,
-        category: product?.category ?? packagingByProductId.get(String(row.product_id ?? ""))?.category ?? null,
-        case_quantity: packagingByProductId.get(String(row.product_id ?? ""))?.caseQuantity ?? 1,
-        isFastSeller: Boolean(product?.isFastSeller),
+        category: product?.category ?? null,
+        case_quantity: product?.caseQuantity ?? 1,
       };
     })
     .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
@@ -330,9 +322,9 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const movements = (movementsData ?? []).map((movement: any) => ({
     ...movement,
-    product_name: movement.product?.name ?? priorityByProductId.get(String(movement.product_id ?? ""))?.name ?? "Unknown product",
-    category: priorityByProductId.get(String(movement.product_id ?? ""))?.category ?? packagingByProductId.get(String(movement.product_id ?? ""))?.category ?? null,
-    case_quantity: packagingByProductId.get(String(movement.product_id ?? ""))?.caseQuantity ?? 1,
+    product_name: movement.product?.name ?? productById.get(String(movement.product_id ?? ""))?.productName ?? "Unknown product",
+    category: productById.get(String(movement.product_id ?? ""))?.category ?? null,
+    case_quantity: productById.get(String(movement.product_id ?? ""))?.caseQuantity ?? 1,
     from_label: formatEntity(movement.from_entity_type, movement.from_entity_id),
     to_label: formatEntity(movement.to_entity_type, movement.to_entity_id),
   }));
