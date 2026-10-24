@@ -19,6 +19,7 @@ const buyListSummary = read("src/app/product-planning/BuyListLiveSummary.tsx");
 const planningHelper = read("src/lib/product-planning.ts");
 const inventoryPage = read("src/app/inventory/page.tsx");
 const movementLogPage = read("src/app/inventory/movements/page.tsx");
+const operatorBagPage = read("src/app/inventory/OperatorBagStockView.tsx");
 const pickupPage = read("src/app/operator/routes/[id]/pick-list/page.tsx");
 const pickupApi = read("src/app/api/operator/routes/[id]/pick-list/route.ts");
 const authz = read("src/lib/authz.ts");
@@ -242,7 +243,8 @@ test("inventory and route pickup use case_quantity packaging displays", () => {
   assert.match(inventoryPage, /formatSignedProductQuantity/);
   assert.match(inventoryPage, /case_quantity/);
   assert.match(inventoryPage, /packagedQuantity\(row\.currentQty/);
-  assert.match(inventoryPage, /packagedQuantity\(row\.quantity_on_hand/);
+  assert.match(operatorBagPage, /formatSignedProductQuantity/);
+  assert.match(operatorBagPage, /caseQuantity:/);
   assert.match(movementLogPage, /movementDisplayQuantity\(movement\)/);
   assert.match(movementLogPage, /formatSignedProductQuantity/);
   assert.match(movementLogPage, /products\(id, sku, name, case_quantity, category\)/);
