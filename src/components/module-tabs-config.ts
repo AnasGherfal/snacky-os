@@ -14,19 +14,13 @@ const cashTabs: ModuleTab[] = [
 ];
 const stockTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
-  { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
+  { label: "What to Buy", href: "/restock-priority/purchase-list", labelAr: "شن نشتري؟" },
   { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
-  { label: "Products", href: "/products", labelAr: "المنتجات" },
-  { label: "Shared Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء المشتركة", group: "Buying", groupAr: "الشراء" },
-  { label: "Purchase List", href: "/restock-priority/purchase-list", labelAr: "قائمة الشراء", group: "Buying", groupAr: "الشراء" },
-  { label: "Physical Stock Count", href: "/inventory/stocktake", labelAr: "الجرد الفعلي", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Monthly Stock Review", href: "/inventory/stock-check", labelAr: "مراجعة مخزون الشهر", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Machine Stock", href: "/inventory/machine-storage", labelAr: "مخزون الماكينات", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Movements", href: "/inventory/movements", labelAr: "حركة المخزون", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Manual Adjustment", href: "/inventory/movements/new", labelAr: "تعديل يدوي", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
-  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
-  { label: "Storage Locations", href: "/storage-locations", labelAr: "مواقع التخزين", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
+  { label: "Count Storage", href: "/inventory/stocktake", labelAr: "جرد المخزن" },
+  { label: "Assigned Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء المسندة", group: "Do the work", groupAr: "متابعة العمل" },
+  { label: "Products", href: "/products", labelAr: "المنتجات", group: "Records", groupAr: "السجلات" },
+  { label: "Stock Movements", href: "/inventory/movements", labelAr: "حركات المخزون", group: "Records", groupAr: "السجلات" },
+  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون", group: "Records", groupAr: "السجلات" },
 ];
 const machinesTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines", labelAr: "الماكينات", exact: true },
