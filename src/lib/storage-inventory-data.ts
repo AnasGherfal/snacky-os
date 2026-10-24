@@ -23,7 +23,7 @@ export async function loadPhysicalStorageData(client: SupabaseClient): Promise<P
   let products = await safeSupabaseQuery<StorageProduct>({
     label: "storage.catalog",
     promise: client.from("products")
-      .select("id,name,sku,category,brand,case_quantity,min_storage_qty,active")
+      .select("id,name,sku,category,brand,case_quantity,min_storage_qty,active", { count: "exact" })
       .order("name")
       .limit(ROW_LIMIT),
   });
@@ -35,22 +35,22 @@ export async function loadPhysicalStorageData(client: SupabaseClient): Promise<P
     products = await safeSupabaseQuery<StorageProduct>({
       label: "storage.catalog.legacy-minimum-fallback",
       promise: client.from("products")
-        .select("id,name,sku,category,brand,case_quantity,active")
+        .select("id,name,sku,category,brand,case_quantity,active", { count: "exact" })
         .order("name")
         .limit(ROW_LIMIT),
     });
   }
   if (products.error) return { ok: false, items: [], error: `Product catalog unavailable: ${products.error}` };
-  if (products.data.length >= ROW_LIMIT) return { ok: false, items: [], error: "Product catalog exceeds verified read size" };
+  if (products.data.length >= ROW_LIMIT || products.count > products.data.length) return { ok: false, items: [], error: "Product catalog read is incomplete" };
 
   const stock = await safeSupabaseQuery<StorageBalance>({
     label: "storage.physical-ledger",
     promise: client.from("route_storage_stock_by_product")
-      .select("product_id,quantity_on_hand")
+      .select("product_id,quantity_on_hand", { count: "exact" })
       .limit(ROW_LIMIT),
   });
   if (stock.error) return { ok: false, items: [], error: `Physical ledger unavailable: ${stock.error}` };
-  if (stock.data.length >= ROW_LIMIT) return { ok: false, items: [], error: "Physical ledger exceeds verified read size" };
+  if (stock.data.length >= ROW_LIMIT || stock.count > stock.data.length) return { ok: false, items: [], error: "Physical ledger read is incomplete" };
 
   try {
     return {
