@@ -31,7 +31,7 @@ const appModuleRules: AppModuleRule[] = [
   { key: "company", prefixes: ["/company"] },
   { key: "finance", prefixes: ["/admin/finance-health"] },
   { key: "crm", prefixes: ["/my-work", "/locations-pipeline", "/issues", "/relationships", "/contacts", "/follow-ups"] },
-  { key: "cash", prefixes: ["/cash-collections"] },
+  { key: "cash", prefixes: ["/cash-collections", "/cash-handling"] },
   {
     key: "stock",
     prefixes: ["/buying-lists", "/inventory", "/product-planning", "/restock-priority", "/purchases", "/storage-locations", "/suppliers", "/products", "/warehouse"],
