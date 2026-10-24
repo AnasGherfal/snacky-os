@@ -238,7 +238,7 @@ test("Product Planning page exposes a persistent buy list ordered by monthly sal
 });
 
 test("inventory and route pickup use case_quantity packaging displays", () => {
-  assert.match(inventoryPage, /formatProductQuantity/);
+  assert.match(inventoryPage, /formatSignedProductQuantity/);
   assert.match(inventoryPage, /case_quantity/);
   assert.match(inventoryPage, /packagedQuantity\(row\.currentQty/);
   assert.match(inventoryPage, /packagedQuantity\(row\.quantity_on_hand/);
