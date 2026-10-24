@@ -3,7 +3,7 @@ import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from '@/lib/auth
 import {hasAnyRole} from '@/lib/authz';
 
 export const dynamic='force-dynamic';
-const actions=new Set(['scan_negative_inventory','cancel_stale_refill','archive_vms_batch','classify_legacy_cash','unclassify_legacy_cash','resolve_inventory_case']);
+const actions=new Set(['scan_negative_inventory','cancel_stale_refill','archive_vms_batch','classify_legacy_cash','unclassify_legacy_cash','resolve_inventory_case','bulk_cancel_stale_refills','bulk_archive_vms_batches']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const json=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 
@@ -16,6 +16,8 @@ export async function POST(request:Request){
  try{body=await request.json();}catch{return json({ok:false,code:'invalid'},400);}
  const action=String(body?.action??''),targetId=body?.target_id?String(body.target_id):null,reason=body?.reason===null||body?.reason===undefined?null:String(body.reason).trim();
  if(!actions.has(action)||(targetId&&!uuid.test(targetId))||(reason&&reason.length>1000))return json({ok:false,code:'invalid'},400);
+ // Bulk cleanup is owner/admin only, requires a meaningful audit reason, and never targets a single row.
+ if(action.startsWith('bulk_')&&(targetId!==null||!reason||reason.length<3))return json({ok:false,code:'invalid'},400);
  const db=await getAuthenticatedSupabaseServerClient();if(!db)return json({ok:false,code:'unavailable'},503);
  const {data,error}=await db.rpc('snacky_data_health_command_v1',{p_action:action,p_target_id:targetId,p_reason:reason});
  if(error){
