@@ -8,38 +8,19 @@ import {
 import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { type SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import {
+  normalizeOperatorBagBalances,
+  type BagLedgerRow, type ProductPackagingRow, type BagDisplayRow,
+} from "@/lib/operator-bag-stock";
 
 const ROW_LIMIT = 5001;
 
-type BagLedgerRow = {
-  product_id: string | null;
-  product_name: string | null;
-  location_id: string | null;
-  location_name: string | null;
-  quantity_on_hand: number | string | null;
-};
-type ProductPackagingRow = {
-  id: string;
-  sku: string | null;
-  category: string | null;
-  case_quantity: number | null;
-};
-type BagDisplayRow = {
-  productId: string;
-  productName: string;
-  operatorId: string;
-  operatorName: string;
-  sku: string | null;
-  quantity: number;
-  category: string | null;
-  caseQuantity: number | null;
-};
 function labelError(locale: string, english: string, arabic: string) {
   return locale === "ar" ? arabic : english;
 }
-function renderUnits(row: BagDisplayRow) {
+function renderUnits(row: BagDisplayRow, ar: boolean) {
   return row.caseQuantity === null
-    ? `${row.quantity.toLocaleString("en-US")} units`
+    ? `${row.quantity.toLocaleString("en-US")} ${ar ? "وحدة" : "units"}`
     : formatSignedProductQuantity(row.quantity, {
         caseQuantity: row.caseQuantity,
         productName: row.productName,
@@ -82,19 +63,6 @@ export async function OperatorBagStockView({
       action={<SecondaryButton href="/inventory?view=operator-bags">{tr("Retry", "إعادة المحاولة")}</SecondaryButton>}
     />;
   }
-  const invalid = balances.data.some((row) =>
-    !row.product_id || !row.location_id
-    || row.quantity_on_hand === null
-    || !Number.isSafeInteger(Number(row.quantity_on_hand))
-  );
-  if (invalid) {
-    return <ErrorState
-      title={tr("Operator bag quantities need review", "كميات حقائب المشغلين تحتاج مراجعة")}
-      body={tr("One or more recorded balances is invalid. Open Data Health rather than assuming a zero quantity.", "هناك رصيد مسجّل غير صالح. راجع سلامة البيانات بدلاً من افتراض أن الكمية صفر.")}
-      action={<SecondaryButton href="/inventory">{tr("Back to Storage", "العودة للمخزن")}</SecondaryButton>}
-    />;
-  }
-
   // Optional packaging details may fail independently; the signed unit count
   // is still trustworthy and stays visible with a clear warning.
   const packages = await safeSupabaseQuery<ProductPackagingRow>({
@@ -105,24 +73,21 @@ export async function OperatorBagStockView({
       .limit(ROW_LIMIT),
   });
   const packagingVerified = !packages.error && packages.count === packages.data.length && packages.data.length < ROW_LIMIT;
-  const byProduct = new Map((packagingVerified ? packages.data : []).map((r) => [r.id, r]));
-  const records: BagDisplayRow[] = balances.data
-    .filter((r) => Number(r.quantity_on_hand) !== 0)
-    .map((r) => {
-      const product = byProduct.get(String(r.product_id));
-      return {
-        productId: String(r.product_id),
-        productName: r.product_name ?? tr("Unknown product", "منتج غير معروف"),
-        operatorId: String(r.location_id),
-        operatorName: r.location_name ?? tr("Unassigned operator", "مشغّل غير محدد"),
-        sku: product?.sku ?? null,
-        quantity: Number(r.quantity_on_hand),
-        category: product?.category ?? null,
-        caseQuantity: packagingVerified ? (product?.case_quantity ?? 1) : null,
-      };
-    })
-    .sort((a, b) => a.operatorName.localeCompare(b.operatorName) || a.productName.localeCompare(b.productName));
-
+  const byProduct = packagingVerified ? new Map(packages.data.map((r) => [r.id, r])) : null;
+  let records: BagDisplayRow[];
+  try {
+    records = normalizeOperatorBagBalances(balances.data, byProduct, locale === "ar");
+  } catch (error) {
+    console.error("[storage] Invalid operator bag ledger balance", {
+      error: error instanceof Error ? error.message : "unknown",
+    });
+    return <ErrorState
+      title={tr("Operator bag quantities need review", "كميات حقائب المشغلين تحتاج مراجعة")}
+      body={tr("One or more recorded balances is invalid. Check Data Health instead of assuming a zero quantity.", "هناك رصيد مسجّل غير صالح. راجع سلامة البيانات بدلاً من افتراض أن الكمية صفر.")}
+      action={<SecondaryButton href="/inventory">{tr("Back to Storage", "العودة للمخزن")}</SecondaryButton>}
+    />;
+  }
+  const packagingMissingCount = records.filter((r) => r.caseQuantity === null).length;
   const visible = records.filter((r) => matchesBagSearch(r, q));
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(Math.max(page, 1), pageCount);
@@ -142,8 +107,9 @@ export async function OperatorBagStockView({
     {negativeCount > 0 ? <div role="alert" className="mb-4 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm font-semibold text-rose-900">
       {tr("Negative operator bag balances need investigation", "هناك أرصدة سالبة في حقائب المشغلين تحتاج تحقيقاً")}: {negativeCount}
     </div> : null}
-    {!packagingVerified ? <div role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-      {tr("Packaging details are unavailable; balances are shown in units only.", "بيانات الصناديق غير متاحة؛ نعرض الأرصدة بالوحدات فقط.")}
+    {packagingMissingCount > 0 ? <div role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      {tr("Packaging details are missing for some balances; those quantities are shown in units only.", "تنقص بيانات الصناديق لبعض الأرصدة؛ نعرض كمياتها بالوحدات فقط.")}
+      {" "}({packagingMissingCount})
     </div> : null}
     <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
       <p className="mb-3 text-sm text-slate-600">{operatorCount} {tr("operators", "مشغّل")} · {visible.length} {tr("product balances", "رصيد منتجات")}</p>
@@ -170,7 +136,7 @@ export async function OperatorBagStockView({
           {r.quantity < 0 ? <StatusBadge status="review" label={tr("Review", "مراجعة")} /> : null}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <MobileField label={tr("Recorded quantity", "الكمية المسجلة")}>{renderUnits(r)}</MobileField>
+          <MobileField label={tr("Recorded quantity", "الكمية المسجلة")}>{renderUnits(r, locale === "ar")}</MobileField>
           <MobileField label={tr("SKU", "الرمز")}>{r.sku ?? "—"}</MobileField>
         </div>
       </MobileRecordCard>)}</MobileCardList>
@@ -180,7 +146,7 @@ export async function OperatorBagStockView({
       ]}>{rows.map((r) => <tr key={`${r.operatorId}:${r.productId}`}>
         <td>{r.operatorName}</td><td>{r.productName}</td><td>{r.sku ?? "—"}</td>
         <td className={r.quantity < 0 ? "font-semibold text-rose-800" : "font-semibold"}>
-          {renderUnits(r)}
+          {renderUnits(r, locale === "ar")}
         </td>
       </tr>)}</DataTable>
     </>}
