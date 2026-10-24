@@ -83,6 +83,6 @@ test("simple page exposes only the operational monthly comparison by default", (
 });
 
 test("inventory navigation points to the simple Stock Check", () => {
-  assert.match(tabs, /label:\s*"Stock Check",\s*href:\s*"\/inventory\/stock-check"/);
+  assert.match(tabs, /label:\s*"Monthly Stock Review",\s*href:\s*"\/inventory\/stock-check"/);
   assert.doesNotMatch(tabs, /label:\s*"Missing Items",\s*href:\s*"\/inventory\/reconciliation"/);
 });
