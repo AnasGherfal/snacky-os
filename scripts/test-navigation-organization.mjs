@@ -55,12 +55,22 @@ test("cash handling and health stay discoverable when sidebar is simplified", ()
   assert.match(sidebar, /items: \[operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem/);
 });
 
-test("Storage keeps its main actions and bilingual accessible detail sections", () => {
+test("Storage keeps only daily actions while advanced tools live in grouped More", () => {
   assert.match(storage, /href="\/restock-priority\/purchase-list"/);
   assert.match(storage, /href="\/inventory\/stocktake"/);
-  assert.match(storage, /href="\/inventory\/movements\/new"/);
-  for (const label of ["What to buy", "Count storage", "Manual adjustment", "More storage tools and help", "Operator bag stock", "Recent stock movements"]) {
-    assert.ok(storage.includes(`tr("${label}",`), `Missing bilingual label: ${label}`);
+  assert.match(storage, /tr\("What to buy",/);
+  assert.match(storage, /tr\("Count storage",/);
+  assert.doesNotMatch(storage, /More storage tools and help/);
+  assert.doesNotMatch(storage, /href="\/inventory\/movements\/new"/);
+  for (const href of [
+    "/restock-priority/purchase-list", "/inventory/stocktake", "/inventory/stock-check",
+    "/inventory/machine-storage", "/inventory/movements", "/inventory/movements/new",
+    "/storage-locations", "/product-planning", "/suppliers",
+  ]) {
+    assert.ok(moduleItems("stockTabs").includes(href), `Missing advanced stock destination: ${href}`);
   }
-  assert.match(storage, /<details className="mt-6 rounded-xl border border-slate-200 bg-white p-4"/);
+  assert.match(config, /group: "Buying", groupAr: "الشراء"/);
+  assert.match(config, /group: "Stock checks", groupAr: "الجرد ومراجعة المخزون"/);
+  assert.match(tabs, /tab\.group/);
+  assert.match(tabs, /tab\.groupAr/);
 });
