@@ -29,7 +29,7 @@ test('quantity confirmation API reads live XY and fails closed on mismatch or ou
 
 test('operator UI prefers direct XY verification but preserves screenshot and power-off fallback',()=>{
  const card=fs.readFileSync('src/components/operator/MachineQuantityConfirmationCard.tsx','utf8');
- assert.match(card,/Verify with XY/);
+ assert.match(card,/Update & verify with XY/);
  assert.match(card,/saveMode\("xy_api"\)/);
  assert.match(card,/Screenshots remain available as a fallback/);
  assert.match(card,/Machine has no electricity/);
