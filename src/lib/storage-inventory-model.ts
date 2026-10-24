@@ -9,7 +9,7 @@ export type StorageProduct = {
   category: string | null;
   brand: string | null;
   case_quantity: number | string | null;
-  min_storage_qty: number | string | null;
+  min_storage_qty?: number | string | null;
   active: boolean | null;
 };
 
