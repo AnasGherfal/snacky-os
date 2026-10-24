@@ -6,7 +6,8 @@ const camera = fs.readFileSync("src/components/testing-lab/GuidedMachineCamera.t
 const client = fs.readFileSync("src/app/admin/testing-lab/TestingLabClient.tsx", "utf8");
 const training = fs.readFileSync("src/components/testing-lab/TrainingRouteClient.tsx", "utf8");
 const page = fs.readFileSync("src/app/admin/testing-lab/page.tsx", "utf8");
-const sidebar = fs.readFileSync("src/components/Sidebar.tsx", "utf8");
+const tabs = fs.readFileSync("src/components/module-tabs-config.ts", "utf8");
+const tabsLayout = fs.readFileSync("src/components/ModuleTabsLayout.tsx", "utf8");
 const admin = fs.readFileSync("src/app/admin/page.tsx", "utf8");
 
 test("guided camera frame, no cropping, photo preview and mobile fallback", () => {
@@ -36,7 +37,7 @@ test("testing lab displays safe camera and mock route, never sends actual XY com
 test("testing lab is visible and accessible only to an active owner", () => {
   assert.match(page, /hasRole\(profile, "owner"\)/);
   assert.match(page, /profile\.active_status !== "active"/);
-  assert.match(sidebar, /ownerTestingLabItem/);
-  assert.match(sidebar, /hasRole\(context, "owner"\)/);
+  assert.match(tabs, /href: "\/admin\/testing-lab"/);
+  assert.match(tabsLayout, /tab.href !== "\/admin\/testing-lab" \|\| hasRole\(userContext, "owner"\)/);
   assert.match(admin, /item\.href !== "\/admin\/testing-lab" \|\| hasRole\(profile, "owner"\)/);
 });

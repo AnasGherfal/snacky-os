@@ -393,23 +393,27 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <PageHeader
-        title="Storage Inventory"
-        subtitle="Physical stock stays in storage until pickup. Reserved stock is already attached to an active route; Available means the units are not attached to any route and can be used for a new one."
+        title="Storage"
+        subtitle="See what is on the shelves, what is reserved for routes, and what is available to use."
         action={
           <div className="flex flex-wrap gap-2">
-            <SecondaryButton href="/product-planning">Product Planning</SecondaryButton>
-            <SecondaryButton href="/restock-priority">Restock Priority</SecondaryButton>
-            <SecondaryButton href="/inventory/machine-storage">Machine Storage</SecondaryButton>
-            <SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton>
-            {isOwnerAdminRole(profile) ? <PrimaryButton href="/inventory/movements/new">Storage count adjustment</PrimaryButton> : null}
+            <PrimaryButton href="/restock-priority/purchase-list">What to buy</PrimaryButton>
+            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">Count storage</SecondaryButton> : null}
           </div>
         }
       />
 
-      <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
-        <div className="font-semibold">How route reservations work</div>
-        <p className="mt-1 leading-6">Reserved units are still physically in storage, but a route already claims them. Open the linked route to reduce or remove that reservation before assigning the same units to a more important route. Only the Available quantity has no route attached.</p>
-      </div>
+      <details className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+        <summary className="cursor-pointer font-semibold text-slate-900">More storage tools and help</summary>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <SecondaryButton href="/product-planning">Product planning</SecondaryButton>
+          <SecondaryButton href="/inventory/stock-check">Monthly stock check</SecondaryButton>
+          <SecondaryButton href="/inventory/machine-storage">Machine stock</SecondaryButton>
+          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">Full movement log</SecondaryButton> : null}
+          {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">Manual adjustment</SecondaryButton> : null}
+        </div>
+        <p className="mt-3 leading-6">Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.</p>
+      </details>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -580,14 +584,12 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </>
       )}
 
-      <section className="mt-6">
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Operator Bag Inventory</h2>
-            <p className="text-sm text-slate-500">Stock currently outside storage and assigned to operators.</p>
-          </div>
-          {q ? <div className="text-sm text-slate-500">{filteredOperatorBagRows.length} rows match the current search</div> : null}
-        </div>
+      <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
+          <span>Operator bag stock <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} rows)</span></span>
+          <span className="text-xs text-slate-500">Show details ↓</span>
+        </summary>
+        <div className="mt-4">
         {!filteredOperatorBagRows.length ? (
           <EmptyState
             title={q ? "No operator bag rows match this search" : "No operator bag stock"}
@@ -624,16 +626,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             </DataTable>
           </>
         )}
-      </section>
-
-      <section className="mt-6">
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Stock Movement History</h2>
-            <p className="text-sm text-slate-500">Recent ledger entries. Stock balances are never edited directly.</p>
-          </div>
-          {q ? <div className="text-sm text-slate-500">{filteredMovements.length} movements match the current search</div> : null}
         </div>
+      </details>
+
+      <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
+          <span>Recent stock movements <span className="text-sm font-normal text-slate-500">({filteredMovements.length} records)</span></span>
+          <span className="text-xs text-slate-500">Show details ↓</span>
+        </summary>
+        <div className="mt-4">
         {!filteredMovements.length ? (
           <EmptyState
             title={q ? "No movement rows match this search" : "No movements recorded"}
@@ -675,7 +676,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             </DataTable>
           </>
         )}
-      </section>
+        </div>
+      </details>
     </>
   );
 }

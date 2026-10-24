@@ -260,12 +260,25 @@ await check('seal exceptions remain flagged for owner review after counting', as
   assert.equal(core(exception.id).reconciliation, 'variance_review'); assert.equal((await workspace('owner', exception.id)).rows[0].seal_exception, true);
 });
 const revoked = await removal(); await assign(revoked); await drop(revoked); await pickup(revoked);
-await check('grant revocation blocks counting; an explicit owner takeover preserves custody', async () => {
+await check('revoking count keeps courier delivery possible, but takeover requires physical delivery', async () => {
   await grant('warehouse', false);
   await failed('warehouse', command('count', revoked.id, 3, { amount: '40', cash_location: 'Safe' }), '42501');
-  assert.equal((await workspace('operator', revoked.id)).rows[0].assignee_active, false);
-  await execute('owner', command('takeover', revoked.id, 3, { confirm_bag_id: revoked.bag, seal_condition: 'intact', notes: 'Physically received this box from the former coordinator' }));
-  await execute('owner', command('count', revoked.id, 4, { amount: '40', cash_location: 'Owner safe' }));
+  const courierView = await workspace('warehouse', revoked.id);
+  assert.equal(courierView.can_count, false);
+  assert.equal(courierView.can_transport, true);
+  assert.equal(courierView.rows[0].actions.includes('count'), false);
+  assert.equal(courierView.rows[0].actions.includes('deliver'), true);
+  // A warehouse role remains an authorized courier even after its separate
+  // counting grant is revoked. Showing it as fully inactive would be incorrect.
+  assert.equal((await workspace('operator', revoked.id)).rows[0].assignee_active, true);
+  const takeoverPayload = { confirm_bag_id: revoked.bag, seal_condition: 'intact', notes: 'Physically received this box from the former coordinator' };
+  await failed('owner', command('takeover', revoked.id, 3, takeoverPayload), '23514');
+  await execute('warehouse', command('deliver', revoked.id, 3, {
+    delivery_location: 'Owner handover desk',
+    notes: 'Courier delivered this sealed box to the owner',
+  }));
+  await execute('owner', command('takeover', revoked.id, 4, takeoverPayload));
+  await execute('owner', command('count', revoked.id, 5, { amount: '40', cash_location: 'Owner safe' }));
   assert.equal(core(revoked.id).counted_by, accounts.owner.member); await grant('warehouse');
 });
 const inactive = await removal(); await assign(inactive, 'purchasing'); await drop(inactive, 'purchasing'); await pickup(inactive, 'purchasing');
@@ -347,7 +360,7 @@ try {
     await p.screenshot({ path: `${out}/operator-dropoff-mobile.png`, fullPage: true });
   });
   await check('real Arabic coordinator form acknowledges pickup and restores a lost count response', async () => {
-    const p = counter.page; await p.reload(); await p.getByRole('button', { name: 'استلام العلبة', exact: true }).click();
+    const p = counter.page; await p.reload(); await p.getByRole('button', { name: 'استلام من المخزن · توصيل للمالك', exact: true }).click();
     await p.getByLabel('اكتب الرقم الموجود على العلبة / الختم', { exact: true }).fill(browserBox.bag);
     await p.locator('form input[type=checkbox]').check(); await p.getByRole('button', { name: 'تأكيد الإجراء', exact: true }).click();
     await p.getByRole('status').filter({ hasText: 'تم تسجيل الإجراء' }).waitFor();

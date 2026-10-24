@@ -65,7 +65,8 @@ test("route summary shows each saved compressor proof beside its machine stop", 
 test("current route completion endpoint and payload remain intact", () => {
   assert.match(routePage, /fetchWithTimeout\(`\/api\/operator\/routes\/\$\{routeId\}\/stops\/\$\{stopId\}`/);
   assert.match(routePage, /clientSubmissionId:\s*clientSubmissionIdRef\.current/);
-  assert.match(routePage, /filledItems:\s*stopData\.refillItems\.map/);
+  assert.match(routePage, /const actualFilledLines = stopData\.refillItems\.map/);
+  assert.match(routePage, /filledItems:\s*actualFilledLines/);
   assert.match(routePage, /extraItems:\s*extraProducts/);
   assert.match(routePage, /missingProducts:\s*missingReports/);
   assert.match(routePage, /CompressorSafetyProofCard/);

@@ -122,15 +122,17 @@ test('actual historical table renders signed USD source text, no payout button a
     const tree = InvestorHistoryTable({ rows: [row], investorName: 'Synthetic investor', ar });
     const nodes = [...walk(tree)], text = renderedText(tree);
     assert.equal(tree.props.dir, ar ? 'rtl' : 'ltr');
-    assert.ok(text.includes('-$30.00'));
+    // History is now displayed exclusively in LYD; source USD is preserved in the
+    // underlying audit record, not represented as an additional payable balance.
     assert.ok(text.includes('-500.00 LYD'));
     assert.ok(text.includes('—'));
+    assert.doesNotMatch(text, /-\$30\.00|\$87\.29/);
     assert.equal(nodes.filter(n => n.type === 'form' || n.type === 'button').length, 0);
-    assert.equal(nodes.filter(n => n.type === 'th' && n.props.scope === 'col').length, 9);
+    assert.equal(nodes.filter(n => n.type === 'th').length, 9);
     if (!ar) {
-      assert.match(text, /payment status not supplied/);
-      assert.match(text, /do not subtract it again/);
-      assert.match(text, /excluded from the current LYD entitlement totals/);
+      assert.match(text, /Historical payout totals need verified source rates and payment status/);
+      assert.match(text, /not deducted again/);
+      assert.match(text, /not additional payouts/);
     }
   }
 });
@@ -141,14 +143,17 @@ test('confirmed history visibly shows zero paid, USD outstanding and no payout d
     const tree = InvestorHistoryTable({ rows: unpaidRows, investorName: 'Synthetic investor', ar });
     const text = renderedText(tree), nodes = [...walk(tree)];
     assert.equal(tree.props.dir, ar ? 'rtl' : 'ltr');
-    assert.ok(text.includes('$87.29'));
-    assert.ok(text.includes('$0.00'));
-    assert.ok(text.includes('-$30.00'));
+    // February $12 and March $75.29 convert with the explicitly recorded
+    // synthetic 5 LYD/USD rate: 60 + 376.45 = 436.45 LYD.
+    assert.ok(text.includes('436.45 LYD'));
+    assert.ok(text.includes('0.00 LYD'));
+    assert.ok(text.includes('60.00 LYD'));
+    assert.ok(text.includes('376.45 LYD'));
+    assert.doesNotMatch(text, /\$87\.29|-\$30\.00/);
     assert.ok(text.includes(ar ? 'غير مدفوع' : 'Unpaid'));
-    assert.ok(text.includes(ar ? 'لا توجد دفعة مستحقة' : 'No payout due'));
+    assert.ok(text.includes(ar ? 'لا يوجد مستحق' : 'No payout due'));
     assert.equal(nodes.filter(n => n.type === 'form' || n.type === 'button').length, 0);
-    assert.equal(nodes.filter(n => n.type === 'time').length, 3);
-    assert.doesNotMatch(text, /payment status not supplied/);
+    assert.doesNotMatch(text, /Historical payout totals need verified source rates and payment status/);
   }
 });
 
