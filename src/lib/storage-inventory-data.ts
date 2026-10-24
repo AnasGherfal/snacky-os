@@ -50,7 +50,7 @@ export async function loadPhysicalStorageData(client: SupabaseClient): Promise<P
       .select("product_id,quantity_on_hand", { count: "exact" })
       .limit(ROW_LIMIT),
   });
-  if (stock.error) return { ok: false, items: [], error: `Physical ledger unavailable: ${stock.error}` };
+  if (stock.error) return { ok: false, items: [], error: `Storage movement ledger unavailable: ${stock.error}` };
   if (stock.data.length >= ROW_LIMIT || stock.count !== stock.data.length) return { ok: false, items: [], error: "Physical ledger read is incomplete" };
 
   try {
