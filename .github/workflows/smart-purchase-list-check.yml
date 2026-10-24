@@ -34,7 +34,7 @@ jobs:
             .filter((file) => file.endsWith('.mjs') && /from\s+['"]node:test['"]/.test(fs.readFileSync(`scripts/${file}`, 'utf8')))
             .sort()
             .map((file) => `scripts/${file}`);
-          const result = spawnSync(process.execPath, ['--experimental-strip-types', '--loader', './scripts/ts-alias-loader.mjs', '--test', '--test-concurrency=4', ...files], { encoding: 'utf8', maxBuffer: 40e6 });
+          const result = spawnSync(process.execPath, ['--experimental-strip-types', '--experimental-vm-modules', '--loader', './scripts/ts-alias-loader.mjs', '--test', '--test-concurrency=4', ...files], { encoding: 'utf8', maxBuffer: 40e6 });
           const output = `${result.stdout || ''}\n${result.stderr || ''}`;
           if ((result.status ?? 1) !== 0) {
             const lines = output.split('\n');
