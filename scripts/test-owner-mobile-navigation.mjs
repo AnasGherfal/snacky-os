@@ -96,7 +96,7 @@ function renderMobile({ role = "owner", locale = "en", pathname = "/inventory" }
 
 test("real owner navigation renders four permitted destinations and opens More", () => {
   const ui = renderMobile();
-  const links = ui.nodes.filter((node) => node.type === "a");
+  const links = ui.nodes.filter((node) => typeof node.props?.href === "string");
   assert.deepEqual(links.map((node) => node.props.href), ["/dashboard", "/routes", "/inventory", "/machines"]);
   assert.equal(links.find((node) => node.props.href === "/inventory").props["aria-current"], "page");
   const more = ui.nodes.find((node) => node.type === "button");
@@ -110,7 +110,7 @@ test("Arabic mobile navigation changes direction and labels, but not destination
   assert.equal(ui.tree.props.dir, "rtl");
   const labels = ui.nodes.flatMap((node) => typeof node.props?.children === "string" ? [node.props.children] : []);
   for (const label of ["الرئيسية", "الجولات", "المخزون", "الماكينات", "المزيد"]) assert.ok(labels.includes(label), label);
-  assert.equal(ui.nodes.find((node) => node.type === "a" && node.props.href === "/routes").props["aria-current"], "page");
+  assert.equal(ui.nodes.find((node) => node.props?.href === "/routes").props["aria-current"], "page");
 });
 
 test("operator sessions never receive management shortcuts", () => {
