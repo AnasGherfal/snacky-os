@@ -156,6 +156,6 @@ test("UI defaults to 22 days, keeps other coverage choices, explains Elite deman
   assert.match(page, /CreatePurchaseListButton/);
   assert.match(page, /b\.demandDailyRate - a\.demandDailyRate|Buy these first/);
   assert.match(tabs, /What to Buy/);
-  assert.match(tabs, /قائمة الشراء/);
+  assert.match(tabs, /شن نشتري؟/);
   assert.match(tabs, /\/restock-priority\/purchase-list/);
 });
