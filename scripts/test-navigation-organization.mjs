@@ -66,10 +66,10 @@ test("daily Stock navigation contains no duplicated diagnostic or buying screens
     "/restock-priority", "/inventory/stock-check", "/inventory/machine-storage",
     "/inventory/movements/new", "/product-planning", "/storage-locations",
   ]) assert.equal(items.includes(retiredShortcut), false, `redundant shortcut: ${retiredShortcut}`);
-  assert.match(storage, /href="\\/restock-priority\\/purchase-list"/);
-  assert.match(storage, /href="\\/inventory\\/stocktake"/);
+  assert.match(storage, /href="\/restock-priority\/purchase-list"/);
+  assert.match(storage, /href="\/inventory\/stocktake"/);
   assert.match(config, /group: "Stock controls", groupAr: "مراجعة المخزون"/);
-  assert.match(tabs, /extraTabs\\.map/);
+  assert.match(tabs, /extraTabs\.map/);
 });
 
 test("CRM and Reports show only decision-making pages", () => {
