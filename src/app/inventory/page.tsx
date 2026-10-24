@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
+import { getServerI18n } from "@/lib/i18n/server";
 import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatProductQuantity } from "@/lib/product-quantity";
@@ -59,6 +60,8 @@ type InventoryRow = {
   reasons: string[];
   status: string;
 };
+
+const inventoryFilterNamesAr: Record<InventoryFilter, string> = { all: "كل المنتجات", out: "نافد", critical: "حرج", low: "منخفض", reserved: "محجوز", fast: "الأكثر مبيعاً" };
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "all", label: "All products" },
@@ -159,6 +162,8 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
 }
 
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const { locale, direction } = await getServerI18n();
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize } = getPagination(params);
   const q = String(params.q ?? "");
@@ -380,45 +385,45 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   ], q));
 
   const inventoryHeaders = [
-    "Product",
-    "In storage",
-    "Reserved in storage",
-    "Available — no route",
-    "Suggested buy",
-    "Velocity",
-    ...(canSeeCost ? ["Last cost"] : []),
-    "Status",
+    tr("Product", "المنتج"),
+    tr("In storage", "في المخزن"),
+    tr("Reserved in storage", "محجوز للجولات"),
+    tr("Available — no route", "متاح بدون حجز"),
+    tr("Suggested buy", "الشراء المقترح"),
+    tr("Velocity", "المبيعات اليومية"),
+    ...(canSeeCost ? [tr("Last cost", "آخر تكلفة")] : []),
+    tr("Status", "الحالة"),
   ];
 
   return (
-    <>
+    <div dir={direction}>
       <PageHeader
-        title="Storage"
-        subtitle="See what is on the shelves, what is reserved for routes, and what is available to use."
+        title={tr("Storage", "المخزون")}
+        subtitle={tr("See what is on the shelves, what is reserved for routes, and what is available to use.", "اعرف الكميات الموجودة في المخزن والمحجوزة للجولات والمتاحة للاستخدام.")}
         action={
           <div className="flex flex-wrap gap-2">
-            <PrimaryButton href="/restock-priority/purchase-list">What to buy</PrimaryButton>
-            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">Count storage</SecondaryButton> : null}
+            <PrimaryButton href="/restock-priority/purchase-list">{tr("What to buy", "شن نشتري؟")}</PrimaryButton>
+            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">{tr("Count storage", "جرد المخزن")}</SecondaryButton> : null}
           </div>
         }
       />
 
       <details className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-slate-900">More storage tools and help</summary>
+        <summary className="cursor-pointer font-semibold text-slate-900">{tr("More storage tools and help", "أدوات المخزون الأخرى والمساعدة")}</summary>
         <div className="mt-3 flex flex-wrap gap-2">
-          <SecondaryButton href="/product-planning">Product planning</SecondaryButton>
-          <SecondaryButton href="/inventory/stock-check">Monthly stock check</SecondaryButton>
-          <SecondaryButton href="/inventory/machine-storage">Machine stock</SecondaryButton>
-          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">Full movement log</SecondaryButton> : null}
-          {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">Manual adjustment</SecondaryButton> : null}
+          <SecondaryButton href="/product-planning">{tr("Product planning", "تخطيط المنتجات")}</SecondaryButton>
+          <SecondaryButton href="/inventory/stock-check">{tr("Monthly stock check", "مراجعة مخزون الشهر")}</SecondaryButton>
+          <SecondaryButton href="/inventory/machine-storage">{tr("Machine stock", "مخزون الماكينات")}</SecondaryButton>
+          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">{tr("Full movement log", "سجل الحركات الكامل")}</SecondaryButton> : null}
+          {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">{tr("Manual adjustment", "تعديل يدوي")}</SecondaryButton> : null}
         </div>
-        <p className="mt-3 leading-6">Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.</p>
+        <p className="mt-3 leading-6">{tr("Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.", "الكميات المحجوزة موجودة فعلياً في المخزن لكنها مخصصة لجولات نشطة. المتاح هو ما لم يُحجز بعد. غيّر الحجز من الجولة نفسها، ولا تخصم المخزون يدوياً.")}</p>
       </details>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <div className="font-semibold">Inventory partially loaded</div>
-          <div className="mt-1">Some supporting signals could not load. The working sections remain visible below.</div>
+          <div className="font-semibold">{tr("Inventory partially loaded", "تعذر تحميل بعض بيانات المخزون")}</div>
+          <div className="mt-1">{tr("Some supporting signals could not load. The working sections remain visible below.", "تعذر تحميل بعض مؤشرات المخزون، وستبقى البيانات المتاحة ظاهرة أدناه.")}</div>
           <ul className="mt-3 list-disc space-y-1 pl-5">
             {queryIssues.map((issue) => (
               <li key={issue.key}>{issue.message}</li>
@@ -429,18 +434,18 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       <section className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <form action="/inventory" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <form action="/inventory" className="flex flex-wrap items-center gap-2">
             {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
             <input type="hidden" name="pageSize" value={pageSize} />
-            <SearchInput defaultValue={q} placeholder="Search product, SKU, category, operator, or movement reason..." />
-            <button className="btn-secondary" type="submit">Search</button>
-            {q ? <Link href={inventoryFilterHref(filter, "")} className="btn-secondary">Clear search</Link> : null}
+            <div className="min-w-0 flex-1"><SearchInput defaultValue={q} placeholder={tr("Search product or SKU...", "ابحث باسم المنتج أو رمزه...")} /></div>
+            <button className="btn-secondary" type="submit">{tr("Search", "بحث")}</button>
+            {q ? <Link href={inventoryFilterHref(filter, "")} className="btn-secondary">{tr("Clear", "مسح")}</Link> : null}
           </form>
           <div className="text-sm text-slate-500">
-            {filteredInventoryRows.length} products match this view.
+            {filteredInventoryRows.length} {tr("products match this view.", "منتج ضمن هذه النتائج.")}
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1 whitespace-nowrap overscroll-x-contain" aria-label={tr("Stock filters", "تصفية المخزون")}>
           {inventoryFilters.map((item) => (
             <Link
               key={item.key}
@@ -451,7 +456,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
               }`}
             >
-              <span>{item.label}</span>
+              <span>{locale === "ar" ? inventoryFilterNamesAr[item.key] : item.label}</span>
               <span className={`rounded-full px-2 py-0.5 text-xs ${filter === item.key ? "bg-white/15 text-white" : "bg-white text-slate-600"}`}>
                 {filterCounts[item.key]}
               </span>
@@ -460,26 +465,26 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">In storage</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("In storage", "في المخزن")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Physical units currently on the storage shelves</p>
+          <p className="mt-1 text-sm text-slate-500">{tr("Physical units currently on the storage shelves", "وحدات موجودة فعلياً على رفوف المخزن")}</p>
         </div>
         <div className="surface-card border-amber-200 bg-amber-50">
-          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Reserved in storage</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{tr("Reserved in storage", "محجوز للجولات")}</div>
           <div className="mt-2 text-2xl font-semibold text-amber-950">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
-          <p className="mt-1 text-sm text-amber-800">Still in storage, but attached to active routes</p>
+          <p className="mt-1 text-sm text-amber-800">{tr("Still in storage, but attached to active routes", "موجودة في المخزن ومخصصة لجولات")}</p>
         </div>
         <div className="surface-card border-emerald-200 bg-emerald-50">
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Available — no route</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr("Available — no route", "متاح بدون حجز")}</div>
           <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
-          <p className="mt-1 text-sm text-emerald-800">Free units that can be assigned to a new route</p>
+          <p className="mt-1 text-sm text-emerald-800">{tr("Free units that can be assigned to a new route", "وحدات يمكن تخصيصها لجولة جديدة")}</p>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Products with reservations</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Products with reservations", "منتجات محجوزة")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
-          <p className="mt-1 text-sm text-slate-500">Use the Reserved filter to review them</p>
+          <p className="mt-1 text-sm text-slate-500">{tr("Use the Reserved filter to review them", "استخدم فلتر المحجوز للمراجعة")}</p>
         </div>
       </div>
 
@@ -678,6 +683,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         )}
         </div>
       </details>
-    </>
+    </div>
   );
 }
