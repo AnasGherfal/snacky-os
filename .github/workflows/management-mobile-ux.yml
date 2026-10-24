@@ -5,8 +5,11 @@ on:
     paths:
       - "src/components/OwnerMobileNavigation.tsx"
       - "src/components/ShellChrome.tsx"
+      - "src/components/ModuleTabs.tsx"
+      - "src/components/module-tabs-config.ts"
       - "src/app/inventory/page.tsx"
       - "scripts/test-owner-mobile-navigation.mjs"
+      - "scripts/test-navigation-organization.mjs"
       - ".github/workflows/management-mobile-ux.yml"
   workflow_dispatch:
 permissions:
@@ -23,9 +26,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run mobile navigation and bilingual Storage contracts
-        run: node --test scripts/test-owner-mobile-navigation.mjs
+        run: node --test scripts/test-owner-mobile-navigation.mjs scripts/test-navigation-organization.mjs
       - name: Lint new mobile navigation and shell
-        run: npx eslint src/components/OwnerMobileNavigation.tsx src/components/ShellChrome.tsx
+        run: npx eslint src/components/OwnerMobileNavigation.tsx src/components/ShellChrome.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts
       - name: Lint Storage layout (legacy any typing deferred)
         run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Typecheck
