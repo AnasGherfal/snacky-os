@@ -67,48 +67,6 @@ const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "review", label: "Needs attention" },
 ];
 
-function supabaseErrorPayload(error: any) {
-  return {
-    code: error?.code ?? null,
-    message: error?.message ?? String(error ?? "Unknown Supabase error"),
-    details: error?.details ?? null,
-    hint: error?.hint ?? null,
-  };
-}
-
-function logInventoryQueryError({
-  key,
-  label,
-  table,
-  error,
-  profile,
-  params,
-}: {
-  key: string;
-  label: string;
-  table: string;
-  error: any;
-  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
-  params: Record<string, unknown>;
-}) {
-  const errorPayload = supabaseErrorPayload(error);
-  console.error(`[inventory] ${label}`, {
-    data_source: key,
-    table_or_view: table,
-    supabase_error: errorPayload,
-    current_user_id: profile?.id ?? null,
-    user_roles: profile?.roles ?? [],
-    organization_id: null,
-    query_parameters: params,
-  });
-  return {
-    key,
-    label,
-    table,
-    message: `${label}: ${errorPayload.message}`,
-  };
-}
-
 function inventoryFilterHref(filter: InventoryFilter, q: string) {
   const params = new URLSearchParams();
   if (filter !== "stocked") params.set("filter", filter);
