@@ -24,7 +24,7 @@ function moduleItems(name) {
 test("daily workflows have consistent primary tab order", () => {
   const expected = {
     stockTabs: ["/inventory", "/restock-priority", "/purchases", "/products"],
-    crmTabs: ["/my-work", "/locations-pipeline", "/issues", "/relationships"],
+    crmTabs: ["/issues/new", "/my-work", "/locations-pipeline", "/issues"],
     financeTabs: ["/finance", "/finance/transactions", "/finance/expenses", "/finance/rent"],
     adminTabs: ["/admin", "/team", "/settings", "/vms-import"],
     reportsTabs: ["/reports", "/sales", "/reports/cash-reconciliation", "/reports/route-performance"],
