@@ -156,8 +156,8 @@ function RouteCard({
 }
 
 export default async function OperatorRoutesPage({ searchParams }: {
-  searchParams?: Promise<{ view?: string | string[] }>;
-} = {}) {
+  searchParams: Promise<{ view?: string | string[] }>;
+}) {
   const filters = await searchParams;
   const rawView = Array.isArray(filters?.view) ? filters?.view[0] : filters?.view;
   const availableView = rawView === "available";
