@@ -5,6 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileRecordCard, Pa
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
+import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib/pagination";
 import { loadStorageOverview } from "@/lib/storage-overview-data";
 import type { StorageOverviewRow } from "@/lib/storage-overview";
@@ -44,6 +45,12 @@ function matchesFilter(row: StorageOverviewRow, filter: Filter) {
     case "issues": return ["negative", "overbooked", "unverified"].includes(row.status);
     default: return true;
   }
+}
+function packagingHint(row: StorageOverviewRow) {
+  if (row.physical <= 0 || row.caseQuantity <= 1) return null;
+  return formatProductQuantity(row.physical, {
+    caseQuantity: row.caseQuantity, productName: row.name, category: row.category,
+  }, { compact: true });
 }
 function formatUnits(value: number | null, locale: "ar" | "en") {
   return value === null ? "—" : new Intl.NumberFormat(locale === "ar" ? "ar-LY" : "en-US").format(value);
@@ -156,10 +163,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${statusStyles[row.status]}`}>{statusLabels[row.status][locale==="ar"?1:0]}</span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            {[[tr("On shelf", "في المخزن"),row.physical],[tr("Reserved", "محجوز"),row.reserved],[tr("Available", "متاح"),row.available]].map(([label,value])=>
-              <div key={String(label)} className="rounded-lg bg-slate-50 px-2 py-3 text-center">
+            {([
+              [tr("On shelf", "في المخزن"),row.physical,true],
+              [tr("Reserved", "محجوز"),row.reserved,false],
+              [tr("Available", "متاح"),row.available,false],
+            ] as const).map(([label,value,isPhysical])=>
+              <div key={label} className="rounded-lg bg-slate-50 px-2 py-3 text-center">
                 <div className="text-xs text-slate-600">{label}</div>
-                <div className="mt-1 text-lg font-bold tabular-nums text-slate-950">{formatUnits(value as number | null,locale)}</div>
+                <div className="mt-1 text-lg font-bold tabular-nums text-slate-950">{formatUnits(value,locale)}</div>
+                {isPhysical && packagingHint(row) ? <div className="mt-1 text-[10px] leading-tight text-slate-500">{packagingHint(row)}</div> : null}
               </div>)}
           </div>
           {row.reservations.length && overview.reservationsVerified ? <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
@@ -174,7 +186,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       <DataTable className="hidden md:block" headers={[tr("Product","المنتج"),tr("On shelves","في المخزن"),tr("Reserved","محجوز"),tr("Available","متاح"),tr("Status","الحالة")]}>
         {rows.map(row => <tr key={row.productId}>
           <td className="font-semibold">{row.name}<div className="text-xs font-normal text-slate-500">{row.sku ?? "—"}</div></td>
-          <td className="tabular-nums">{formatUnits(row.physical,locale)}</td>
+          <td className="tabular-nums">{formatUnits(row.physical,locale)}{packagingHint(row) ? <div className="text-xs text-slate-500">{packagingHint(row)}</div> : null}</td>
           <td className="tabular-nums">{formatUnits(row.reserved,locale)}</td>
           <td className="tabular-nums">{formatUnits(row.available,locale)}</td>
           <td><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${statusStyles[row.status]}`}>{statusLabels[row.status][locale==="ar"?1:0]}</span></td>
