@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
+import { StopReadinessGuide } from "@/components/operator/StopReadinessGuide";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
@@ -1835,6 +1836,19 @@ export default function MachineStopPage() {
           action={<SecondaryButton href={routeHref}>{t("Back")}</SecondaryButton>}
         />
 
+        <StopReadinessGuide
+          filledUnits={stopExecutionSummary.filledUnits}
+          assignedUnits={stopExecutionSummary.assignedUnits}
+          cleaningDone={cleaningDone}
+          compressorRequired={compressorSafetyInstalled}
+          compressorReady={compressorProofReady}
+          photoSaved={persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto)}
+          photoSaving={finalPhotoSaving}
+          xyEvidenceStatus={quantityVerificationStatus}
+          smartReturnsPending={unresolvedSmartReturnRequirements.length}
+          smartXyPending={unresolvedSmartXyRequirements.length}
+        />
+
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         <RouteStopQuickActions />
@@ -2507,7 +2521,7 @@ export default function MachineStopPage() {
           </section>
         ) : null}
 
-        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <section id="stop-refill" className="scroll-mt-24 overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <h2 className="text-lg font-semibold">{t("Assigned products")}</h2>
             <p className="mt-1 text-sm text-slate-500">{t("Record actual quantities. Differences from the plan are tracked for review.")}</p>
@@ -2680,7 +2694,7 @@ export default function MachineStopPage() {
         </section>
 
 
-        <details className="rounded-xl border border-slate-200 bg-white p-3">
+        <details id="stop-xy-evidence" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white p-3">
           <summary className="cursor-pointer text-sm font-medium text-slate-500">
             {tr("Optional XY screenshots / technical verification", "اختياري: صور XY أو التحقق الفني")}
           </summary>
@@ -2904,6 +2918,7 @@ export default function MachineStopPage() {
           setIssueDescription={setIssueDescription}
         />
 
+        <div id="stop-compressor" className="scroll-mt-24">
         <CompressorSafetyProofCard
           routeId={routeId}
           stopId={stopId}
@@ -2914,8 +2929,9 @@ export default function MachineStopPage() {
             setCompressorProofReady(ready);
           }}
         />
+        </div>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+        <section id="stop-proof-photo" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">{tr("Refill proof", "إثبات التعبئة")}</h2>
@@ -2956,7 +2972,7 @@ export default function MachineStopPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+        <section id="stop-cleaning" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="mb-4 text-lg font-semibold">{tr("Cleaning and final check", "التنظيف والفحص النهائي")}</h2>
           <button type="button" onClick={() => setShowCleaningChecklist(!showCleaningChecklist)} className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100">
             <div className="flex items-center justify-between">
@@ -2984,6 +3000,14 @@ export default function MachineStopPage() {
         </section>
 
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+          {!submitting && !finalPhotoSaving && (!cleaningDone || !compressorReadyForSubmit) ? (
+            <a className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 sm:grow"
+              href={!cleaningDone ? "#stop-cleaning" : "#stop-compressor"} role="status">
+              {!cleaningDone
+                ? tr("Finish the cleaning checklist to enable Complete Stop →", "أكمل قائمة التنظيف لتفعيل إنهاء الموقع ←")
+                : tr("Save the compressor proof to enable Complete Stop →", "احفظ إثبات تشغيل الضاغط لتفعيل إنهاء الموقع ←")}
+            </a>
+          ) : null}
           <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? `${t("Saving")}...` : t("Complete Stop")}
           </button>
