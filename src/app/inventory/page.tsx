@@ -68,7 +68,6 @@ const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "critical", label: "Critical" },
   { key: "low", label: "Low" },
   { key: "reserved", label: "Reserved for routes" },
-  { key: "fast", label: "Fast sellers" },
 ];
 
 function inventoryStatus(currentQty: number, reservedQty: number, availableQty: number, isCritical: boolean) {
