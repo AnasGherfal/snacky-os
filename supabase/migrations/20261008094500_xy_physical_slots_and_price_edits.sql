@@ -14,11 +14,19 @@ grant select,insert,update,delete on table public.xy_hidden_machine_selections t
 
 -- These Elite School channels were reported physically absent by operations.
 -- Hiding is reversible and does NOT delete XY history or physical stock.
+-- When replaying migrations into an empty test/disaster-recovery database,
+-- the site machine may not have been created yet. Avoid seeding orphan rows.
+-- Existing production machines get the same three reversible hidden selections.
 insert into public.xy_hidden_machine_selections (machine_id,slot_code,reason)
-values
-  ('448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid,'002','Elite School: absent from physical/XY operator layout'),
-  ('448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid,'036','Elite School: absent from physical/XY operator layout'),
-  ('448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid,'040','Elite School: absent from physical/XY operator layout')
+select machine.id, lanes.slot_code, lanes.reason
+from public.machines as machine
+cross join (
+  values
+    ('002','Elite School: absent from physical/XY operator layout'),
+    ('036','Elite School: absent from physical/XY operator layout'),
+    ('040','Elite School: absent from physical/XY operator layout')
+) as lanes(slot_code,reason)
+where machine.id = '448a321b-efb9-4463-9364-c211a5c3e9ad'::uuid
 on conflict (machine_id,slot_code) do nothing;
 
 select pg_notify('pgrst','reload schema');
