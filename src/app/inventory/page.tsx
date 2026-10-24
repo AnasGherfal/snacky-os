@@ -14,7 +14,7 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "low" | "reserved" | "review";
+type InventoryFilter = "all" | "out" | "reserved" | "review";
 
 type InventoryQueryIssue = {
   key: string;
@@ -53,16 +53,15 @@ type InventoryRow = {
 };
 
 const inventoryFilterNamesAr: Record<InventoryFilter, string> = {
-  all: "كل المنتجات", out: "نافد", low: "منخفض", reserved: "محجوز",
-  review: "يحتاج مراجعة",
+  all: "كل المنتجات", out: "نافد", reserved: "محجوز",
+  review: "تحتاج متابعة",
 };
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "all", label: "All products" },
   { key: "out", label: "Out of stock" },
-  { key: "low", label: "Below minimum" },
   { key: "reserved", label: "Reserved for routes" },
-  { key: "review", label: "Needs review" },
+  { key: "review", label: "Needs attention" },
 ];
 
 function formatEntity(type: string | null | undefined, name: string | null | undefined) {
@@ -138,9 +137,8 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
     const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
     if (filter === "out") return row.status === "out_of_stock";
-    if (filter === "low") return row.status === "low_stock";
     if (filter === "reserved") return row.reservedQty !== null && row.reservedQty > 0;
-    if (filter === "review") return row.status === "review" || row.status === "unverified";
+    if (filter === "review") return row.status === "review" || row.status === "unverified" || row.status === "low_stock";
     return true;
   });
 }
@@ -312,9 +310,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const filterCounts: Record<InventoryFilter, number> = {
     all: allInventoryRows.length,
     out: allInventoryRows.filter((row) => row.status === "out_of_stock").length,
-    low: allInventoryRows.filter((row) => row.status === "low_stock").length,
     reserved: allInventoryRows.filter((row) => row.reservedQty !== null && row.reservedQty > 0).length,
-    review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified").length,
+    review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified" || row.status === "low_stock").length,
   };
 
   const operatorBagRows = (operatorBagRowsData ?? [])
