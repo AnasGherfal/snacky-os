@@ -45,7 +45,6 @@ const crmTabs: ModuleTab[] = [
   { label: "Location Payments", href: "/relationships/obligations", labelAr: "دفعات المواقع" },
   { label: "Search", href: "/my-work/search", labelAr: "البحث" },
   { label: "Team Work", href: "/my-work/team", labelAr: "عمل الفريق" },
-  { label: "Management Notes", href: "/my-work/notes", labelAr: "ملاحظات الإدارة" },
 ];
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
