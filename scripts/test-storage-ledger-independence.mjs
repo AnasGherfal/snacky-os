@@ -82,6 +82,8 @@ test("Stock page shows partial independent data only with visible uncertainty", 
   assert.match(page, /row\.availableQty === null \? tr\("Unverified"/);
   assert.match(page, /filterCounts\.review/);
   assert.match(page, /Inactive product still has stock/);
+  assert.match(page, /canAccessPath\(userContext, "\/inventory\/stocktake"\)/);
+  assert.match(page, /My assigned counts/);
   assert.match(page, /minStorageQty/);
 });
 
