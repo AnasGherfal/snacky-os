@@ -68,6 +68,9 @@ test("operator bag custody is on-demand and does not slow the standard Stock pag
   assert.doesNotMatch(stock, /from\("current_inventory_by_location"\)/);
   assert.doesNotMatch(stock, /from\("inventory_movements"\)/);
   assert.match(stock, /href="\/inventory\/movements"/);
+  assert.match(stock, /canSeeMovementHistory=\{canAccessPath\(userContext, "\/inventory\/movements"\)\}/);
+  assert.match(bag, /canSeeMovementHistory \? /);
+  assert.match(bag, /product_id=\$\{encodeURIComponent\(r\.productId\)\}/);
   assert.match(bag, /\.eq\("location_type", "operator_bag"\)/);
   assert.match(bag, /count: "exact"/);
   assert.match(bag, /normalizeOperatorBagBalances\(balances\.data/);
