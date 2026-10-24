@@ -108,7 +108,7 @@ test("inventory failures cannot masquerade as zero stock", () => {
   assert.match(restockLoaderSource, /storageLoaded: !storage\.error/);
   assert.match(inventoryPageSource, /if \(!storageResult\.ok\)/);
   assert.match(inventoryPageSource, /No quantities have been changed or treated as zero/i);
-  assert.match(physicalStorageLoaderSource, /stock\.count > stock\.data\.length/);
+  assert.match(physicalStorageLoaderSource, /stock\.count !== stock\.data\.length/);
   assert.doesNotMatch(inventoryPageSource, /loadRestockPriorityData\(/);
 });
 
