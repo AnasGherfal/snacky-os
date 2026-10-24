@@ -55,11 +55,12 @@ test("cash handling and health stay discoverable when sidebar is simplified", ()
   assert.match(sidebar, /items: \[operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem/);
 });
 
-test("storage's key workflows remain accessible without crowding the main screen", () => {
-  assert.match(storage, /href="\/restock-priority\/purchase-list">What to buy/);
-  assert.match(storage, /href="\/inventory\/stocktake">Count storage/);
-  assert.match(storage, /href="\/inventory\/movements\/new">Manual adjustment/);
-  assert.match(storage, /<summary[^>]*>More storage tools and help<\/summary>/);
-  assert.match(storage, /<span>Operator bag stock/);
-  assert.match(storage, /<span>Recent stock movements/);
+test("Storage keeps its main actions and bilingual accessible detail sections", () => {
+  assert.match(storage, /href="\/restock-priority\/purchase-list"/);
+  assert.match(storage, /href="\/inventory\/stocktake"/);
+  assert.match(storage, /href="\/inventory\/movements\/new"/);
+  for (const label of ["What to buy", "Count storage", "Manual adjustment", "More storage tools and help", "Operator bag stock", "Recent stock movements"]) {
+    assert.ok(storage.includes(`tr("${label}",`), `Missing bilingual label: ${label}`);
+  }
+  assert.match(storage, /<details className="mt-6 rounded-xl border border-slate-200 bg-white p-4"/);
 });
