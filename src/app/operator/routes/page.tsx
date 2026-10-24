@@ -155,8 +155,14 @@ function RouteCard({
   );
 }
 
-export default async function OperatorRoutesPage() {
+export default async function OperatorRoutesPage({ searchParams }: {
+  searchParams?: Promise<{ view?: string | string[] }>;
+} = {}) {
+  const filters = await searchParams;
+  const rawView = Array.isArray(filters?.view) ? filters?.view[0] : filters?.view;
+  const availableView = rawView === "available";
   const { t, locale } = await getServerI18n();
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
 
@@ -326,16 +332,26 @@ export default async function OperatorRoutesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={canManageAllRoutes ? t("Operator Routes") : t("My routes")}
-        subtitle={
-          canManageAllRoutes
+        title={availableView ? tr("Available Routes", "الجولات المتاحة") : canManageAllRoutes ? t("Operator Routes") : tr("My Routes", "جولاتي")}
+        subtitle={availableView
+          ? tr("Unassigned routes you can claim.", "الجولات غير المسندة التي تقدر تستلمها.")
+          : canManageAllRoutes
             ? t("Assigned, unassigned, and completed routes across the team.")
-            : t(
-                "See your assigned work, open routes you can claim, and completed history in one place.",
-              )
+            : tr("Your assigned routes, progress and completed history.", "جولاتك المسندة وتقدم العمل والسجل السابق.")
         }
         action={headerAction}
       />
+
+      <nav className="hidden flex-wrap gap-2 md:flex" aria-label={tr("Route views", "عرض الجولات")}>
+        <Link href="/operator/routes" aria-current={!availableView ? "page" : undefined}
+          className={`inline-flex min-h-11 items-center rounded-lg border px-4 py-2 text-sm font-semibold ${!availableView ? "border-emerald-600 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700"}`}>
+          {tr("Assigned", "المسندة")} ({assignedOpenRoutes.length})
+        </Link>
+        <Link href="/operator/routes?view=available" aria-current={availableView ? "page" : undefined}
+          className={`inline-flex min-h-11 items-center rounded-lg border px-4 py-2 text-sm font-semibold ${availableView ? "border-emerald-600 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700"}`}>
+          {tr("Available", "المتاحة")} ({availableRoutes.length})
+        </Link>
+      </nav>
 
       {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
 
@@ -352,13 +368,13 @@ export default async function OperatorRoutesPage() {
       ) : null}
 
       <SectionCard>
-        <div className="grid gap-4 p-4 sm:grid-cols-3">
+        <div className="grid grid-cols-3 gap-2 p-3 sm:gap-4 sm:p-4">
           <div>
             <div className="text-sm text-slate-500">{t("Open assigned")}</div>
             <div className="mt-2 text-3xl font-semibold text-slate-900">
               {assignedOpenRoutes.length}
             </div>
-            <div className="mt-1 text-sm text-slate-500">
+            <div className="mt-1 hidden text-sm text-slate-500 sm:block">
               {t("Routes already assigned and still waiting on completion.")}
             </div>
           </div>
@@ -367,7 +383,7 @@ export default async function OperatorRoutesPage() {
             <div className="mt-2 text-3xl font-semibold text-slate-900">
               {availableRoutes.length}
             </div>
-            <div className="mt-1 text-sm text-slate-500">
+            <div className="mt-1 hidden text-sm text-slate-500 sm:block">
               {t("Open routes you can claim when the team leaves them unassigned.")}
             </div>
           </div>
@@ -376,19 +392,19 @@ export default async function OperatorRoutesPage() {
             <div className="mt-2 text-3xl font-semibold text-slate-900">
               {completedRoutes.length}
             </div>
-            <div className="mt-1 text-sm text-slate-500">
+            <div className="mt-1 hidden text-sm text-slate-500 sm:block">
               {t("Finished routes stay visible for history and follow-up.")}
             </div>
           </div>
         </div>
       </SectionCard>
 
-      <section className="space-y-4">
+      {!availableView ? <section className="space-y-4">
         <div>
           <h2 className="text-base font-semibold text-slate-900">
             {canManageAllRoutes ? t("Assigned routes") : t("Assigned to me")}
           </h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">
             {canManageAllRoutes
               ? t("Routes already assigned across the team.")
               : t("Routes already assigned to your linked operator identity.")}
@@ -413,14 +429,14 @@ export default async function OperatorRoutesPage() {
             ))}
           </div>
         )}
-      </section>
+      </section> : null}
 
-      <section className="space-y-4">
+      {(availableView || canManageAllRoutes) ? <section className="space-y-4">
         <div>
           <h2 className="text-base font-semibold text-slate-900">
             {t("Unassigned")}
           </h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">
             {t("Open routes you can claim when the route is left available.")}
           </p>
         </div>
@@ -441,17 +457,13 @@ export default async function OperatorRoutesPage() {
             ))}
           </div>
         )}
-      </section>
+      </section> : null}
 
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-base font-semibold text-slate-900">
-            {t("Completed routes")}
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {t("Finished routes stay visible here for history and follow-up.")}
-          </p>
-        </div>
+      {!availableView ? <details className="rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-base font-semibold text-slate-900">
+          {tr("Completed routes", "الجولات المكتملة")} ({completedRoutes.length})
+          <span className="ms-2 text-xs font-normal text-slate-500">{tr("Show history", "عرض السجل")}</span>
+        </summary>
         {!completedRoutes.length ? (
           <EmptyState
             title={t("No completed routes yet")}
@@ -469,7 +481,7 @@ export default async function OperatorRoutesPage() {
             ))}
           </div>
         )}
-      </section>
+      </details> : null}
     </div>
   );
 }
