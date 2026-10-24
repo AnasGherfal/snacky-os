@@ -410,17 +410,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         }
       />
 
-      <details className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-        <summary className="cursor-pointer font-semibold text-slate-900">{tr("More storage tools and help", "أدوات المخزون الأخرى والمساعدة")}</summary>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <SecondaryButton href="/product-planning">{tr("Product planning", "تخطيط المنتجات")}</SecondaryButton>
-          <SecondaryButton href="/inventory/stock-check">{tr("Monthly stock check", "مراجعة مخزون الشهر")}</SecondaryButton>
-          <SecondaryButton href="/inventory/machine-storage">{tr("Machine stock", "مخزون الماكينات")}</SecondaryButton>
-          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">{tr("Full movement log", "سجل الحركات الكامل")}</SecondaryButton> : null}
-          {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">{tr("Manual adjustment", "تعديل يدوي")}</SecondaryButton> : null}
-        </div>
-        <p className="mt-3 leading-6">{tr("Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.", "الكميات المحجوزة موجودة فعلياً في المخزن لكنها مخصصة لجولات نشطة. المتاح هو ما لم يُحجز بعد. غيّر الحجز من الجولة نفسها، ولا تخصم المخزون يدوياً.")}</p>
-      </details>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -490,6 +479,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Use the Reserved filter to review them", "استخدم فلتر المحجوز للمراجعة")}</p>
         </div>
       </div>
+      <p className="mb-4 text-xs text-slate-600">{tr("Reserved units are still on the storage shelves. Only Available stock can be assigned to another route.", "الكميات المحجوزة ما زالت موجودة في المخزن، لكن المتاح فقط يمكن تخصيصه لجولة جديدة.")}</p>
 
       {!inventoryRows.length ? (
         <EmptyState
