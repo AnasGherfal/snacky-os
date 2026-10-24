@@ -43,11 +43,14 @@ test("Storage cards contain physical stock only; buying logic stays on the purch
 });
 test("Inventory auditing and operator custody are preserved, not deleted",()=>{
   assert.match(storage,/Operator bag stock/);
-  assert.match(storage,/Recent stock movements/);
+  // Full movement history and corrections are kept in their dedicated audited page.
+  assert.doesNotMatch(storage, /\.from\("inventory_movements"\)/);
+  assert.match(storage, /href="\/inventory\/movements"/);
   assert.match(storage,/reservation\.routeId/);
   assert.match(reconciliation,/Stock Reconciliation|Stock reconciliation/);
   assert.match(stocktake,/StorageStocktakeWorkspace/);
   assert.match(movements,/PageHeader/);
+  assert.match(movements,/\.from\("inventory_movements"\)/);
 });
 test("CRM and Reports keep core pages without extra duplicate dashboards",()=>{
   assert.deepEqual(group("crmTabs").slice(0,4),["/my-work","/issues","/locations-pipeline","/relationships"]);
