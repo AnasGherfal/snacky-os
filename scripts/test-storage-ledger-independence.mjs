@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { formatSignedProductQuantity } from "../src/lib/product-quantity.ts";
 import test from "node:test";
 import {
   buildPhysicalStorageBalances,
@@ -94,4 +95,26 @@ test("Storage defaults to physically stocked goods instead of every catalog prod
   assert.match(page, /if \(filter === "stocked"\) return row\.currentQty !== 0/);
   assert.match(page, /\{ key: "stocked", label: "In Storage" \}/);
   assert.doesNotMatch(page, /\{ key: "low", label:/);
+});
+
+test("Ledger deficits stay negative in displayed Storage quantities", () => {
+  assert.equal(formatSignedProductQuantity(-3, { productName: "Snack", caseQuantity: 1 }), "−3 pieces");
+  const shortage = formatSignedProductQuantity(-27, { productName: "Snack", caseQuantity: 24 }, { compact: true });
+  assert.ok(shortage.startsWith("−1 box + 3 pieces"), shortage);
+  assert.equal(formatSignedProductQuantity(0, { productName: "Snack", caseQuantity: 1 }), "0 pieces");
+  assert.throws(() => formatSignedProductQuantity(Number.NaN), /Invalid signed inventory quantity/);
+  assert.throws(() => formatSignedProductQuantity(1.2), /Invalid signed inventory quantity/);
+  const page = readFileSync("src/app/inventory/page.tsx", "utf8");
+  assert.match(page, /formatSignedProductQuantity\(Number\(quantity\)/);
+});
+
+test("Storage labels system balances honestly and excludes historical route rows", () => {
+  const page = readFileSync("src/app/inventory/page.tsx", "utf8");
+  assert.match(page, /Recorded balances from inventory movements—not a physical shelf count/);
+  assert.match(page, /not a physical count/);
+  assert.doesNotMatch(page, /Physical units currently on the storage shelves/);
+  assert.match(page, /\.neq\("routes\.status", "completed"\)/);
+  assert.match(page, /\.neq\("routes\.status", "cancelled"\)/);
+  // Other terminal states remain filtered through the authoritative rule.
+  assert.match(page, /isRouteReservationStatus\(status\)/);
 });
