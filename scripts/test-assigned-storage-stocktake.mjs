@@ -75,9 +75,9 @@ test('found products can be added but system quantities stay hidden from assigne
 
 test('page is mobile reachable inside Stock and Purchasing',()=>{
  assert.match(page,/StorageStocktakeWorkspace/);
- assert.match(tabs,/Physical Stock Count/);
+ assert.match(tabs,/Count Storage/);
  assert.match(tabs,/\/inventory\/stocktake/);
- assert.match(tabs,/الجرد الفعلي/);
+ assert.match(tabs,/جرد المخزن/);
 });
 
 test('API validates access, same origin, bounded body, and receipt identity',()=>{
