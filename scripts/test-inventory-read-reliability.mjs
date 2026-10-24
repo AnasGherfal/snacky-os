@@ -4,14 +4,22 @@ import test from "node:test";
 
 const inventoryPage = fs.readFileSync(new URL("../src/app/inventory/page.tsx", import.meta.url), "utf8");
 const newMovementPage = fs.readFileSync(new URL("../src/app/inventory/movements/new/page.tsx", import.meta.url), "utf8");
+const operatorBagView = fs.readFileSync(new URL("../src/app/inventory/OperatorBagStockView.tsx", import.meta.url), "utf8");
+const physicalStorageLoader = fs.readFileSync(new URL("../src/lib/storage-inventory-data.ts", import.meta.url), "utf8");
+const movementLog = fs.readFileSync(new URL("../src/app/inventory/movements/page.tsx", import.meta.url), "utf8");
 const stockMovementForm = fs.readFileSync(new URL("../src/components/StockMovementForm.tsx", import.meta.url), "utf8");
 const restockLoader = fs.readFileSync(new URL("../src/lib/restock-priority-data.ts", import.meta.url), "utf8");
 const rlsMigration = fs.readFileSync(new URL("../supabase/migrations/20260904082626_optimize_inventory_rls_reads.sql", import.meta.url), "utf8");
 
 test("authorized inventory pages use protected server reads for expensive aggregates", () => {
   assert.match(inventoryPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
-  assert.match(inventoryPage, /inventoryReadClient\s*\.from\("current_inventory_by_location"\)/);
-  assert.match(inventoryPage, /inventoryReadClient\s*\.from\("inventory_movements"\)/);
+  assert.match(inventoryPage, /if \(operatorBagView\)/);
+  assert.match(inventoryPage, /loadPhysicalStorageData\(inventoryReadClient\)/);
+  assert.doesNotMatch(inventoryPage, /\.from\("current_inventory_by_location"\)/);
+  assert.doesNotMatch(inventoryPage, /\.from\("inventory_movements"\)/);
+  assert.match(operatorBagView, /client\.from\("current_inventory_by_location"\)/);
+  assert.match(physicalStorageLoader, /client\.from\("route_storage_stock_by_product"\)/);
+  assert.match(movementLog, /supabase\s*\.from\("inventory_movements"\)/);
   assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors\)/);
   assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
   assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);

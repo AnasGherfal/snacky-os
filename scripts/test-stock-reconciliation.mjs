@@ -95,7 +95,8 @@ test("status helper distinguishes confirmed, suspected, gap, extra, and balanced
 });
 
 test("simple Stock Check is the default while exact reconciliation remains accessible", () => {
-  assert.match(tabs, /label:\s*"Monthly Stock Review",\s*href:\s*"\/inventory\/stock-check"/);
+  assert.doesNotMatch(tabs, /href:\s*"\/inventory\/stock-check"/);
+  assert.match(tabs, /href:\s*"\/inventory\/reconciliation"/);
   assert.match(simplePage, /href="\/inventory\/reconciliation"/);
   assert.match(simplePage, /Advanced exact reconciliation/);
   assert.match(page, /Missing Items & Stock Reconciliation/);

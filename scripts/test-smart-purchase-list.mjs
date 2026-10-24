@@ -155,7 +155,7 @@ test("UI defaults to 22 days, keeps other coverage choices, explains Elite deman
   assert.match(page, /Current storage could not be verified/);
   assert.match(page, /CreatePurchaseListButton/);
   assert.match(page, /b\.demandDailyRate - a\.demandDailyRate|Buy these first/);
-  assert.match(tabs, /Purchase List/);
-  assert.match(tabs, /قائمة الشراء/);
+  assert.match(tabs, /What to Buy/);
+  assert.match(tabs, /شن نشتري؟/);
   assert.match(tabs, /\/restock-priority\/purchase-list/);
 });
