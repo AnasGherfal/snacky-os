@@ -409,7 +409,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           <SecondaryButton href="/product-planning">Product planning</SecondaryButton>
           <SecondaryButton href="/inventory/stock-check">Monthly stock check</SecondaryButton>
           <SecondaryButton href="/inventory/machine-storage">Machine stock</SecondaryButton>
-          <SecondaryButton href="/inventory/movements">Full movement log</SecondaryButton>
+          {canAccessPath(userContext, "/inventory/movements") ? <SecondaryButton href="/inventory/movements">Full movement log</SecondaryButton> : null}
           {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/movements/new">Manual adjustment</SecondaryButton> : null}
         </div>
         <p className="mt-3 leading-6">Reserved units are still in storage, but already assigned to active routes. Available means they are not reserved. Change a reservation in its route; never deduct it manually.</p>
