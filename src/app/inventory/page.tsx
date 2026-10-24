@@ -7,14 +7,14 @@ import { getServerI18n } from "@/lib/i18n/server";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { type RestockPriorityItem } from "@/lib/restock-priority";
-import { loadRestockPriorityData } from "@/lib/restock-priority-data";
+import { loadPhysicalStorageData } from "@/lib/storage-inventory-data";
+import { physicalStockStatus } from "@/lib/storage-inventory-model";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "critical" | "low" | "reserved" | "fast";
+type InventoryFilter = "all" | "out" | "low" | "reserved" | "review";
 
 type InventoryQueryIssue = {
   key: string;
@@ -46,37 +46,24 @@ type InventoryRow = {
   brand: string | null;
   caseQuantity: number;
   currentQty: number;
-  reservedQty: number;
-  availableQty: number;
+  reservedQty: number | null;
+  availableQty: number | null;
   reservations: InventoryRouteReservation[];
-  suggestedBuyQty: number;
-  routeNeedQty: number;
-  salesVelocity: number;
-  isFastSeller: boolean;
-  restockStatus: RestockPriorityItem["status"];
-  restockSection: RestockPriorityItem["section"];
-  lastPurchaseCost: number | null;
-  reasons: string[];
   status: string;
 };
 
-const inventoryFilterNamesAr: Record<InventoryFilter, string> = { all: "كل المنتجات", out: "نافد", critical: "حرج", low: "منخفض", reserved: "محجوز", fast: "الأكثر مبيعاً" };
+const inventoryFilterNamesAr: Record<InventoryFilter, string> = {
+  all: "كل المنتجات", out: "نافد", low: "منخفض", reserved: "محجوز",
+  review: "يحتاج مراجعة",
+};
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "all", label: "All products" },
   { key: "out", label: "Out of stock" },
-  { key: "critical", label: "Critical" },
-  { key: "low", label: "Low" },
+  { key: "low", label: "Below minimum" },
   { key: "reserved", label: "Reserved for routes" },
+  { key: "review", label: "Needs review" },
 ];
-
-function inventoryStatus(currentQty: number, reservedQty: number, availableQty: number, isCritical: boolean) {
-  if (currentQty <= 0) return "out_of_stock";
-  if (availableQty <= 0 && reservedQty > 0) return "reserved";
-  if (isCritical) return "critical";
-  if (availableQty <= 10) return "low_stock";
-  return "available";
-}
 
 function formatEntity(type: string | null | undefined, name: string | null | undefined) {
   return name ? `${type}: ${name}` : type ?? "-";
@@ -150,11 +137,10 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
   return rows.filter((row) => {
     const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
-    if (filter === "out") return row.currentQty <= 0;
-    if (filter === "critical") return row.restockSection === "critical" || row.status === "critical";
-    if (filter === "low") return row.status === "low_stock" || row.restockStatus === "low";
-    if (filter === "reserved") return row.reservedQty > 0;
-    if (filter === "fast") return row.isFastSeller;
+    if (filter === "out") return row.status === "out_of_stock";
+    if (filter === "low") return row.status === "low_stock";
+    if (filter === "reserved") return row.reservedQty !== null && row.reservedQty > 0;
+    if (filter === "review") return row.status === "review" || row.status === "unverified";
     return true;
   });
 }
