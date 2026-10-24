@@ -113,8 +113,10 @@ export function activeMobileShortcutIndex(
     const expectedQuery = new URLSearchParams(params ?? "");
     const requiresView = expectedQuery.has("view");
     if (requiresView && search.get("view") !== expectedQuery.get("view")) return;
-    if (!requiresView && items.some((other) => other.href.startsWith(path + "?view="))
-      && pathname === path && search.has("view")) return;
+    if (!requiresView && pathname === path && items.some((other) =>
+      other.href.startsWith(path + "?view=") &&
+      new URLSearchParams(other.href.split("?")[1]).get("view") === search.get("view")
+    )) return;
     const exact = pathname === path;
     const prefix = pathname.startsWith(path + "/");
     const viaModule = item.module && moduleKey === item.module;
