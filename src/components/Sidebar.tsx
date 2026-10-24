@@ -22,6 +22,7 @@ import { useLanguage } from "@/components/I18nProvider";
 import { getAppModuleKey, type AppModuleKey } from "@/components/app-navigation";
 import {
   AppRole,
+  canAccessPath,
   hasAnyRole,
   hasPermission,
   hasRole,
@@ -168,8 +169,6 @@ const operatorCashItem: NavItem = { label: { en: "Cash", ar: "النقدية" },
 
 const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
 
-const managementNotesItem: NavItem = { label: { en: "Management notes", ar: "ملاحظات الإدارة" }, href: "/my-work/notes", icon: ClipboardList };
-
 const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
 
 const ownerAdminNav: NavSection[] = [
@@ -181,7 +180,7 @@ const ownerAdminNav: NavSection[] = [
 
 const supervisorNav: NavSection[] = [
   { items: [dashboardItem, personalWorkItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem] },
 ];
 
@@ -233,7 +232,6 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   if (hasPermission(context, "locations.pipeline.manage") || hasPermission(context, "issues.view")) {
     work.push(crmItem);
   }
-  if (hasAnyRole(context, ["owner", "admin", "crm"])) work.push(managementNotesItem);
   if (hasPermission(context, "machines.view")) work.push(machinesItem);
 
   if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) {
@@ -258,7 +256,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     work.push(cashCustodyItem);
   }
   if (hasAnyRole(context, ["warehouse", "purchasing", "finance"])) work.push(buyingListsItem);
-  if (!isOperatorRole(context) && hasAnyRole(context, ["warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
+  if (!isOperatorRole(context) && !hasPermission(context, "finance.view") && hasAnyRole(context, ["warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
   if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);
   if (hasPermission(context, "investor.view")) business.push(investorPortalItem);
@@ -314,7 +312,11 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const { dictionary, locale } = useLanguage();
-  const sections = sectionsForRoles(role, roles);
+  const context = { id: "sidebar", role, roles };
+  const sections = sectionsForRoles(role, roles).map((section) => ({
+    ...section,
+    items: section.items.filter((item) => canAccessPath(context, pathWithoutQuery(item.href))),
+  })).filter((section) => section.items.length > 0);
   const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
   const [optimisticOriginHref, setOptimisticOriginHref] = useState<string | null>(null);
   const currentHref = currentSearch ? `${pathname}?${currentSearch}` : pathname;
