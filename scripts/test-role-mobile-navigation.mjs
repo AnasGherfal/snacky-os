@@ -93,7 +93,7 @@ test("sidebar no longer duplicates CRM Notes, supervisor Cash, and warehouse sto
   assert.doesNotMatch(sidebar, /items: \[operationsItem, cashCustodyItem, cashHandlingItem, stockItem/);
   assert.match(sidebar, /canAccessPath\(context, pathWithoutQuery\(item.href\)\)/);
   assert.ok(!appModules.includes('"/products", "/warehouse"'));
-  assert.match(config, /group: "Locations & contacts"/);
+  assert.match(config, /href: "\/relationships"/);
   assert.match(config, /group: "People & obligations"/);
 });
 
