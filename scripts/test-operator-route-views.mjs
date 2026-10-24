@@ -6,7 +6,7 @@ const page = readFileSync("src/app/operator/routes/page.tsx", "utf8");
 const nav = readFileSync("src/lib/role-mobile-navigation.ts", "utf8");
 
 test("operator route view selection is respected by the server page", () => {
-  assert.match(page, /searchParams\?: Promise<\{ view\?: string \| string\[\] \}>/);
+  assert.match(page, /searchParams: Promise<\{ view\?: string \| string\[\] \}>/);
   assert.match(page, /const availableView = rawView === "available"/);
   assert.match(page, /!availableView \? <section className="space-y-4"/);
   assert.match(page, /\(availableView \|\| canManageAllRoutes\) \? <section className="space-y-4"/);
