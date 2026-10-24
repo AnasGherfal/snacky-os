@@ -22,7 +22,7 @@ export async function CrmQuickIssueAction() {
           {ar ? '⚠️ ماكينة لا تعمل — إشعار المشغّلين' : '⚠️ Machine not working — notify operators'}
         </Link>
         <Link href="/issues/new" className="inline-flex min-h-11 items-center justify-center rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white hover:bg-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-900">
-          {ar ? '+ مشكلة عميل' : '+ Customer issue'}
+          {ar ? '+ بلاغ سريع' : '+ Quick issue'}
         </Link>
       </div>
     </div>
