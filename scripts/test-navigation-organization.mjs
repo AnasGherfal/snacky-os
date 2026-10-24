@@ -23,8 +23,8 @@ function moduleItems(name) {
 
 test("daily workflows have consistent primary tab order", () => {
   const expected = {
-    stockTabs: ["/inventory", "/restock-priority", "/purchases", "/products"],
-    crmTabs: ["/issues/new", "/my-work", "/locations-pipeline", "/issues"],
+    stockTabs: ["/inventory", "/restock-priority/purchase-list", "/purchases", "/products"],
+    crmTabs: ["/my-work", "/issues", "/locations-pipeline", "/relationships"],
     financeTabs: ["/finance", "/finance/transactions", "/finance/expenses", "/finance/rent"],
     adminTabs: ["/admin", "/team", "/settings", "/vms-import"],
     reportsTabs: ["/reports", "/sales", "/reports/cash-reconciliation", "/reports/route-performance"],
@@ -51,26 +51,35 @@ test("cash handling and health stay discoverable when sidebar is simplified", ()
   assert.ok(moduleItems("cashTabs").includes("/cash-handling"));
   assert.ok(moduleItems("adminTabs").includes("/operations-health"));
   assert.ok(moduleItems("adminTabs").includes("/admin/testing-lab"));
-  assert.ok(moduleItems("crmTabs").includes("/my-work/notes"));
+  assert.ok(moduleItems("crmTabs").includes("/issues/new"));
   assert.match(sidebar, /items: \[operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem/);
 });
 
-test("Storage keeps only daily actions while advanced tools live in grouped More", () => {
-  assert.match(storage, /href="\/restock-priority\/purchase-list"/);
-  assert.match(storage, /href="\/inventory\/stocktake"/);
-  assert.match(storage, /tr\("What to buy",/);
-  assert.match(storage, /tr\("Count storage",/);
-  assert.doesNotMatch(storage, /More storage tools and help/);
-  assert.doesNotMatch(storage, /href="\/inventory\/movements\/new"/);
-  for (const href of [
-    "/restock-priority/purchase-list", "/inventory/stocktake", "/inventory/stock-check",
-    "/inventory/machine-storage", "/inventory/movements", "/inventory/movements/new",
-    "/storage-locations", "/product-planning", "/suppliers",
-  ]) {
-    assert.ok(moduleItems("stockTabs").includes(href), `Missing advanced stock destination: ${href}`);
-  }
-  assert.match(config, /group: "Buying", groupAr: "الشراء"/);
-  assert.match(config, /group: "Stock checks", groupAr: "الجرد ومراجعة المخزون"/);
-  assert.match(tabs, /tab\.group/);
-  assert.match(tabs, /tab\.groupAr/);
+test("daily Stock navigation contains no duplicated diagnostic or buying screens", () => {
+  const items = moduleItems("stockTabs");
+  assert.deepEqual(items, [
+    "/inventory", "/restock-priority/purchase-list", "/purchases", "/products",
+    "/buying-lists", "/inventory/stocktake", "/inventory/movements",
+    "/inventory/reconciliation", "/suppliers",
+  ]);
+  for (const retiredShortcut of [
+    "/restock-priority", "/inventory/stock-check", "/inventory/machine-storage",
+    "/inventory/movements/new", "/product-planning", "/storage-locations",
+  ]) assert.equal(items.includes(retiredShortcut), false, `redundant shortcut: ${retiredShortcut}`);
+  assert.match(storage, /href="\\/restock-priority\\/purchase-list"/);
+  assert.match(storage, /href="\\/inventory\\/stocktake"/);
+  assert.match(config, /group: "Stock controls", groupAr: "مراجعة المخزون"/);
+  assert.match(tabs, /extraTabs\\.map/);
+});
+
+test("CRM and Reports show only decision-making pages", () => {
+  assert.deepEqual(moduleItems("crmTabs").slice(0, 4), [
+    "/my-work", "/issues", "/locations-pipeline", "/relationships",
+  ]);
+  assert.equal(moduleItems("crmTabs").includes("/my-work/search"), false);
+  assert.equal(moduleItems("crmTabs").includes("/my-work/notes"), false);
+  assert.deepEqual(moduleItems("reportsTabs"), [
+    "/reports", "/sales", "/reports/cash-reconciliation",
+    "/reports/route-performance", "/reports/route-product-activity",
+  ]);
 });
