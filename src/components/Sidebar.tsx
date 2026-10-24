@@ -176,9 +176,9 @@ const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, hre
 
 const ownerAdminNav: NavSection[] = [
   { items: [dashboardItem, personalWorkItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
-  { title: sectionTitles.system, items: [dataHealthItem, adminItem, ownerTestingLabItem, managementNotesItem] },
+  { title: sectionTitles.system, items: [adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
