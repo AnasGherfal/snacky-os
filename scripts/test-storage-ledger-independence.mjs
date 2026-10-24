@@ -72,7 +72,7 @@ test("Storage page uses read-only physical stock loader, not sales or automatic 
   assert.doesNotMatch(page, /suggestedBuyQty|salesVelocity|\.upsert\(/);
   assert.match(loader, /route_storage_stock_by_product/);
   assert.match(loader, /count: "exact"/);
-  assert.match(loader, /stock\.count > stock\.data\.length/);
+  assert.match(loader, /stock\.count !== stock\.data\.length/);
   assert.doesNotMatch(loader, /kpi_product_monthly|refill_recommendations|latest_vms_stock_by_slot|repairMissingRouteStockLines|\.upsert\(|\.insert\(|\.update\(/);
 });
 
