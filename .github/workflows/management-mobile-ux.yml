@@ -13,11 +13,14 @@ on:
       - "src/components/ModuleTabs.tsx"
       - "src/components/module-tabs-config.ts"
       - "src/app/inventory/page.tsx"
+      - "src/lib/storage-inventory-model.ts"
+      - "src/lib/storage-inventory-data.ts"
       - "scripts/test-role-mobile-navigation.mjs"
       - "scripts/test-operator-route-views.mjs"
       - "scripts/test-crm-mobile-focus.mjs"
       - "scripts/test-navigation-organization.mjs"
       - "scripts/test-simplified-operational-navigation.mjs"
+      - "scripts/test-storage-ledger-independence.mjs"
       - "scripts/test-assigned-storage-stocktake.mjs"
       - "scripts/test-simple-monthly-stock-check.mjs"
       - "scripts/test-stock-reconciliation.mjs"
@@ -37,9 +40,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run mobile navigation and bilingual Storage contracts
-        run: node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-role-mobile-navigation.mjs scripts/test-operator-route-views.mjs scripts/test-crm-mobile-focus.mjs scripts/test-navigation-organization.mjs scripts/test-simplified-operational-navigation.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
+        run: node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-role-mobile-navigation.mjs scripts/test-operator-route-views.mjs scripts/test-crm-mobile-focus.mjs scripts/test-navigation-organization.mjs scripts/test-simplified-operational-navigation.mjs scripts/test-storage-ledger-independence.mjs scripts/test-simple-monthly-stock-check.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
       - name: Lint new mobile navigation and shell
         run: npx eslint src/components/RoleMobileNavigation.tsx src/lib/role-mobile-navigation.ts src/components/ShellChrome.tsx src/components/Sidebar.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts src/app/operator/routes/page.tsx
+      - name: Lint physical ledger model and reader
+        run: npx eslint src/lib/storage-inventory-model.ts src/lib/storage-inventory-data.ts
       - name: Lint Storage layout (legacy any typing deferred)
         run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Lint CRM workspace (pre-existing any typing deferred)
