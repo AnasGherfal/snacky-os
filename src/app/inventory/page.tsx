@@ -66,10 +66,6 @@ const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "review", label: "Needs attention" },
 ];
 
-function formatEntity(type: string | null | undefined, name: string | null | undefined) {
-  return name ? `${type}: ${name}` : type ?? "-";
-}
-
 function supabaseErrorPayload(error: any) {
   return {
     code: error?.code ?? null,
@@ -194,15 +190,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const [
     { data: operatorBagRowsData, error: operatorBagError },
-    { data: movementsData, error: movementsError },
     { data: routeReservationsData, error: routeReservationsError, count: routeReservationsCount },
   ] = await Promise.all([
     inventoryReadClient.from("current_inventory_by_location")
       .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
       .eq("location_type", "operator_bag").order("location_name").order("product_name").limit(2000),
-    inventoryReadClient.from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
-      .order("created_at", { ascending: false }).limit(250),
     inventoryReadClient.from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
       // Exclude the two universal terminal statuses before loading. Other
@@ -234,16 +226,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           table: "route_stock_lines",
           message: "Route reservations could not be verified. Reserved and Available quantities are hidden; the recorded Storage balance is still shown.",
         }
-      : null,
-    movementsError
-      ? logInventoryQueryError({
-          key: "inventory_movements",
-          label: "Could not load inventory movements",
-          table: "inventory_movements",
-          error: movementsError,
-          profile,
-          params: { order: "created_at desc", limit: 250 },
-        })
       : null,
     !storageResult.minimumThresholdsVerified
       ? {
@@ -339,23 +321,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
   const filteredOperatorBagRows = operatorBagRows.filter((row: any) => matchesText([row.product_name, row.location_name, row.sku], q));
 
-  const movements = (movementsData ?? []).map((movement: any) => ({
-    ...movement,
-    product_name: movement.product?.name ?? productById.get(String(movement.product_id ?? ""))?.productName ?? "Unknown product",
-    category: productById.get(String(movement.product_id ?? ""))?.category ?? null,
-    case_quantity: productById.get(String(movement.product_id ?? ""))?.caseQuantity ?? 1,
-    from_label: formatEntity(movement.from_entity_type, movement.from_entity_id),
-    to_label: formatEntity(movement.to_entity_type, movement.to_entity_id),
-  }));
-  const filteredMovements = movements.filter((movement: any) => matchesText([
-    movement.product_name,
-    movement.reason,
-    movement.from_label,
-    movement.to_label,
-    movement.related_route_id,
-  ], q));
-
-  const movementReasonLabelsAr: Record<string, string> = { purchase_received: "استلام مشتريات", storage_to_operator_bag: "سحب من المخزن", operator_bag_to_machine: "تعبئة ماكينة", operator_bag_to_storage: "إرجاع للمخزن", stock_count_adjustment: "تسوية جرد", opening_balance: "رصيد افتتاحي", manual_sale: "بيع يدوي", returned_from_machine: "إرجاع من ماكينة", manual_correction: "تصحيح يدوي", damaged: "تالف", operator_personal_purchase: "شراء شخصي" };
   const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", low_stock: "منخفض", available: "متاح", review: "يحتاج مراجعة", unverified: "غير مؤكد" };
   const inventoryHeaders = [
     tr("Product", "المنتج"),
@@ -574,55 +539,14 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </details>
 
-      <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>{tr("Recent stock movements", "حركات المخزون الأخيرة")} <span className="text-sm font-normal text-slate-500">({filteredMovements.length} {tr("records", "سجل")})</span></span>
-          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
-        </summary>
-        <div className="mt-4">
-        {!filteredMovements.length ? (
-          <EmptyState
-            title={q ? tr("No movement rows match this search", "لا توجد حركات مطابقة للبحث") : tr("No movements recorded", "لا توجد حركات مسجلة")}
-            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("New purchase receipts, route picks, returns, adjustments, and waste movements will appear here.", "تظهر هنا حركات استلام المشتريات، وسحب الجولات، والإرجاع، والجرد، والتالف.")}
-          />
-        ) : (
-          <>
-            <MobileCardList>
-              {filteredMovements.map((movement: any) => (
-                <MobileRecordCard key={movement.id}>
-                  <div className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="break-words text-base font-semibold text-slate-900">{movement.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</p>
-                    </div>
-                    <StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <MobileField label={tr("Qty", "كمية")}>{packagedQuantity(movement.quantity, movement)}</MobileField>
-                    <MobileField label={tr("Route", "الجولة")}>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</MobileField>
-                    <MobileField label={tr("From", "من")}>{movement.from_label}</MobileField>
-                    <MobileField label={tr("To", "إلى")}>{movement.to_label}</MobileField>
-                  </div>
-                </MobileRecordCard>
-              ))}
-            </MobileCardList>
-            <DataTable className="hidden md:block" headers={[tr("Created", "التاريخ"), tr("Product", "المنتج"), tr("Qty", "الكمية"), tr("From", "من"), tr("To", "إلى"), tr("Reason", "السبب"), tr("Route", "الجولة")]}>
-              {filteredMovements.map((movement: any) => (
-                <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
-                  <td className="font-medium">{movement.product_name}</td>
-                  <td>{packagedQuantity(movement.quantity, movement)}</td>
-                  <td>{movement.from_label}</td>
-                  <td>{movement.to_label}</td>
-                  <td><StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} /></td>
-                  <td>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</td>
-                </tr>
-              ))}
-            </DataTable>
-          </>
-        )}
-        </div>
-      </details>
+      {canAccessPath(userContext, "/inventory/movements") ? (
+        <Link
+          href="/inventory/movements"
+          className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
+        >
+          {tr("View full movement history", "عرض سجل حركات المخزون الكامل")}
+        </Link>
+      ) : null}
     </div>
   );
 }
