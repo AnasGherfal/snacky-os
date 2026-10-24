@@ -35,7 +35,15 @@ jobs:
           fs.writeFileSync('diagnostics/unit-files.json',JSON.stringify(files,null,2));
           const result=spawnSync(process.execPath,['--experimental-strip-types','--experimental-vm-modules','--loader','./scripts/ts-alias-loader.mjs','--test','--test-concurrency=4',...files],{encoding:'utf8',maxBuffer:40e6});
           fs.writeFileSync('diagnostics/all-unit.tap',(result.stdout||'')+'\n'+(result.stderr||''));
-          console.log((result.stdout||'').slice(-6000));process.exit(result.status??1);
+          if ((result.status ?? 1) !== 0) {
+            const rows=(result.stdout||'').split('\\n');
+            rows.forEach((line,index) => {
+              if (!line.startsWith('not ok ')) return;
+              console.error('\\n--- failing regression ---\\n' + rows.slice(Math.max(0,index-4),Math.min(rows.length,index+32)).join('\\n'));
+            });
+            console.error((result.stderr||'').slice(-3000));
+          } else console.log((result.stdout||'').slice(-2000));
+          process.exit(result.status??1);
           NODE
       - name: Install pinned audit CLI (tooling only, no application dependency changes)
         run: npm install --global npm@11.19.1 --ignore-scripts --no-audit
