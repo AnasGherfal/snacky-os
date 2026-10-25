@@ -246,6 +246,7 @@ export default async function InventoryMovementsPage({
   searchParams: Promise<{
     q?: string;
     product_id?: string;
+    bag_id?: string;
     reason?: string;
     user_id?: string;
     route_id?: string;
@@ -264,6 +265,11 @@ export default async function InventoryMovementsPage({
   const canCreateCorrections = isOwnerAdminRole(profile);
 
   const params = cleanSearchParams(await searchParams);
+  const bagId = String(params.bag_id ?? "").trim();
+  if (bagId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bagId)) {
+    return <ErrorState title="Invalid operator bag filter" body="The operator bag identifier is invalid. Return to the custody view to select a valid bag."
+      action={<SecondaryButton href="/inventory?view=operator-bags">Operator bags</SecondaryButton>} />;
+  }
   const { page, pageSize, from, to } = getPagination(params);
   const supabase = await getAuthenticatedSupabaseServerClient();
 
@@ -308,6 +314,9 @@ export default async function InventoryMovementsPage({
       .order("created_at", { ascending: false });
 
     if (params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
+    if (bagId) movementQuery = movementQuery.or(
+      `and(from_entity_type.eq.operator_bag,from_entity_id.eq.${bagId}),and(to_entity_type.eq.operator_bag,to_entity_id.eq.${bagId})`
+    );
     if (params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
     if (params.user_id) movementQuery = movementQuery.eq("created_by", params.user_id);
     if (params.route_id) movementQuery = movementQuery.eq("related_route_id", params.route_id);
@@ -374,16 +383,25 @@ export default async function InventoryMovementsPage({
     <>
       <PageHeader
         title="Inventory Movement Log"
-        subtitle="Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."
+        subtitle={bagId
+          ? "Movement history for the selected operator bag. Includes only receipts, withdrawals, machine fills and returns tied to this bag."
+          : "Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."}
         action={canCreateCorrections ? <PrimaryButton href="/inventory/movements/new">New storage adjustment</PrimaryButton> : undefined}
       />
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
       {params.corrected ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Correction created for movement {params.corrected}.</div> : null}
 
+      {bagId ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
+          <span>Filtered to one operator bag · {bagId.slice(0, 8)}</span>
+          <SecondaryButton href="/inventory?view=operator-bags">Back to operator bags</SecondaryButton>
+        </div>
+      ) : null}
       <section className="surface-card mb-6 space-y-4">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
           <input type="hidden" name="pageSize" value={pageSize} />
+          {bagId ? <input type="hidden" name="bag_id" value={bagId} /> : null}
           <input name="q" defaultValue={params.q ?? ""} placeholder="Search product name, SKU, notes..." className="field-input md:col-span-2" />
           <select name="product_id" defaultValue={params.product_id ?? ""} className="field-input">
             <option value="">All products</option>
