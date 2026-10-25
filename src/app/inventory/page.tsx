@@ -140,6 +140,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       client={inventoryReadClient} locale={locale}
       q={q} page={page} pageSize={pageSize} searchParams={params}
       canSeeMovementHistory={canAccessPath(userContext, "/inventory/movements")}
+      canReviewHealth={canAccessPath(userContext, "/operations-health")}
     />;
   }
 
