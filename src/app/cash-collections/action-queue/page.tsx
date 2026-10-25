@@ -71,7 +71,7 @@ export default async function CashActionQueuePage(){
   overdue:actionable.filter((r:any)=>Number(r.age_days??0)>=3),
  };
  const visibleCards=[
-  ["Owner variance decisions",buckets.variance.length,"#variance"],
+  ["Variance and source reviews",buckets.variance.length,"#variance"],
   ["Waiting for physical count",buckets.count.length,"#count"],
   ["Waiting for storage receipt",buckets.receive.length,"#receive"],
   ["Waiting for VMS comparison",buckets.vms.length,"#vms"],
@@ -112,6 +112,6 @@ export default async function CashActionQueuePage(){
     </tr>})}</DataTable>}
   </section>
 
-  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance decisions come first</strong><p className="mt-1 text-sm text-rose-800">Check the expected-cash source first. Historical variance flags may lack a dated XY comparison and are not proof of loss. Do not classify current records as legacy without reviewing their evidence.</p></section>:null}
+  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance and source checks</strong><p className="mt-1 text-sm text-rose-800">Check the expected-cash source first. Historical variance flags may lack a dated XY comparison and are not proof of loss. Do not classify current records as legacy without reviewing their evidence.</p></section>:null}
  </div>;
 }
