@@ -38,16 +38,16 @@ begin
       using errcode = '22023';
   end if;
 
-  if jsonb_typeof(p_metrics->'fetched_rows') <> 'number'
-    or jsonb_typeof(p_metrics->'inserted_rows') <> 'number'
-    or jsonb_typeof(p_metrics->'duplicate_rows') <> 'number'
-    or jsonb_typeof(p_metrics->'rejected_unverified_rows') <> 'number'
-    or jsonb_typeof(p_metrics->'rows_needing_review') <> 'number'
-    or jsonb_typeof(p_metrics->'mapped_machine_rows') <> 'number'
-    or jsonb_typeof(p_metrics->'pages_read') <> 'number'
-    or p_metrics->>'pagination_complete' <> 'true'
-    or jsonb_typeof(p_metrics->'errors') <> 'array'
-    or jsonb_typeof(p_metrics->'parse_diagnostics') <> 'object' then
+  if coalesce(jsonb_typeof(p_metrics->'fetched_rows'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'inserted_rows'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'duplicate_rows'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'rejected_unverified_rows'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'rows_needing_review'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'mapped_machine_rows'),'missing') <> 'number'
+    or coalesce(jsonb_typeof(p_metrics->'pages_read'),'missing') <> 'number'
+    or p_metrics->>'pagination_complete' is distinct from 'true'
+    or coalesce(jsonb_typeof(p_metrics->'errors'),'missing') <> 'array'
+    or coalesce(jsonb_typeof(p_metrics->'parse_diagnostics'),'missing') <> 'object' then
     raise exception 'Incomplete XY pagination or source metrics: refusing to publish'
       using errcode = '23514';
   end if;
@@ -76,9 +76,9 @@ begin
   if not found or v_batch.status <> 'draft'
     or coalesce(v_batch.is_active,false)
     or v_batch.deleted_at is not null
-    or v_batch.source_type <> 'api'
-    or v_batch.report_type <> 'vms_order_details_weekly'
-    or v_batch.source_usage->>'source_type' <> 'xy_live_sales_api' then
+    or v_batch.source_type is distinct from 'api'
+    or v_batch.report_type is distinct from 'vms_order_details_weekly'
+    or v_batch.source_usage->>'source_type' is distinct from 'xy_live_sales_api' then
     raise exception 'This is not an eligible unpublished XY live sales draft'
       using errcode = '23514';
   end if;
