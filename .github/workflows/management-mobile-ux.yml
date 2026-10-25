@@ -16,6 +16,7 @@ on:
       - "src/app/inventory/OperatorBagStockView.tsx"
       - "src/app/inventory/movements/page.tsx"
       - "src/lib/operator-bag-stock.ts"
+      - "src/lib/inventory-movement-filter-groups.ts"
       - "src/lib/product-quantity.ts"
       - "src/lib/storage-inventory-model.ts"
       - "src/lib/storage-inventory-data.ts"
@@ -49,7 +50,7 @@ jobs:
       - name: Lint new mobile navigation and shell
         run: npx eslint src/components/RoleMobileNavigation.tsx src/lib/role-mobile-navigation.ts src/components/ShellChrome.tsx src/components/Sidebar.tsx src/components/ModuleTabs.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts src/app/operator/routes/page.tsx
       - name: Lint physical ledger model and reader
-        run: npx eslint src/lib/storage-inventory-model.ts src/lib/storage-inventory-data.ts src/lib/operator-bag-stock.ts src/lib/product-quantity.ts src/app/inventory/OperatorBagStockView.tsx
+        run: npx eslint src/lib/storage-inventory-model.ts src/lib/storage-inventory-data.ts src/lib/operator-bag-stock.ts src/lib/inventory-movement-filter-groups.ts src/lib/product-quantity.ts src/app/inventory/OperatorBagStockView.tsx
       - name: Lint Storage layout (legacy any typing deferred)
         run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Lint full Movement Log (legacy any typing deferred)
