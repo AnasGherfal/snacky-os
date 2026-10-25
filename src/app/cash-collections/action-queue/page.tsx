@@ -4,6 +4,7 @@ import {DataTable,EmptyState,PageHeader,SecondaryButton,StatusBadge} from "@/com
 import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from "@/lib/auth";
 import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
+import {verifiedCashExpectation} from "@/lib/cash-custody";
 
 export const dynamic="force-dynamic";
 
@@ -17,7 +18,9 @@ function ageDays(value:unknown){
  return Math.max(0,Math.floor((Date.now()-t)/86400000));
 }
 function actionFor(row:any){
- if(row.reconciliation_status==="variance_review")return {key:"variance",label:"Owner variance decision",tone:"rose"};
+ if(row.reconciliation_status==="variance_review")return verifiedCashExpectation(row)===null
+  ? {key:"variance",label:"Verify expected cash before owner decision",tone:"amber"}
+  : {key:"variance",label:"Owner variance decision",tone:"rose"};
  if(row.custody_status==="removed")return {key:"receive",label:"Receive into storage",tone:"amber"};
  if(row.custody_status==="in_storage")return {key:"count",label:"Count stored cash",tone:"amber"};
  if(row.custody_status==="counted"&&row.reconciliation_status==="pending")return {key:"vms",label:"Compare with VMS",tone:"sky"};
@@ -32,8 +35,8 @@ export default async function CashActionQueuePage(){
  if(!db)return <EmptyState title="Cash Action Queue unavailable" body="The signed-in database session is unavailable."/>;
 
  const cutoff=new Date(Date.now()-30*86400000).toISOString();
- const {data,error}=await db.from("cash_collections")
-  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))")
+ const {data,error,count}=await db.from("cash_collections")
+  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
   .is("voided_at",null)
   .gte("collected_at",cutoff)
   .or("custody_status.in.(removed,in_storage,counted),reconciliation_status.eq.variance_review")
@@ -45,6 +48,7 @@ export default async function CashActionQueuePage(){
   return <EmptyState title="Cash Action Queue unavailable" body="Snacky OS could not load current cash controls."/>;
  }
 
+ const incompleteRead = count === null || count === undefined || count !== (data??[]).length;
  const rows=(data??[]).map((row:any)=>({...row,action:actionFor(row),age_days:ageDays(row.collected_at)}));
  const actionable=rows.filter((row:any)=>["receive","count","vms","variance"].includes(row.action.key));
  const buckets={
@@ -65,6 +69,8 @@ export default async function CashActionQueuePage(){
  return <div className="space-y-6">
   <PageHeader title="Cash Action Queue" subtitle="Current cash only. Legacy backlog stays in Data Health and does not pollute today’s operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
 
+  {incompleteRead?<div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some current cash records were not loaded. The cards below describe the loaded rows only; do not treat their counts as complete. Review the full cash custody list.</div>:null}
+
   {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No current cash actions need attention.</div>}
 
   <section className="surface-card" id="all-current">
@@ -78,12 +84,12 @@ export default async function CashActionQueuePage(){
       <td>{row.operator?.full_name??"-"}</td>
       <td><div className="flex flex-wrap gap-1"><StatusBadge status={row.custody_status}/><StatusBadge status={row.reconciliation_status}/></div></td>
       <td>{money(row.actual_cash_collected)}</td>
-      <td>{money(row.vms_expected_cash)}</td>
-      <td className={Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{row.variance===null||row.variance===undefined?"-":money(row.variance)}</td>
+      <td>{verifiedCashExpectation(row)===null?"Unverified":money(verifiedCashExpectation(row))}</td>
+      <td className={verifiedCashExpectation(row)!==null&&Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{verifiedCashExpectation(row)===null?"—":row.variance===null||row.variance===undefined?"—":money(row.variance)}</td>
       <td><div className="space-y-2"><div className="text-sm font-semibold">{row.action.label}</div><Link href={"/cash-collections/"+row.id} className="btn-primary inline-flex px-3 py-2">Open & complete</Link></div></td>
     </tr>})}</DataTable>}
   </section>
 
-  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance decisions come first</strong><p className="mt-1 text-sm text-rose-800">These already have a VMS comparison and need an owner decision. Do not classify them as legacy while they are current.</p></section>:null}
+  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance decisions come first</strong><p className="mt-1 text-sm text-rose-800">Check the expected-cash source first. Historical variance flags may lack a dated XY comparison and are not proof of loss. Do not classify current records as legacy without reviewing their evidence.</p></section>:null}
  </div>;
 }
