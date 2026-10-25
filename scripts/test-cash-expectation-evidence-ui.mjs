@@ -20,7 +20,7 @@ test("cash detail does not label a placeholder expected zero as lost money", () 
   assert.ok(detail.includes("verifiedMissingCashAmount(row)"));
   assert.ok(detail.includes("Missing a dated source for the expected amount"));
   assert.ok(detail.includes('tr("Not verified", "غير موثق")'));
-  assert.ok(detail.includes("This historical variance flag has no verified dated expected-cash source"));
+  assert.ok(detail.includes("This historical variance flag has no dated expected-cash source"));
 });
 
 test("action queue signals unverified expectations and incomplete reads", () => {
@@ -38,4 +38,17 @@ test("verification screens never adjust cash, ledger, or XY source records", () 
     assert.doesNotMatch(file, /\.from\("cash_collections"\)\s*\.insert\(/);
     assert.doesNotMatch(file, /\.from\("cash_collections"\)\s*\.delete\(/);
   }
+});
+
+test("owner variance approval requires a proven expected source in both screen and server action", () => {
+  const actions = readFileSync("src/lib/cash-actions.ts", "utf8");
+  assert.ok(detail.includes('canResolve && verifiedExpectedCash !== null'));
+  assert.ok(detail.includes('canResolve && verifiedExpectedCash === null'));
+  assert.ok(detail.includes('approving a shortage here is disabled'));
+  const resolveAction = actions.slice(actions.indexOf('export async function resolveCashVariance('),
+    actions.indexOf('export async function voidCashCollection('));
+  assert.ok(resolveAction.includes('select("vms_expected_cash, expected_source, expected_calculated_at")'));
+  assert.ok(resolveAction.includes('verifiedCashExpectation(expectationEvidence) === null'));
+  assert.ok(resolveAction.includes('Cash expected-source evidence is missing'));
+  assert.ok(resolveAction.indexOf('verifiedCashExpectation(expectationEvidence)') < resolveAction.indexOf('supabase.rpc("resolve_cash_variance"'));
 });
