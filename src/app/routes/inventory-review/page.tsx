@@ -37,6 +37,7 @@ type ReviewSearchParams = {
   view?: string;
   route?: string;
   page?: string;
+  age?: string;
   success?: string;
   error?: string;
 };
@@ -72,10 +73,11 @@ function formatDateTime(value: unknown, locale: "en" | "ar") {
   }).format(date);
 }
 
-function reviewHref(view: "open" | "history", routeId?: string | null, page = 1) {
+function reviewHref(view: "open" | "history", routeId?: string | null, page = 1, age: "all" | "7d" | "30d" = "all") {
   const params = new URLSearchParams();
   if (view === "history") params.set("view", view);
   if (routeId) params.set("route", routeId);
+  if (age !== "all") params.set("age", age);
   if (page > 1) params.set("page", String(page));
   const query = params.toString();
   return query ? `${REVIEW_PATH}?${query}` : REVIEW_PATH;
@@ -236,10 +238,13 @@ export default async function RouteInventoryReviewPage({
   const params = await searchParams;
   const view: "open" | "history" = params.view === "history" ? "history" : "open";
   const routeFilter = UUID_PATTERN.test(String(params.route ?? "")) ? String(params.route) : null;
+  const rawAge = String(params.age ?? "all");
+  const ageFilter: "all" | "7d" | "30d" = rawAge === "7d" || rawAge === "30d" ? rawAge : "all";
+  const ageCutoff = ageFilter === "all" ? null : new Date(Date.now() - (ageFilter === "7d" ? 7 : 30) * 86400000).toISOString();
   const pageParam = String(params.page ?? "1");
   const page = /^[1-9][0-9]{0,3}$/.test(pageParam) ? Number(pageParam) : 1;
   const perPage = 100;
-  const returnTo = reviewHref(view, routeFilter, page);
+  const returnTo = reviewHref(view, routeFilter, page, ageFilter);
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return <ErrorState title={tr("Inventory review unavailable", "مراجعة المخزون غير متاحة")} body={tr("Supabase is not configured.", "لم يتم إعداد Supabase.")} />;
@@ -255,6 +260,7 @@ export default async function RouteInventoryReviewPage({
     .order("id", { ascending: true })
     .range((page - 1) * perPage, page * perPage - 1);
   if (routeFilter) discrepancyQuery = discrepancyQuery.eq("route_id", routeFilter);
+  if (ageCutoff) discrepancyQuery = discrepancyQuery.lte("detected_at", ageCutoff);
   const discrepancyResult = await discrepancyQuery;
 
   if (discrepancyResult.error) {
@@ -287,7 +293,7 @@ export default async function RouteInventoryReviewPage({
   const verifiedTotal = typeof discrepancyResult.count === "number" ? discrepancyResult.count : null;
   const hasMore = verifiedTotal === null ? rows.length === perPage : page * perPage < verifiedTotal;
   const lastPage = verifiedTotal === null ? null : Math.max(1, Math.ceil(verifiedTotal / perPage));
-  if (lastPage !== null && page > lastPage) redirect(reviewHref(view, routeFilter, lastPage));
+  if (lastPage !== null && page > lastPage) redirect(reviewHref(view, routeFilter, lastPage, ageFilter));
   const routeIds = uniqueIds(rows.map((row) => row.route_id));
   const stopIds = uniqueIds(rows.map((row) => row.route_stop_id));
   const machineIds = uniqueIds(rows.map((row) => row.machine_id));
@@ -355,8 +361,23 @@ export default async function RouteInventoryReviewPage({
       ) : null}
 
       <div className="mb-5 flex flex-wrap gap-2">
-        <Link href={reviewHref("open", routeFilter)} aria-current={view === "open" ? "page" : undefined} className={view === "open" ? "btn-primary" : "btn-secondary"}>{tr("Open review", "المراجعات المفتوحة")}</Link>
+        <Link href={reviewHref("open", routeFilter, 1, ageFilter)} aria-current={view === "open" ? "page" : undefined} className={view === "open" ? "btn-primary" : "btn-secondary"}>{tr("Open review", "المراجعات المفتوحة")}</Link>
         <Link href={reviewHref("history", routeFilter)} aria-current={view === "history" ? "page" : undefined} className={view === "history" ? "btn-primary" : "btn-secondary"}>{tr("History", "السجل")}</Link>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2" aria-label={tr("Exception age filters", "تصنيف عمر فروق المخزون")}>
+        <span className="text-sm text-slate-600">{tr("Age of recorded discrepancy", "عمر فرق المخزون المسجل")}:</span>
+        {([
+          { key: "all", en: "All cases", ar: "الكل" },
+          { key: "7d", en: "Older than 7 days", ar: "أقدم من 7 أيام" },
+          { key: "30d", en: "Older than 30 days", ar: "أقدم من 30 يوماً" },
+        ] as const).map(item => (
+          <Link key={item.key} href={reviewHref(view, routeFilter, 1, item.key)}
+            aria-current={ageFilter === item.key ? "page" : undefined}
+            className={ageFilter === item.key ? "btn-primary" : "btn-secondary"}>
+            {tr(item.en, item.ar)}
+          </Link>
+        ))}
       </div>
 
       <section className="mb-6 grid gap-3 sm:grid-cols-3">
@@ -435,8 +456,8 @@ export default async function RouteInventoryReviewPage({
           <nav aria-label={tr("Inventory review pages", "صفحات مراجعة المخزون")} className="mt-5 flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-slate-600">{tr("Page", "الصفحة")} {page} · {tr("Showing", "عرض")} {rows.length} {tr("cases", "حالات")}{verifiedTotal === null ? ` · ${tr("Total count unverified", "الإجمالي غير مؤكد")}` : ` / ${verifiedTotal}`}</div>
             <div className="flex gap-2">
-              {page > 1 ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page - 1)}>{tr("Previous 100", "الـ100 السابقة")}</Link> : null}
-              {hasMore ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page + 1)}>{tr("Next 100", "الـ100 التالية")}</Link> : null}
+              {page > 1 ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page - 1, ageFilter)}>{tr("Previous 100", "الـ100 السابقة")}</Link> : null}
+              {hasMore ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page + 1, ageFilter)}>{tr("Next 100", "الـ100 التالية")}</Link> : null}
             </div>
           </nav>
         </>
