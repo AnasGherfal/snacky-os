@@ -493,12 +493,24 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </div>
       ) : null}
 
-      {liveSalesConfig.enabled && !liveSalesConfig.ready ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-          Live sales sync is enabled but not ready: {liveSalesConfig.missing.join(", ")}.
-          The XY Trade details endpoint/request is already built in. Add a current server-only XY dashboard Authorization token, then enable live sales.
+      {!liveSalesConfig.ready ? (
+        <div role="status" className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          <strong>XY transaction-level live sales is not ready</strong>
+          <p className="mt-1">
+            The verified XY Trade-details integration is already built, but its live-sales setting or server-only authentication is missing.
+            {liveSalesConfig.missing.length ? ` Required configuration: ${liveSalesConfig.missing.join(", ")}.` : ""}
+            Configure the XY web session through approved server environment settings only—never paste tokens into a browser or client-side configuration.
+          </p>
+          <p className="mt-2">Stock synchronization and monthly profit imports do not supply the individual paid transactions needed for a cash-removal interval. A newly configured live sync does not backfill older months automatically.</p>
+          <a href="/cash-collections/action-queue" className="mt-2 inline-block font-semibold underline underline-offset-2">Review affected cash reconciliations</a>
         </div>
-      ) : null}
+      ) : (
+        <div role="status" className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">
+          <strong>XY live sales connection configured</strong>
+          <p className="mt-1">Configuration is present, not proof that XY authentication or transaction completeness has been verified. Use the existing Sync Live Sales control, then inspect the returned batch and raw transaction dates.</p>
+          <p className="mt-1">Current rolling request: last {liveSalesConfig.lookbackHours} hours, up to {liveSalesConfig.maxPages} pages × {liveSalesConfig.pageSize} rows. Older gaps require a separately verified historical export/backfill; this rolling sync does not reconstruct them.</p>
+        </div>
+      )}
 
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-start justify-between gap-4">
@@ -524,7 +536,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Official stock calls use the signed XY API. Live sales uses XY's verified Trade details endpoint (queryJqjymx) with a server-only dashboard session token and deduplicates into the same canonical VMS transaction table used by imported files.
+          Official stock calls use the signed XY API. Live sales uses XY's Trade details endpoint (queryJqjymx) with a server-only dashboard session token and deduplicates into the canonical VMS transaction table. Completing this rolling import is not verification of historical cash periods; check payment types, mapping, sale dates, refunds, and reported pagination coverage before reconciling money.
         </p>
       </section>
 
