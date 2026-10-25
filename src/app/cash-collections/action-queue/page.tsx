@@ -49,6 +49,18 @@ export default async function CashActionQueuePage(){
  }
 
  const incompleteRead = count === null || count === undefined || count !== (data??[]).length;
+ // Only checks transaction-level successful sales used by cash reconciliation.
+ // Other VMS/XY dashboards may use different sources and remain unaffected.
+ const [recentPaymentTime, recentDeliveryTime] = await Promise.all([
+  db.from("vms_transactions_raw").select("id")
+   .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
+   .gte("payment_time",cutoff).limit(1),
+  db.from("vms_transactions_raw").select("id")
+   .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
+   .gte("delivery_time",cutoff).limit(1),
+ ]);
+ const rawCashSourceFreshness = recentPaymentTime.error || recentDeliveryTime.error ? "unverified"
+  : (recentPaymentTime.data?.length || recentDeliveryTime.data?.length) ? "recent" : "stale";
  const rows=(data??[]).map((row:any)=>({...row,action:actionFor(row),age_days:ageDays(row.collected_at)}));
  const actionable=rows.filter((row:any)=>["receive","count","vms","variance"].includes(row.action.key));
  const buckets={
@@ -68,6 +80,16 @@ export default async function CashActionQueuePage(){
 
  return <div className="space-y-6">
   <PageHeader title="Cash Action Queue" subtitle="Current cash only. Legacy backlog stays in Data Health and does not pollute today’s operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
+
+  {rawCashSourceFreshness === "stale" && buckets.vms.length ? (
+   <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <strong>No recent raw sales for automatic cash reconciliation</strong>
+    <p className="mt-1">No successful mapped raw VMS transaction was found in the last 30 days. This does not mean machines had no sales: live XY and other imports may use different sources. Verify the transaction-level export, machine mapping, and dates before relying on an automatic expectation. A documented total for the whole bag is the existing fallback.</p>
+    <Link className="mt-2 inline-block underline" href="/vms-import">Review VMS transaction imports</Link>
+   </div>
+  ) : rawCashSourceFreshness === "unverified" && buckets.vms.length ? (
+   <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Transaction-level VMS freshness could not be checked. Do not treat the raw source as confirmed current.</div>
+  ) : null}
 
   {incompleteRead?<div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some current cash records were not loaded. The cards below describe the loaded rows only; do not treat their counts as complete. Review the full cash custody list.</div>:null}
 
