@@ -72,6 +72,7 @@ test("operator bag custody is on-demand and does not slow the standard Stock pag
   assert.match(stock, /canSeeMovementHistory=\{canAccessPath\(userContext, "\/inventory\/movements"\)\}/);
   assert.match(bag, /canSeeMovementHistory \? /);
   assert.match(bag, /product_id=\$\{encodeURIComponent\(r\.productId\)\}/);
+  assert.match(bag, /bag_id=\$\{encodeURIComponent\(r\.operatorId\)\}/);
   assert.match(bag, /\.eq\("location_type", "operator_bag"\)/);
   assert.match(bag, /count: "exact"/);
   assert.match(bag, /normalizeOperatorBagBalances\(balances\.data/);
@@ -89,4 +90,16 @@ test("operator bag custody is on-demand and does not slow the standard Stock pag
 test("custody view never creates or adjusts warehouse records", () => {
   const bag = readFileSync("src/app/inventory/OperatorBagStockView.tsx", "utf8");
   assert.doesNotMatch(bag, /\.rpc\(|\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+});
+
+test("discrepancy drilldown filters to one validated operator bag and preserves search", () => {
+  const audit = readFileSync("src/app/inventory/movements/page.tsx", "utf8");
+  assert.match(audit, /bag_id\?: string/);
+  assert.match(audit, /\^\[0-9a-f\]\{8\}/);
+  assert.match(audit, /from_entity_type\.eq\.operator_bag,from_entity_id\.eq/);
+  assert.match(audit, /to_entity_type\.eq\.operator_bag,to_entity_id\.eq/);
+  assert.match(audit, /name="bag_id" value=\{bagId\}/);
+  assert.match(audit, /Invalid operator bag filter/);
+  assert.match(audit, /Back to operator bags/);
+  assert.match(audit, /\.eq\("product_id", params\.product_id\)/);
 });
