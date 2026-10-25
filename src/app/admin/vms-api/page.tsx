@@ -96,11 +96,13 @@ function webConnectionStatus(config: ReturnType<typeof getXyWebApiConfig>) {
 function liveSalesConnectionStatus(
   config: ReturnType<typeof getXyLiveSalesConfig>,
   latestSaleAt: string | null,
+  sourceReadVerified: boolean,
 ) {
   if (!config.enabled) return { status: "disabled", label: "Disabled" };
   if (!config.ready) return { status: "needs_configuration", label: "Needs configuration" };
+  if (!sourceReadVerified) return { status: "needs_review", label: "Source read unverified" };
   const timestamp = Date.parse(String(latestSaleAt ?? ""));
-  if (!Number.isFinite(timestamp)) return { status: "needs_review", label: "No live sales yet" };
+  if (!Number.isFinite(timestamp)) return { status: "needs_review", label: "No eligible active sales" };
   const ageMs = Date.now() - timestamp;
   if (ageMs <= 48 * 60 * 60 * 1000) return { status: "completed", label: "Fresh" };
   return { status: "needs_review", label: "Stale" };
@@ -249,7 +251,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   }
 
   const liveSalesHealth = await latestXyLiveSalesHealth();
-  const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt);
+  const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt, liveSalesHealth.sourceReadVerified);
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
   const pagedRuns = (pagedRunsResult.data ?? []) as XySyncRunRow[];
   const lastCompleted = runs.find((run) => run.provider === "xy" && !String(run.sync_type ?? "").startsWith("test_") && run.completed_at);
@@ -346,9 +348,10 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           </div>
           <div className="text-sm font-semibold text-slate-900">{formatDate(liveSalesHealth.latestSaleAt)}</div>
           <div className="mt-3 space-y-1 text-xs text-slate-600">
-            <div>Latest sale received</div>
+            <div>Latest eligible transaction from a non-deleted imported VMS batch</div>
             <div>Last sync: {formatDate(liveSalesHealth.latestRunAt)}</div>
             <div>Last inserted: {liveSalesHealth.latestInsertedRows}</div>
+            <div>Source check: {liveSalesHealth.sourceReadVerified ? "Verified read" : "Unavailable — not zero"}</div>
           </div>
         </section>
 
@@ -501,14 +504,14 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             {liveSalesConfig.missing.length ? ` Required configuration: ${liveSalesConfig.missing.join(", ")}.` : ""}
             Configure the XY web session through approved server environment settings only—never paste tokens into a browser or client-side configuration.
           </p>
-          <p className="mt-2">Stock synchronization and monthly profit imports do not supply the individual paid transactions needed for a cash-removal interval. A newly configured live sync does not backfill older months automatically.</p>
+          <p className="mt-2">Stock synchronization and monthly profit imports do not supply the individual paid transactions needed for a cash-removal interval. A newly configured live sync does not backfill older months automatically. Archived or deleted transaction batches are excluded from cash reconciliation even when their raw rows still exist.</p>
           <a href="/cash-collections/action-queue" className="mt-2 inline-block font-semibold underline underline-offset-2">Review affected cash reconciliations</a>
         </div>
       ) : (
         <div role="status" className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">
           <strong>XY live sales connection configured</strong>
           <p className="mt-1">Configuration is present, not proof that XY authentication or transaction completeness has been verified. Use the existing Sync Live Sales control, then inspect the returned batch and raw transaction dates.</p>
-          <p className="mt-1">Current rolling request: last {liveSalesConfig.lookbackHours} hours, up to {liveSalesConfig.maxPages} pages × {liveSalesConfig.pageSize} rows. Older gaps require a separately verified historical export/backfill; this rolling sync does not reconstruct them.</p>
+          <p className="mt-1">Current rolling request: last {liveSalesConfig.lookbackHours} hours, up to {liveSalesConfig.maxPages} pages × {liveSalesConfig.pageSize} rows. Older gaps require a separately verified historical export/backfill; this rolling sync does not reconstruct them. Deleted import batches remain excluded until their provenance and original deletion reason are independently reviewed.</p>
         </div>
       )}
 
