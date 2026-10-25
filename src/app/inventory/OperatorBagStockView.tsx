@@ -127,7 +127,7 @@ export async function OperatorBagStockView({
               <span className="text-xs text-rose-800">{r.operatorName} · {r.quantity} {tr("units", "وحدة")}</span>
             </div>
             {canSeeMovementHistory ? (
-              <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+              <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}&bag_id=${encodeURIComponent(r.operatorId)}`}
                 className="text-xs font-semibold text-rose-900 underline underline-offset-2">
                 {tr("Review ledger", "مراجعة السجل")}
               </Link>
@@ -169,7 +169,7 @@ export async function OperatorBagStockView({
           <MobileField label={tr("SKU", "الرمز")}>{r.sku ?? "—"}</MobileField>
         </div>
         {canSeeMovementHistory ? (
-          <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+          <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}&bag_id=${encodeURIComponent(r.operatorId)}`}
             className="mt-3 inline-block text-sm font-semibold text-emerald-800 underline underline-offset-2">
             {tr("Inspect movement history", "مراجعة حركات المنتج")}
           </Link>
@@ -182,7 +182,7 @@ export async function OperatorBagStockView({
         <td>{r.operatorName}</td><td>
           <div>{r.productName}</div>
           {canSeeMovementHistory ? <Link
-            href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+            href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}&bag_id=${encodeURIComponent(r.operatorId)}`}
             className="text-xs font-semibold text-emerald-800 underline underline-offset-2">
             {tr("Movement history", "سجل الحركات")}
           </Link> : null}
