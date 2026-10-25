@@ -238,11 +238,16 @@ test("only active non-deleted imported batch states can supply cash reconciliati
 
 test("live sales importer refuses quarantined duplicate hashes before any upsert", () => {
   assert.match(syncSource, /async function assertNoQuarantinedSaleHashCollisions\(/);
-  assert.match(syncSource, /\.select\("duplicate_hash, batch:vms_import_batches\(status, deleted_at\)"/);
+  assert.match(syncSource, /\.select\("duplicate_hash, transaction_status, batch:vms_import_batches\(status, deleted_at\)"/);
   assert.match(syncSource, /\.in\("duplicate_hash", chunk\)/);
   assert.match(syncSource, /count !== \(data\?\.length \?\? 0\)/);
   assert.match(syncSource, /!isEligibleCashSourceBatch\(batch\)/);
   assert.match(syncSource, /Import halted before raw writes/);
+  assert.match(syncSource, /statusByHash\.get\(hash\)/);
+  assert.match(syncSource, /prior !== status/);
+  assert.match(syncSource, /const statusConflicts = \(data \?\? \[\]\)\.filter/);
+  assert.match(syncSource, /refund or failed-vend update needs audited reconciliation/i);
+
   assert.ok(
     syncSource.indexOf("await assertNoQuarantinedSaleHashCollisions(supabase, dbRows)") <
     syncSource.indexOf("await saveRows(supabase, dbRows)"),
