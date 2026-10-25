@@ -251,7 +251,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     );
   }
 
-  const [eligibleCashRawResult, deletedCashRawResult] = await Promise.all([
+  const [eligibleCashRawResult, deletedCashRawResult, quarantinedCashRawResult, orphanCashRawResult] = await Promise.all([
     supabase.from("vms_transactions_raw")
       .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
       .in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
@@ -259,11 +259,21 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     supabase.from("vms_transactions_raw")
       .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
       .eq("batch.status", "deleted"),
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .in("batch.status", ["draft", "failed", "cancelled", "canceled", "previewed", "disabled"]),
+    supabase.from("vms_transactions_raw")
+      .select("id", { count: "exact", head: true })
+      .is("import_batch_id", null),
   ]);
   const eligibleCashRawRows = !eligibleCashRawResult.error && typeof eligibleCashRawResult.count === "number"
     ? eligibleCashRawResult.count : null;
   const deletedCashRawRows = !deletedCashRawResult.error && typeof deletedCashRawResult.count === "number"
     ? deletedCashRawResult.count : null;
+  const quarantinedCashRawRows = !quarantinedCashRawResult.error && typeof quarantinedCashRawResult.count === "number"
+    ? quarantinedCashRawResult.count : null;
+  const orphanCashRawRows = !orphanCashRawResult.error && typeof orphanCashRawResult.count === "number"
+    ? orphanCashRawResult.count : null;
   const liveSalesHealth = await latestXyLiveSalesHealth();
   const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt, liveSalesHealth.sourceReadVerified);
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
@@ -406,11 +416,29 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             <div className="mt-1 text-xs text-slate-600">Retained for audit, excluded from cash calculations</div>
           </div>
         </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-xs text-amber-900">Raw rows in unfinished or failed batches</div>
+            <strong className="mt-1 block text-2xl">{quarantinedCashRawRows === null ? "Unverified" : quarantinedCashRawRows.toLocaleString("en-US")}</strong>
+            <p className="mt-1 text-xs text-amber-900">Draft, failed, cancelled, previewed or disabled source batches. These cannot be trusted as cash sales.</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-xs text-amber-900">Raw rows missing a source batch</div>
+            <strong className="mt-1 block text-2xl">{orphanCashRawRows === null ? "Unverified" : orphanCashRawRows.toLocaleString("en-US")}</strong>
+            <p className="mt-1 text-xs text-amber-900">Rows without import provenance must never be counted as verified sales.</p>
+          </div>
+        </div>
+        {(quarantinedCashRawRows !== null && quarantinedCashRawRows > 0)
+          || (orphanCashRawRows !== null && orphanCashRawRows > 0) ? (
+          <div role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            Some raw transactions are retained in incomplete or unidentified imports. Investigate their batch history and original report before retrying; never reassign hashes or activate incomplete rows automatically.
+          </div>
+        ) : null}
         {eligibleCashRawRows === 0 && deletedCashRawRows !== null && deletedCashRawRows > 0 ? (
           <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
             No raw transactions currently qualify as a cash source, although deleted imports retain history. Do not reactivate or reassign deleted records automatically; review the original deletion and import evidence first.
           </div>
-        ) : eligibleCashRawRows === null || deletedCashRawRows === null ? (
+        ) : eligibleCashRawRows === null || deletedCashRawRows === null || quarantinedCashRawRows === null || orphanCashRawRows === null ? (
           <p role="alert" className="mt-4 text-sm text-amber-900">Transaction batch eligibility could not be verified. Do not interpret missing counts as zero.</p>
         ) : null}
         <div className="mt-3 flex flex-wrap gap-4 text-sm">
