@@ -42,20 +42,51 @@ export function missingCashAmount(actualCash: number | null | undefined, expecte
   return Math.round(Math.max(Number(expectedCash) - Number(actualCash), 0) * 100) / 100;
 }
 
-export function combinedCashPosition(rows: Array<{
-  actual_cash_collected?: number | string | null;
+export type CashExpectationEvidence = {
   vms_expected_cash?: number | string | null;
+  expected_source?: string | null;
+  expected_calculated_at?: string | null;
+};
+
+/**
+ * A numeric expected amount alone does not establish an XY/VMS comparison.
+ * In particular, historical zero amounts without provenance are unknown.
+ * Do not backfill or alter these financial records implicitly.
+ */
+export function verifiedCashExpectation(row: CashExpectationEvidence): number | null {
+  const source = typeof row.expected_source === "string" ? row.expected_source.trim() : "";
+  const timestamp = typeof row.expected_calculated_at === "string" ? row.expected_calculated_at.trim() : "";
+  if (!source || !timestamp || !Number.isFinite(Date.parse(timestamp))) return null;
+  const raw = row.vms_expected_cash;
+  if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+export function verifiedMissingCashAmount(row: CashExpectationEvidence & {
+  actual_cash_collected?: number | string | null;
+}): number | null {
+  const expected = verifiedCashExpectation(row);
+  const raw = row.actual_cash_collected;
+  if (expected === null || raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) return null;
+  const actual = Number(raw);
+  return Number.isFinite(actual) && actual >= 0 ? missingCashAmount(actual, expected) : null;
+}
+
+export function combinedCashPosition(rows: Array<CashExpectationEvidence & {
+  actual_cash_collected?: number | string | null;
 }>) {
   let actualCash = 0;
   let expectedCash = 0;
   let batchCount = 0;
 
   for (const row of rows) {
-    if (row.actual_cash_collected === null || row.actual_cash_collected === undefined
-      || row.vms_expected_cash === null || row.vms_expected_cash === undefined) continue;
-    const actual = Number(row.actual_cash_collected);
-    const expected = Number(row.vms_expected_cash);
-    if (!Number.isFinite(actual) || !Number.isFinite(expected)) continue;
+    const expected = verifiedCashExpectation(row);
+    const raw = row.actual_cash_collected;
+    if (expected === null || raw === null || raw === undefined
+      || (typeof raw === "string" && raw.trim() === "")) continue;
+    const actual = Number(raw);
+    if (!Number.isFinite(actual) || actual < 0) continue;
     actualCash += actual;
     expectedCash += expected;
     batchCount += 1;
