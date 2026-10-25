@@ -24,3 +24,11 @@ test("the Data Health summary remains read-only and does not adjust historical s
   assert.doesNotMatch(page, /db\.from\("route_inventory_discrepancies"\)\s*\.update\(/);
   assert.doesNotMatch(page, /db\.from\("route_inventory_discrepancies"\)\s*\.delete\(/);
 });
+
+test("cash records with no verified expected source are flagged without loss assumptions", () => {
+  assert.ok(page.includes('in("reconciliation_status",["pending","variance_review"]).is("expected_source",null)'));
+  assert.ok(page.includes('cashSourceGapCount !== null'));
+  assert.ok(page.includes('["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"]'));
+  assert.ok(page.includes("Missing expected-source information does not establish a cash shortage."));
+  assert.ok(page.includes("Cash expected-source coverage could not be verified."));
+});
