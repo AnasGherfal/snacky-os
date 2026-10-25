@@ -5,6 +5,7 @@ import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
+import { ROUTE_INVENTORY_OPEN_STATUSES } from "@/lib/route-inventory-discrepancies";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +22,12 @@ export default async function OperationsHealthPage() {
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
-  const [workspaceResult,machinesResult,locationsResult,currentCashResult]=await Promise.all([
+  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
+    db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
   ]);
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
@@ -42,8 +44,11 @@ export default async function OperationsHealthPage() {
   const missingMachineLocation=machines.filter((m:any)=>!m.location_id);
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
   const currentCashCount=currentCashResult.count??0;
+  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
+    ? routeDiscrepanciesResult.count : null;
 
   const cards=[
+    ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
     ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
     ["Active sites missing distance",missingDistance.length,"/machines/setup"],
     ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
@@ -55,6 +60,13 @@ export default async function OperationsHealthPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
+
+    {openRouteDiscrepancyCount === null ? (
+      <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        Route inventory discrepancy totals could not be verified. They have not been treated as zero.
+        {" "}<Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>.
+      </div>
+    ) : null}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No active data-health exceptions.</div>}
