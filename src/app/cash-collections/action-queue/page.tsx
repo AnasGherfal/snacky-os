@@ -5,6 +5,7 @@ import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from "@/lib/auth
 import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
 import {verifiedCashExpectation} from "@/lib/cash-custody";
+import {getXyLiveSalesConfig} from "@/lib/xy-live-sales-sync";
 
 export const dynamic="force-dynamic";
 
@@ -35,6 +36,7 @@ export default async function CashActionQueuePage(){
  if(!db)return <EmptyState title="Cash Action Queue unavailable" body="The signed-in database session is unavailable."/>;
 
  const cutoff=new Date(Date.now()-30*86400000).toISOString();
+ const liveSalesConfig=getXyLiveSalesConfig();
  const {data,error,count}=await db.from("cash_collections")
   .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
   .is("voided_at",null)
@@ -85,7 +87,14 @@ export default async function CashActionQueuePage(){
    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
     <strong>No recent raw sales for automatic cash reconciliation</strong>
     <p className="mt-1">No successful mapped raw VMS transaction was found in the last 30 days. This does not mean machines had no sales: live XY and other imports may use different sources. Verify the transaction-level export, machine mapping, and dates before relying on an automatic expectation. A documented total for the whole bag is the existing fallback.</p>
-    <Link className="mt-2 inline-block underline" href="/vms-import">Review VMS transaction imports</Link>
+    <p className="mt-2 font-medium">{liveSalesConfig.ready
+      ? "XY live-sales settings are present; verify authentication, recent sync results, and transaction completeness."
+      : "XY live-sales is not ready. Review the server-only connection settings before attempting any automatic cash comparison."}</p>
+    <p className="mt-1 text-xs">The rolling live-sales sync is configured for the last {liveSalesConfig.lookbackHours} hours; it does not reconstruct older missing cash periods.</p>
+    <div className="mt-2 flex flex-wrap gap-4">
+      <Link className="underline" href="/admin/vms-api">Open XY Live Sales setup</Link>
+      <Link className="underline" href="/vms-import">Review manual transaction imports</Link>
+    </div>
    </div>
   ) : rawCashSourceFreshness === "unverified" && buckets.vms.length ? (
    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Transaction-level VMS freshness could not be checked. Do not treat the raw source as confirmed current.</div>
