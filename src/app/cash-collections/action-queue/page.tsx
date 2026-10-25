@@ -71,11 +71,11 @@ export default async function CashActionQueuePage(){
 
   {incompleteRead?<div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some current cash records were not loaded. The cards below describe the loaded rows only; do not treat their counts as complete. Review the full cash custody list.</div>:null}
 
-  {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No current cash actions need attention.</div>}
+  {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{incompleteRead?"Loaded cash records contain no current actions, but the full queue is not yet verified.":"No current cash actions need attention."}</div>}
 
   <section className="surface-card" id="all-current">
    <div className="mb-4"><h2 className="text-lg font-semibold">Current actions</h2><p className="mt-1 text-sm text-slate-500">Sorted by oldest first. Open the cash bag to complete the existing custody/count/VMS workflow.</p></div>
-   {!actionable.length?<EmptyState title="Current cash is clear" body="No unresolved cash from the last 30 days requires action."/>:
+   {!actionable.length?<EmptyState title={incompleteRead?"Loaded cash slice has no actions":"Current cash is clear"} body={incompleteRead?"The full queue could not be verified; review the full cash custody list.":"No unresolved cash from the last 30 days requires action."}/>:
    <DataTable headers={["Age","Bag","Collector","Stage","Counted","Expected","Variance","Next action"]}>{actionable.map((row:any)=>{
     const machines=(row.machine_links??[]).map((x:any)=>x.machine?.location?.name??x.machine?.name??x.machine?.machine_code).filter(Boolean);
     return <tr key={row.id} id={row.action.key}>
