@@ -49,6 +49,13 @@ test("admin UI distinguishes no eligible transactions from failed source query",
   assert.ok(admin.includes("No raw transactions currently qualify as a cash source"));
   assert.ok(admin.includes("Do not reactivate or reassign deleted records automatically"));
   assert.ok(admin.includes("Transaction batch eligibility could not be verified"));
+  assert.ok(admin.includes('Raw rows in unfinished or failed batches'));
+  assert.ok(admin.includes('Raw rows missing a source batch'));
+  assert.ok(admin.includes('.in("batch.status", ["draft", "failed", "cancelled", "canceled", "previewed", "disabled"])'));
+  assert.ok(admin.includes('.is("import_batch_id", null)'));
+  assert.ok(admin.includes('never reassign hashes or activate incomplete rows automatically'));
+  assert.ok(admin.includes('quarantinedCashRawRows === null ? "Unverified"'));
+  assert.ok(admin.includes('orphanCashRawRows === null ? "Unverified"'));
 });
 
 test("no historical transactions or cash balances are altered by these source filters", () => {
