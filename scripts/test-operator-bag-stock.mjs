@@ -85,6 +85,9 @@ test("operator bag custody is on-demand and does not slow the standard Stock pag
   assert.match(bag, /not proof of physical loss/);
   assert.match(bag, /Review ledger/);
   assert.match(bag, /canReviewHealth \? /);
+  assert.match(bag, /action="scan_negative_inventory"/);
+  assert.match(bag, /requiresReason=\{false\}/);
+  assert.match(bag, /Scanning creates review cases only/);
   assert.match(bag, /href="\/operations-health#inventory-health"/);
   assert.match(stock, /canReviewHealth=\{canAccessPath\(userContext, "\/operations-health"\)\}/);
   assert.match(movementLog, /from\("inventory_movements"\)/);
