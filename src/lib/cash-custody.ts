@@ -50,13 +50,17 @@ export type CashExpectationEvidence = {
 
 /**
  * A numeric expected amount alone does not establish an XY/VMS comparison.
- * In particular, historical zero amounts without provenance are unknown.
+ * A dated source must be exact VMS or a documented manual total.
+ * In particular, historical zero amounts and VMS cash-only assumptions are not verified.
  * Do not backfill or alter these financial records implicitly.
  */
 export function verifiedCashExpectation(row: CashExpectationEvidence): number | null {
   const source = typeof row.expected_source === "string" ? row.expected_source.trim() : "";
   const timestamp = typeof row.expected_calculated_at === "string" ? row.expected_calculated_at.trim() : "";
-  if (!source || !timestamp || !Number.isFinite(Date.parse(timestamp))) return null;
+  // A cash-only payment-method assumption is not a verified comparison.
+  // These are the documented sources set by the active reconciliation RPC.
+  if (!(["vms_exact", "manual_override"] as string[]).includes(source)
+      || !timestamp || !Number.isFinite(Date.parse(timestamp))) return null;
   const raw = row.vms_expected_cash;
   if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) return null;
   const amount = Number(raw);
