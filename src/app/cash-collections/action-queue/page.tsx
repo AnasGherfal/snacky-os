@@ -6,6 +6,7 @@ import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
 import {verifiedCashExpectation} from "@/lib/cash-custody";
 import {getXyLiveSalesConfig} from "@/lib/xy-live-sales-sync";
+import {CASH_ELIGIBLE_VMS_BATCH_STATUSES} from "@/lib/vms-cash-source";
 
 export const dynamic="force-dynamic";
 
@@ -54,10 +55,12 @@ export default async function CashActionQueuePage(){
  // Only checks transaction-level successful sales used by cash reconciliation.
  // Other VMS/XY dashboards may use different sources and remain unaffected.
  const [recentPaymentTime, recentDeliveryTime] = await Promise.all([
-  db.from("vms_transactions_raw").select("id")
+  db.from("vms_transactions_raw").select("id, batch:vms_import_batches!inner(id)")
+   .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES]).is("batch.deleted_at",null)
    .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
    .gte("payment_time",cutoff).limit(1),
-  db.from("vms_transactions_raw").select("id")
+  db.from("vms_transactions_raw").select("id, batch:vms_import_batches!inner(id)")
+   .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES]).is("batch.deleted_at",null)
    .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
    .gte("delivery_time",cutoff).limit(1),
  ]);
@@ -85,8 +88,8 @@ export default async function CashActionQueuePage(){
 
   {rawCashSourceFreshness === "stale" && buckets.vms.length ? (
    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-    <strong>No recent raw sales for automatic cash reconciliation</strong>
-    <p className="mt-1">No successful mapped raw VMS transaction was found in the last 30 days. This does not mean machines had no sales: live XY and other imports may use different sources. Verify the transaction-level export, machine mapping, and dates before relying on an automatic expectation. A documented total for the whole bag is the existing fallback.</p>
+    <strong>No recent eligible raw sales for automatic cash reconciliation</strong>
+    <p className="mt-1">No successful mapped raw VMS transaction from an imported, non-deleted batch was found in the last 30 days. Archived/deleted raw rows are not usable cash evidence. This does not mean machines had no sales: live XY and other imports may use different sources. Verify the transaction export, machine mapping, source batch and dates before relying on an automatic expectation. A documented total for the whole bag is the existing fallback.</p>
     <p className="mt-2 font-medium">{liveSalesConfig.ready
       ? "XY live-sales settings are present; verify authentication, recent sync results, and transaction completeness."
       : "XY live-sales is not ready. Review the server-only connection settings before attempting any automatic cash comparison."}</p>
