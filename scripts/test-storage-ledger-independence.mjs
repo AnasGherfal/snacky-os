@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildPhysicalStorageBalances,
   parseStorageUnits,
+  parseRouteReservationUnits,
   physicalStockStatus,
 } from "../src/lib/storage-inventory-model.ts";
 
@@ -54,6 +55,22 @@ test("invalid or truncated ledger amounts are not converted into plausible stock
   assert.throws(() => buildPhysicalStorageBalances([product("a")], [{ product_id: "a", quantity_on_hand: null }]));
   assert.throws(() => buildPhysicalStorageBalances([product("a"), product("a")], []));
   assert.throws(() => buildPhysicalStorageBalances([], [{ product_id: null, quantity_on_hand: 1 }]));
+});
+
+test("route reservations reject blank/missing planned quantities and malformed picks", () => {
+  for (const input of [null, undefined, "", " ", "\\t", -1, "-2", 0.5, false, {}, Infinity]) {
+    assert.equal(parseRouteReservationUnits(input), null);
+  }
+  assert.equal(parseRouteReservationUnits(null, true), 0, "missing pickup means not yet picked");
+  assert.equal(parseRouteReservationUnits("", true), null, "blank pickup is not a verified zero");
+  assert.equal(parseRouteReservationUnits("12"), 12);
+  assert.equal(parseRouteReservationUnits(3), 3);
+  assert.equal(parseRouteReservationUnits(" 4 "), 4);
+  const page = readFileSync("src/app/inventory/page.tsx", "utf8");
+  assert.match(page, /routeReservationsCount === \\(routeReservationsData\\?\\.length \\?\\? 0\\)/);
+  assert.match(page, /if \\(!routeId \\|\\| !productId \\|\\| !status\\)/);
+  assert.match(page, /parseRouteReservationUnits\\(row\\.planned_qty\\)/);
+  assert.match(page, /parseRouteReservationUnits\\(row\\.picked_qty, true\\)/);
 });
 
 test("unverified route reservations cannot produce a fake available quantity", () => {
