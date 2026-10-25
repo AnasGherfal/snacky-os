@@ -22,12 +22,13 @@ export default async function OperationsHealthPage() {
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
-  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult]=await Promise.all([
+  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult,cashSourceGapsResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
     db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
+    db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
   ]);
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
@@ -46,9 +47,12 @@ export default async function OperationsHealthPage() {
   const currentCashCount=currentCashResult.count??0;
   const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
     ? routeDiscrepanciesResult.count : null;
+  const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
+    ? cashSourceGapsResult.count : null;
 
   const cards=[
     ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
+    ...(cashSourceGapCount !== null ? [["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"] as const] : []),
     ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
     ["Active sites missing distance",missingDistance.length,"/machines/setup"],
     ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
@@ -61,10 +65,10 @@ export default async function OperationsHealthPage() {
   return <div className="space-y-6">
     <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
 
-    {openRouteDiscrepancyCount === null ? (
+    {(openRouteDiscrepancyCount === null || cashSourceGapCount === null) ? (
       <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-        Route inventory discrepancy totals could not be verified. They have not been treated as zero.
-        {" "}<Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>.
+        {openRouteDiscrepancyCount === null ? <>Route inventory discrepancy totals could not be verified. They have not been treated as zero. <Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>. </> : null}
+        {cashSourceGapCount === null ? <>Cash expected-source coverage could not be verified. Missing data has not been treated as zero. <Link className="underline underline-offset-2" href="/cash-collections">Review cash records</Link>.</> : null}
       </div>
     ) : null}
 
@@ -116,7 +120,7 @@ export default async function OperationsHealthPage() {
     </section>
 
     <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls. Missing expected-source information does not establish a cash shortage.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
       {(currentCashCount>0||Number(counts.legacy_cash_unclassified??0)>0||Number(counts.legacy_cash_classified??0)>0)?<div className="mb-4 grid gap-3 sm:grid-cols-3">{currentCashCount>0?<div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div>:null}{Number(counts.legacy_cash_unclassified??0)>0?<div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified)}</strong></div>:null}{Number(counts.legacy_cash_classified??0)>0?<div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified)}</strong></div>:null}</div>:null}
       {!legacyCash.length?<EmptyState title="No legacy cash backlog" body="Older unresolved cash has been cleared or classified."/>:
       <DataTable headers={["Collected","Custody","Reconciliation","Counted","Expected","Classification","Action"]}>{legacyCash.slice(0,50).map((row:any)=><tr key={row.id}>
