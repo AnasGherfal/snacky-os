@@ -58,7 +58,7 @@ test("invalid or truncated ledger amounts are not converted into plausible stock
 });
 
 test("route reservations reject blank/missing planned quantities and malformed picks", () => {
-  for (const input of [null, undefined, "", " ", "\\t", -1, "-2", 0.5, false, {}, Infinity]) {
+  for (const input of [null, undefined, "", " ", "\t", -1, "-2", 0.5, false, {}, Infinity]) {
     assert.equal(parseRouteReservationUnits(input), null);
   }
   assert.equal(parseRouteReservationUnits(null, true), 0, "missing pickup means not yet picked");
@@ -67,10 +67,10 @@ test("route reservations reject blank/missing planned quantities and malformed p
   assert.equal(parseRouteReservationUnits(3), 3);
   assert.equal(parseRouteReservationUnits(" 4 "), 4);
   const page = readFileSync("src/app/inventory/page.tsx", "utf8");
-  assert.match(page, /routeReservationsCount === \\(routeReservationsData\\?\\.length \\?\\? 0\\)/);
-  assert.match(page, /if \\(!routeId \\|\\| !productId \\|\\| !status\\)/);
-  assert.match(page, /parseRouteReservationUnits\\(row\\.planned_qty\\)/);
-  assert.match(page, /parseRouteReservationUnits\\(row\\.picked_qty, true\\)/);
+  assert.ok(page.includes("routeReservationsCount === (routeReservationsData?.length ?? 0)"));
+  assert.ok(page.includes("if (!routeId || !productId || !status)"));
+  assert.ok(page.includes("parseRouteReservationUnits(row.planned_qty)"));
+  assert.ok(page.includes("parseRouteReservationUnits(row.picked_qty, true)"));
 });
 
 test("unverified route reservations cannot produce a fake available quantity", () => {
