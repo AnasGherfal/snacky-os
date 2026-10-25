@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
 import { inventoryMovementReasonLabel } from "@/lib/inventory-movement";
+import { combineMovementFilterGroups } from "@/lib/inventory-movement-filter-groups";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { formatSignedProductQuantity } from "@/lib/product-quantity";
@@ -314,22 +315,30 @@ export default async function InventoryMovementsPage({
       .order("created_at", { ascending: false });
 
     if (params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
-    if (bagId) movementQuery = movementQuery.or(
-      `and(from_entity_type.eq.operator_bag,from_entity_id.eq.${bagId}),and(to_entity_type.eq.operator_bag,to_entity_id.eq.${bagId})`
-    );
+    const alternativeGroups: string[][] = [];
+    if (bagId) alternativeGroups.push([
+      `and(from_entity_type.eq.operator_bag,from_entity_id.eq.${bagId})`,
+      `and(to_entity_type.eq.operator_bag,to_entity_id.eq.${bagId})`,
+    ]);
     if (params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
     if (params.user_id) movementQuery = movementQuery.eq("created_by", params.user_id);
     if (params.route_id) movementQuery = movementQuery.eq("related_route_id", params.route_id);
     if (params.purchase_id) movementQuery = movementQuery.eq("related_purchase_id", params.purchase_id);
-    if (params.machine_id) movementQuery = movementQuery.or(`related_machine_id.eq.${params.machine_id},to_entity_id.eq.${params.machine_id},from_entity_id.eq.${params.machine_id}`);
+    if (params.machine_id) alternativeGroups.push([
+      `related_machine_id.eq.${params.machine_id}`,
+      `to_entity_id.eq.${params.machine_id}`,
+      `from_entity_id.eq.${params.machine_id}`,
+    ]);
     if (params.date_from) movementQuery = movementQuery.gte("created_at", `${params.date_from}T00:00:00`);
     if (params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
     if (search) {
       const pattern = supabaseLikePattern(search.replaceAll(",", " "));
       const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`, `movement_type.ilike.${pattern}`];
       if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
-      movementQuery = movementQuery.or(clauses.join(","));
+      alternativeGroups.push(clauses);
     }
+    const groupedLogic = combineMovementFilterGroups(alternativeGroups);
+    if (groupedLogic) movementQuery = movementQuery.or(groupedLogic);
     return movementQuery.range(from, to);
   })();
 
