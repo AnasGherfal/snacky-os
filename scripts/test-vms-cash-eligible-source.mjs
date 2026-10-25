@@ -40,6 +40,15 @@ test("admin UI distinguishes no eligible transactions from failed source query",
   assert.ok(admin.includes("non-deleted imported VMS batch"));
   assert.ok(admin.includes("Deleted import batches remain excluded"));
   assert.ok(admin.includes("this rolling sync does not reconstruct them"));
+  assert.ok(admin.includes('id="cash-transaction-integrity"'));
+  assert.ok(admin.includes('Raw rows in eligible import batches'));
+  assert.ok(admin.includes('Raw rows in deleted import batches'));
+  assert.ok(admin.includes('.in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])'));
+  assert.ok(admin.includes('.is("batch.deleted_at", null)'));
+  assert.ok(admin.includes('.eq("batch.status", "deleted")'));
+  assert.ok(admin.includes("No raw transactions currently qualify as a cash source"));
+  assert.ok(admin.includes("Do not reactivate or reassign deleted records automatically"));
+  assert.ok(admin.includes("Transaction batch eligibility could not be verified"));
 });
 
 test("no historical transactions or cash balances are altered by these source filters", () => {
