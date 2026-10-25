@@ -94,6 +94,15 @@ export function buildPhysicalStorageBalances(
   return result.sort((left, right) => left.productName.localeCompare(right.productName));
 }
 
+/** Invalid or missing route quantities must not create a false stock reservation. */
+export function parseRouteReservationUnits(value: unknown, missingMeansZero = false): number | null {
+  if (value === null || value === undefined) return missingMeansZero ? 0 : null;
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
 export type PhysicalStockStatus = "review" | "out_of_stock" | "reserved" | "low_stock" | "available" | "unverified";
 export function physicalStockStatus(
   quantity: number, reservedQty: number | null, minStorageQty: number, unmapped: boolean,
