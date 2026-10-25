@@ -589,6 +589,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
   const syncRunId = await createSyncRun(supabase, options.profile, config);
   let importBatchId: string | null = null;
   let batchPublished = false;
+  let publishedResult: XyLiveSalesSyncResult | null = null;
 
   try {
     importBatchId = await createImportBatch(supabase, options.profile, config, start, now);
@@ -703,6 +704,21 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
       throw new Error(`XY live sales staging was not published: ${publication.error.message}`);
     }
     batchPublished = true;
+    publishedResult = {
+      outcome: "completed",
+      syncRunId,
+      importBatchId,
+      fetchedRows: allRawRows.length,
+      insertedRows,
+      duplicateRows,
+      mappedMachineRows,
+      mappedProductRows,
+      successfulSaleRows,
+      latestSaleAt: latestSale,
+      message: errors.length
+        ? "XY live sales synced with mapping/status warnings."
+        : "XY live sales synced successfully.",
+    };
 
     const summary = {
       endpoint: config.path,
@@ -745,37 +761,72 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
     });
 
     revalidateSalesPages();
-    return {
-      outcome: "completed",
-      syncRunId,
-      importBatchId,
-      fetchedRows: allRawRows.length,
-      insertedRows,
-      duplicateRows,
-      mappedMachineRows,
-      mappedProductRows,
-      successfulSaleRows,
-      latestSaleAt: latestSale,
-      message: errors.length
-        ? "XY live sales synced with mapping/status warnings."
-        : "XY live sales synced successfully.",
-    };
+    return publishedResult;
   } catch (error) {
     const message = safeError(error);
+
+    if (batchPublished && publishedResult) {
+      // A telemetry/cache error after atomic publication is not an import
+      // failure; the batch must remain eligible, with an explicit warning.
+      await finishSyncRun(supabase, syncRunId, "completed_with_warnings", {
+        import_batch_id: importBatchId,
+        inserted_rows: publishedResult.insertedRows,
+        publication_completed: true,
+      }, [message], "XY sales published; post-publication reporting failed");
+      revalidateSalesPages();
+      return {
+        ...publishedResult,
+        message: "XY sales were published, but reporting needs review: " + message,
+      };
+    }
+
+    // A lost RPC response can occur after PostgreSQL commits. Read the
+    // authoritative status before ever marking the batch failed. If the
+    // status read fails, preserve the batch for manual investigation.
     if (importBatchId && !batchPublished) {
-      await supabase
-        .from("vms_import_batches")
-        .update({
-          status: "failed",
-          is_active: false,
-          failed_at: new Date().toISOString(),
-          error_count: 1,
-          errors: [message],
-          latest_error: message,
-          last_error: message,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", importBatchId);
+      const state = await supabase.from("vms_import_batches")
+        .select("status, is_active")
+        .eq("id", importBatchId).maybeSingle();
+      if (state.error || !state.data) {
+        console.error("[xy-live-sales] Ambiguous import status; batch left untouched", state.error);
+        await finishSyncRun(supabase, syncRunId, "failed", {
+          import_batch_id: importBatchId,
+          publication_status: "unverified",
+        }, [message], "XY import status unverified; manual investigation required");
+        return {
+          outcome: "failed", syncRunId, importBatchId, fetchedRows: 0,
+          insertedRows: 0, duplicateRows: 0, mappedMachineRows: 0,
+          mappedProductRows: 0, successfulSaleRows: 0, latestSaleAt: null,
+          message: "Import publication status could not be verified. No historical batch was changed.",
+        };
+      }
+      if (["imported", "imported_with_warnings", "partially_imported"].includes(state.data.status)) {
+        await finishSyncRun(supabase, syncRunId, "completed_with_warnings", {
+          import_batch_id: importBatchId,
+          publication_status: state.data.status,
+        }, [message], "XY batch published but response/reporting failed");
+        return {
+          outcome: "completed", syncRunId, importBatchId, fetchedRows: 0,
+          insertedRows: 0, duplicateRows: 0, mappedMachineRows: 0,
+          mappedProductRows: 0, successfulSaleRows: 0, latestSaleAt: null,
+          message: "XY batch was published; counts must be verified from the saved batch.",
+        };
+      }
+      if (state.data.status === "draft") {
+        const failedUpdate = await supabase.from("vms_import_batches")
+          .update({
+            status: "failed", is_active: false,
+            failed_at: new Date().toISOString(),
+            error_count: 1, errors: [message],
+            latest_error: message, last_error: message,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", importBatchId)
+          .eq("status", "draft");
+        if (failedUpdate.error) {
+          console.error("[xy-live-sales] Failed to quarantine incomplete draft", failedUpdate.error);
+        }
+      }
     }
     // Never demote a successfully published batch because an unrelated
     // post-publication log, cache refresh or telemetry write failed.
