@@ -286,6 +286,8 @@ export default async function RouteInventoryReviewPage({
   const rows = (discrepancyResult.data ?? []) as RouteInventoryDiscrepancyRow[];
   const verifiedTotal = typeof discrepancyResult.count === "number" ? discrepancyResult.count : null;
   const hasMore = verifiedTotal === null ? rows.length === perPage : page * perPage < verifiedTotal;
+  const lastPage = verifiedTotal === null ? null : Math.max(1, Math.ceil(verifiedTotal / perPage));
+  if (lastPage !== null && page > lastPage) redirect(reviewHref(view, routeFilter, lastPage));
   const routeIds = uniqueIds(rows.map((row) => row.route_id));
   const stopIds = uniqueIds(rows.map((row) => row.route_stop_id));
   const machineIds = uniqueIds(rows.map((row) => row.machine_id));
