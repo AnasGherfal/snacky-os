@@ -36,6 +36,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 type ReviewSearchParams = {
   view?: string;
   route?: string;
+  page?: string;
   success?: string;
   error?: string;
 };
@@ -71,10 +72,11 @@ function formatDateTime(value: unknown, locale: "en" | "ar") {
   }).format(date);
 }
 
-function reviewHref(view: "open" | "history", routeId?: string | null) {
+function reviewHref(view: "open" | "history", routeId?: string | null, page = 1) {
   const params = new URLSearchParams();
   if (view === "history") params.set("view", view);
   if (routeId) params.set("route", routeId);
+  if (page > 1) params.set("page", String(page));
   const query = params.toString();
   return query ? `${REVIEW_PATH}?${query}` : REVIEW_PATH;
 }
@@ -234,7 +236,10 @@ export default async function RouteInventoryReviewPage({
   const params = await searchParams;
   const view: "open" | "history" = params.view === "history" ? "history" : "open";
   const routeFilter = UUID_PATTERN.test(String(params.route ?? "")) ? String(params.route) : null;
-  const returnTo = reviewHref(view, routeFilter);
+  const pageParam = String(params.page ?? "1");
+  const page = /^[1-9][0-9]{0,3}$/.test(pageParam) ? Number(pageParam) : 1;
+  const perPage = 100;
+  const returnTo = reviewHref(view, routeFilter, page);
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return <ErrorState title={tr("Inventory review unavailable", "مراجعة المخزون غير متاحة")} body={tr("Supabase is not configured.", "لم يتم إعداد Supabase.")} />;
@@ -245,8 +250,10 @@ export default async function RouteInventoryReviewPage({
     .from("route_inventory_discrepancies")
     .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at", { count: "exact" })
     .in("status", [...statuses])
-    .order("detected_at", { ascending: false })
-    .limit(100);
+    // Oldest open exceptions first: clearing new ones must not bury the historical backlog.
+    .order("detected_at", { ascending: view === "open" })
+    .order("id", { ascending: true })
+    .range((page - 1) * perPage, page * perPage - 1);
   if (routeFilter) discrepancyQuery = discrepancyQuery.eq("route_id", routeFilter);
   const discrepancyResult = await discrepancyQuery;
 
@@ -277,6 +284,8 @@ export default async function RouteInventoryReviewPage({
   }
 
   const rows = (discrepancyResult.data ?? []) as RouteInventoryDiscrepancyRow[];
+  const verifiedTotal = typeof discrepancyResult.count === "number" ? discrepancyResult.count : null;
+  const hasMore = verifiedTotal === null ? rows.length === perPage : page * perPage < verifiedTotal;
   const routeIds = uniqueIds(rows.map((row) => row.route_id));
   const stopIds = uniqueIds(rows.map((row) => row.route_stop_id));
   const machineIds = uniqueIds(rows.map((row) => row.machine_id));
@@ -349,7 +358,7 @@ export default async function RouteInventoryReviewPage({
       </div>
 
       <section className="mb-6 grid gap-3 sm:grid-cols-3">
-        <div className="surface-card p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{view === "open" ? tr("Cases needing review", "حالات تحتاج إلى مراجعة") : tr("Closed cases", "الحالات المغلقة")}</div><div className="mt-2 text-3xl font-semibold text-slate-950">{discrepancyResult.count ?? rows.length}</div></div>
+        <div className="surface-card p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{view === "open" ? tr("Cases needing review", "حالات تحتاج إلى مراجعة") : tr("Closed cases", "الحالات المغلقة")}</div><div className="mt-2 text-3xl font-semibold text-slate-950">{verifiedTotal === null ? tr("Unverified total", "الإجمالي غير مؤكد") : verifiedTotal}</div></div>
         <div className="surface-card p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Units in cases shown", "الوحدات في الحالات المعروضة")}</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatQuantity(totalUnits)}</div></div>
         <div className="surface-card p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Shown cases investigating", "الحالات المعروضة قيد التحقيق")}</div><div className="mt-2 text-3xl font-semibold text-slate-950">{view === "open" ? investigatingCount : "-"}</div></div>
       </section>
@@ -421,9 +430,13 @@ export default async function RouteInventoryReviewPage({
             })}
           </DataTable>
 
-          {Number(discrepancyResult.count ?? 0) > rows.length ? (
-            <p className="mt-4 text-sm text-slate-500">{tr("Showing the first 100 cases. Close older reviews or filter to one route to narrow the queue.", "يتم عرض أول 100 حالة. أغلق المراجعات الأقدم أو اختر جولة واحدة لتضييق القائمة.")}</p>
-          ) : null}
+          <nav aria-label={tr("Inventory review pages", "صفحات مراجعة المخزون")} className="mt-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-slate-600">{tr("Page", "الصفحة")} {page} · {tr("Showing", "عرض")} {rows.length} {tr("cases", "حالات")}{verifiedTotal === null ? ` · ${tr("Total count unverified", "الإجمالي غير مؤكد")}` : ` / ${verifiedTotal}`}</div>
+            <div className="flex gap-2">
+              {page > 1 ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page - 1)}>{tr("Previous 100", "الـ100 السابقة")}</Link> : null}
+              {hasMore ? <Link className="btn-secondary" href={reviewHref(view, routeFilter, page + 1)}>{tr("Next 100", "الـ100 التالية")}</Link> : null}
+            </div>
+          </nav>
         </>
       )}
     </>
