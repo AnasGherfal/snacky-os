@@ -151,6 +151,9 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     cargo_lane_number: first(row, aliases.cargoLane),
     sales_price: first(row, aliases.salesPrice),
     mode_of_payment: first(row, aliases.paymentMethod),
+    // Cash-reconciliation SQL reads normalized_row.payment_method.
+    // Keep the original export field and its canonical SQL alias consistent.
+    payment_method: first(row, aliases.paymentMethod),
     purchaser: first(row, aliases.purchaser),
     payment_amount: first(row, aliases.paymentAmount),
     refund_amount: first(row, aliases.refundAmount),
