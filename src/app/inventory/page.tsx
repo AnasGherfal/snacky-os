@@ -9,7 +9,7 @@ import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { loadPhysicalStorageData } from "@/lib/storage-inventory-data";
-import { physicalStockStatus } from "@/lib/storage-inventory-model";
+import { parseRouteReservationUnits, physicalStockStatus } from "@/lib/storage-inventory-model";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -171,7 +171,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     .neq("routes.status", "cancelled")
     .limit(10001);
   let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
-    && routeReservationsCount <= (routeReservationsData?.length ?? 0)
+    && routeReservationsCount === (routeReservationsData?.length ?? 0)
     && (routeReservationsData?.length ?? 0) < 10001;
 
   const queryIssues: InventoryQueryIssue[] = [
@@ -199,10 +199,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     const routeId = String(route?.id ?? row.route_id ?? "").trim();
     const productId = String(row.product_id ?? "").trim();
     const status = String(route?.status ?? "").trim();
+    // Missing route identities/statuses and malformed quantities are
+    // incomplete evidence, not proof that the stock is unreserved.
+    if (!routeId || !productId || !status) {
+      reservationsKnown = false;
+      return;
+    }
     if (!isRouteReservationStatus(status)) return;
-    const planned = Number(row.planned_qty), picked = Number(row.picked_qty ?? 0);
-    if (!routeId || !productId || !Number.isSafeInteger(planned) || !Number.isSafeInteger(picked)
-        || planned < 0 || picked < 0) {
+    const planned = parseRouteReservationUnits(row.planned_qty);
+    const picked = parseRouteReservationUnits(row.picked_qty, true);
+    if (planned === null || picked === null || !Number.isSafeInteger(planned - picked)) {
       reservationsKnown = false;
       return;
     }
