@@ -152,7 +152,7 @@ test("overdue controls stop after reconciliation", () => {
 });
 
 test("unsourced expected cash never becomes a phantom cash shortage", () => {
-  const known = { expected_source: "automatic_vms", expected_calculated_at: "2026-10-25T12:00:00Z" };
+  const known = { expected_source: "vms_exact", expected_calculated_at: "2026-10-25T12:00:00Z" };
   const unsourced = { actual_cash_collected: 500, vms_expected_cash: 0 };
   assert.equal(verifiedCashExpectation(unsourced), null);
   assert.equal(verifiedMissingCashAmount(unsourced), null);
@@ -163,6 +163,9 @@ test("unsourced expected cash never becomes a phantom cash shortage", () => {
   assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: -1 }), null);
   assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: "1500.25" }), 1500.25);
   assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: 0 }), 0, "a sourced actual zero remains zero");
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "vms_cash_only_assumption" }), null, "unknown payment methods cannot verify cash-only sales");
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "manual_required" }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "future_unreviewed_source" }), null);
   assert.equal(verifiedMissingCashAmount({ ...known, actual_cash_collected: 200, vms_expected_cash: 350 }), 150);
   assert.equal(verifiedMissingCashAmount({ ...known, actual_cash_collected: null, vms_expected_cash: 350 }), null);
   assert.deepEqual(combinedCashPosition([
