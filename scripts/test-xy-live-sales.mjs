@@ -146,6 +146,46 @@ test("refund and vend failures are not counted as successful sales", () => {
   assert.equal(failed.transactionStatus, "failed_vend");
 });
 
+test("XY payment amount is not proof of a completed vend", () => {
+  const base = { jqbh: "M1", spmc: "Water", zfje: "3", zfsj: "2026-10-25 12:00:00" };
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "失败" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "cancelled" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "timeout" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base }).transactionStatus, "needs_review");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "支付成功" }).transactionStatus, "successful_sale");
+});
+
+test("a successful payment cannot conceal a failed dispense from another XY status field", () => {
+  const record = {
+    jqbh: "M1", spmc: "Chips", zfje: "5", zfsj: "2026-10-25 12:00:00",
+    ddzt: "支付成功", showchzt: "Dispensing fail",
+  };
+  assert.equal(normalizeXyLiveSalesRow(record).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...record, showchzt: "Dispensing success", tkzt: "退款" }).transactionStatus, "refunded");
+  assert.equal(normalizeXyLiveSalesRow({ ...record, ddzt: "Payment failed", showchzt: "Dispensing success" }).transactionStatus, "failed_payment");
+});
+
+test("XY paid amount must be explicitly recorded to qualify as a confirmed sale", () => {
+  const record = {
+    jqbh: "M1", spmc: "Water", spdj: "5", jysj: "2026-10-25 12:00:00",
+    showchzt: "Dispensing success",
+  };
+  const missingPayment = normalizeXyLiveSalesRow(record);
+  assert.equal(missingPayment.salesPrice, 5);
+  assert.equal(missingPayment.paymentAmount, null, "list price is not evidence of money received");
+  assert.equal(missingPayment.transactionStatus, "needs_review");
+  const explicitPayment = normalizeXyLiveSalesRow({ ...record, bzfje: "5" });
+  assert.equal(explicitPayment.transactionStatus, "successful_sale");
+  assert.equal(explicitPayment.paymentAmount, 5);
+  const invalidAmount = normalizeXyLiveSalesRow({ ...record, bzfje: "-1" });
+  assert.equal(invalidAmount.transactionStatus, "needs_review");
+  const withoutTimestamp = normalizeXyLiveSalesRow({
+    jqbh: "M1", spmc: "Water", bzfje: "5", dsfjybh: "TXN-1",
+    showchzt: "Dispensing success",
+  });
+  assert.equal(withoutTimestamp.transactionStatus, "needs_review");
+});
+
 test("live API and imported files use the same duplicate hash contract", () => {
   const normalized = normalizeXyLiveSalesRow({
     machine_code: "M1",
