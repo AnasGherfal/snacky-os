@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
 import { callXyWebApi, getXyWebApiConfig } from "@/lib/xy-web-api";
 import {
   extractXyLiveSalesRows,
@@ -743,7 +744,9 @@ export async function latestXyLiveSalesHealth() {
   const [paymentResult, deliveryResult, runResult] = await Promise.all([
     supabase
       .from("vms_transactions_raw")
-      .select("payment_time")
+      .select("payment_time, batch:vms_import_batches!inner(id)")
+      .in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+      .is("batch.deleted_at", null)
       .eq("transaction_status", "successful_sale")
       .not("mapped_machine_id", "is", null)
       .not("mapped_product_id", "is", null)
@@ -753,7 +756,9 @@ export async function latestXyLiveSalesHealth() {
       .maybeSingle(),
     supabase
       .from("vms_transactions_raw")
-      .select("delivery_time")
+      .select("delivery_time, batch:vms_import_batches!inner(id)")
+      .in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+      .is("batch.deleted_at", null)
       .eq("transaction_status", "successful_sale")
       .not("mapped_machine_id", "is", null)
       .not("mapped_product_id", "is", null)
