@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { PaginationControls } from "@/components/PaginationControls";
 import {
   DataTable, EmptyState, ErrorState, MobileCardList, MobileField,
@@ -120,11 +121,20 @@ export async function OperatorBagStockView({
         {tr("These are system ledger discrepancies, not proof of physical loss. Review pickups, fills and returns before adjusting anything.",
           "هذه فروقات في السجل وليست إثباتاً بفقدان بضاعة. راجع السحب والتعبئة والإرجاع قبل أي تعديل.")}
       </p>
-      {canReviewHealth ? <div className="mt-3">
+      {canReviewHealth ? <div className="mt-3 flex flex-wrap items-center gap-3">
+        <DataHealthActionButton
+          action="scan_negative_inventory"
+          requiresReason={false}
+          label={tr("Scan / refresh audit cases", "فحص حالات فروقات المخزون")}
+        />
         <Link href="/operations-health#inventory-health"
           className="inline-flex min-h-11 items-center rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-900">
-          {tr("Review case and verify physical count", "مراجعة الحالة والتحقق بالجرد الفعلي")}
+          {tr("Open cases and verify physical count", "فتح الحالات وتأكيد الجرد الفعلي")}
         </Link>
+        <p className="w-full text-xs text-rose-900">
+          {tr("Scanning creates review cases only. It never changes quantities. Physical-count corrections require owner/admin confirmation and remain audited.",
+            "الفحص يفتح حالات للمراجعة فقط ولا يغيّر الكميات. التصحيح يحتاج جرداً فعلياً وموافقة المالك أو المدير ويُسجّل في السجل.")}
+        </p>
       </div> : null}
       <div className="mt-3 space-y-2">
         {negativeBalances.map((r) => (
