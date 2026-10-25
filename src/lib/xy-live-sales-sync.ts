@@ -588,6 +588,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
   const start = new Date(now.getTime() - config.lookbackHours * 60 * 60 * 1000);
   const syncRunId = await createSyncRun(supabase, options.profile, config);
   let importBatchId: string | null = null;
+  let batchPublished = false;
 
   try {
     importBatchId = await createImportBatch(supabase, options.profile, config, start, now);
@@ -654,53 +655,54 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
     if (dbRows.some((row) => !row.mapped_machine_id)) errors.push("Some live sales rows could not be mapped to a Snacky machine.");
     if (dbRows.some((row) => !row.mapped_product_id)) errors.push("Some live sales rows could not be mapped to a Snacky product.");
 
-    const batchStatus = insertedRows > 0
-      ? (errors.length ? "imported_with_warnings" : "imported")
-      : "partially_imported";
-    const batchUpdate = await supabase
-      .from("vms_import_batches")
-      .update({
-        status: batchStatus,
-        is_active: insertedRows > 0,
-        imported_at: new Date().toISOString(),
-        row_count: allRawRows.length,
-        rows_found: allRawRows.length,
-        rows_imported: insertedRows,
-        rows_skipped: duplicateRows,
-        rows_skipped_duplicate: duplicateRows,
-        rows_needing_review: needsReviewRows,
-        error_count: errors.length,
-        errors,
-        report_start_date: rowDates[0] ?? formatTripoli(start).date,
-        report_end_date: rowDates.at(-1) ?? formatTripoli(now).date,
-        detected_min_datetime: normalizedRows
-          .map(transactionTimestamp)
-          .filter((value): value is Date => Boolean(value))
-          .sort((a, b) => a.getTime() - b.getTime())[0]?.toISOString() ?? null,
-        detected_max_datetime: latestSale,
-        total_successful_sales: successfulSalesAmount,
-        successful_rows_count: successfulSaleRows,
-        failed_rows_count: failedRows,
-        refunded_rows_count: refundedRows,
-        latest_error: errors[0] ?? null,
-        parse_diagnostics: {
-          source: "xy_live_sales_api",
-          endpoint: config.path,
-          fetched_rows: allRawRows.length,
-          inserted_rows: insertedRows,
-          duplicate_rows: duplicateRows,
-          mapped_machine_rows: mappedMachineRows,
-          mapped_product_rows: mappedProductRows,
-          pages_read: pagesRead,
-          pagination_complete: paginationComplete,
-          rejected_unverified_rows: rejectedUnverifiedRows,
-          coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
-            && needsReviewRows === 0 && mappedMachineRows === allRawRows.length,
-        },
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", importBatchId);
-    if (batchUpdate.error) throw new Error(`Could not finalize XY live-sales import batch: ${batchUpdate.error.message}`);
+    const publicationMetrics = {
+      fetched_rows: allRawRows.length,
+      inserted_rows: insertedRows,
+      duplicate_rows: duplicateRows,
+      mapped_machine_rows: mappedMachineRows,
+      pages_read: pagesRead,
+      pagination_complete: paginationComplete,
+      rejected_unverified_rows: rejectedUnverifiedRows,
+      rows_needing_review: needsReviewRows,
+      errors,
+      report_start_date: rowDates[0] ?? formatTripoli(start).date,
+      report_end_date: rowDates.at(-1) ?? formatTripoli(now).date,
+      detected_min_datetime: normalizedRows
+        .map(transactionTimestamp)
+        .filter((value): value is Date => Boolean(value))
+        .sort((a, b) => a.getTime() - b.getTime())[0]?.toISOString() ?? null,
+      detected_max_datetime: latestSale,
+      total_successful_sales: successfulSalesAmount,
+      successful_rows_count: successfulSaleRows,
+      failed_rows_count: failedRows,
+      refunded_rows_count: refundedRows,
+      parse_diagnostics: {
+        source: "xy_live_sales_api",
+        endpoint: config.path,
+        fetched_rows: allRawRows.length,
+        inserted_rows: insertedRows,
+        duplicate_rows: duplicateRows,
+        mapped_machine_rows: mappedMachineRows,
+        mapped_product_rows: mappedProductRows,
+        pages_read: pagesRead,
+        pagination_complete: paginationComplete,
+        rejected_unverified_rows: rejectedUnverifiedRows,
+        coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
+          && needsReviewRows === 0 && mappedMachineRows === allRawRows.length,
+      },
+    };
+    // Source data is written to a non-eligible draft first. One SQL RPC
+    // validates staged counts and source evidence, then atomically marks the
+    // batch eligible. A broken chunk or invalid row cannot publish a partial
+    // cash source. Historical failed drafts remain quarantined.
+    const publication = await supabase.rpc("snacky_publish_xy_live_sales_batch_v1", {
+      p_batch_id: importBatchId,
+      p_metrics: publicationMetrics,
+    });
+    if (publication.error) {
+      throw new Error(`XY live sales staging was not published: ${publication.error.message}`);
+    }
+    batchPublished = true;
 
     const summary = {
       endpoint: config.path,
@@ -760,7 +762,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
     };
   } catch (error) {
     const message = safeError(error);
-    if (importBatchId) {
+    if (importBatchId && !batchPublished) {
       await supabase
         .from("vms_import_batches")
         .update({
@@ -775,6 +777,8 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
         })
         .eq("id", importBatchId);
     }
+    // Never demote a successfully published batch because an unrelated
+    // post-publication log, cache refresh or telemetry write failed.
     await finishSyncRun(supabase, syncRunId, "failed", {
       endpoint: config.path,
       import_batch_id: importBatchId,
