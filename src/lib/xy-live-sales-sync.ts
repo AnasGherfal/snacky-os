@@ -417,6 +417,53 @@ function toDbRow({
   };
 }
 
+type ExistingSaleHashRow = {
+  duplicate_hash: string | null;
+  batch: { status: string | null; deleted_at: string | null } | Array<{ status: string | null; deleted_at: string | null }> | null;
+};
+
+/**
+ * The unique duplicate_hash index spans every import batch, including deleted
+ * and failed batches. A normal ON CONFLICT DO NOTHING can silently skip sales
+ * retained in such a batch, leaving the new import with incomplete eligible
+ * cash evidence. Refuse those collisions before writing any new raw rows.
+ *
+ * This read guard does not migrate, delete, revive or relink old transactions.
+ * An atomic DB import transaction is still a separate release requirement.
+ */
+async function assertNoQuarantinedSaleHashCollisions(
+  supabase: SupabaseAdmin,
+  rows: ReturnType<typeof toDbRow>[],
+) {
+  const hashes = [...new Set(rows.map((row) => String(row.duplicate_hash ?? "").trim()))];
+  if (hashes.some((hash) => !/^[0-9a-f]{64}$/i.test(hash))) {
+    throw new Error("XY sales include an invalid duplicate hash; no transaction rows were saved.");
+  }
+  const chunkSize = 100;
+  for (let index = 0; index < hashes.length; index += chunkSize) {
+    const chunk = hashes.slice(index, index + chunkSize);
+    const { data, error, count } = await supabase
+      .from("vms_transactions_raw")
+      .select("duplicate_hash, batch:vms_import_batches(status, deleted_at)", { count: "exact" })
+      .in("duplicate_hash", chunk)
+      .limit(chunkSize + 1);
+    if (error || count === null || count !== (data?.length ?? 0)) {
+      throw new Error("XY sales duplicate-source audit is unavailable or incomplete; no new sales were saved.");
+    }
+    const blocked = (data ?? [] as ExistingSaleHashRow[]).filter((value) => {
+      const row = value as ExistingSaleHashRow;
+      const batch = Array.isArray(row.batch) ? row.batch[0] : row.batch;
+      return !batch || batch.deleted_at !== null
+        || !CASH_ELIGIBLE_VMS_BATCH_STATUSES.includes(batch.status as (typeof CASH_ELIGIBLE_VMS_BATCH_STATUSES)[number]);
+    });
+    if (blocked.length) {
+      throw new Error(
+        `XY sales duplicate conflict: ${blocked.length} transaction(s) already belong to deleted, failed, or unverified batches. Import halted before raw writes. Review historical batch provenance; do not silently reuse or reactivate those rows.`,
+      );
+    }
+  }
+}
+
 async function saveRows(supabase: SupabaseAdmin, rows: ReturnType<typeof toDbRow>[]) {
   let insertedRows = 0;
   let duplicateRows = 0;
@@ -569,6 +616,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
       });
     });
 
+    await assertNoQuarantinedSaleHashCollisions(supabase, dbRows);
     const { insertedRows, duplicateRows } = await saveRows(supabase, dbRows);
     const mappedMachineRows = dbRows.filter((row) => row.mapped_machine_id).length;
     const mappedProductRows = dbRows.filter((row) => row.mapped_product_id).length;
@@ -628,7 +676,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
           pagination_complete: paginationComplete,
           rejected_unverified_rows: rejectedUnverifiedRows,
           coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
-            && mappedMachineRows === allRawRows.length,
+            && needsReviewRows === 0 && mappedMachineRows === allRawRows.length,
         },
         updated_at: new Date().toISOString(),
       })
@@ -644,7 +692,7 @@ export async function syncXyLiveSales(options: SyncOptions = {}): Promise<XyLive
       pagination_complete: paginationComplete,
       rejected_unverified_rows: rejectedUnverifiedRows,
       coverage_complete: paginationComplete && rejectedUnverifiedRows === 0
-        && mappedMachineRows === allRawRows.length,
+        && needsReviewRows === 0 && mappedMachineRows === allRawRows.length,
       inserted_rows: insertedRows,
       duplicate_rows: duplicateRows,
       mapped_machine_rows: mappedMachineRows,
