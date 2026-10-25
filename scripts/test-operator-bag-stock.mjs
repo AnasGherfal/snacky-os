@@ -27,6 +27,7 @@ test("positive and negative operator custody balances are both visible", () => {
   assert.equal(rows.find(r => r.productId === "product-1").quantity, 27);
   assert.equal(rows.find(r => r.productId === "product-2").quantity, -5);
   assert.equal(rows.filter(r => r.quantity < 0).length, 1);
+  assert.equal(rows[0].quantity, -5, "negative custody balances must be shown before ordinary stock");
   assert.equal(rows.find(r => r.productId === "product-1").caseQuantity, 24);
   assert.equal(rows.find(r => r.productId === "product-2").caseQuantity, null);
   assert.ok(formatSignedProductQuantity(-5, { productName: "Chips", caseQuantity: 1 }).startsWith("−5"));
@@ -76,6 +77,11 @@ test("operator bag custody is on-demand and does not slow the standard Stock pag
   assert.match(bag, /normalizeOperatorBagBalances\(balances\.data/);
   assert.match(bag, /records\.filter\(\(r\) => r\.quantity < 0\)/);
   assert.match(bag, /Negative operator bag balances need investigation/);
+  assert.match(bag, /negativeBalances\.map/);
+  assert.match(bag, /affectedOperators/);
+  assert.match(bag, /deficitUnits/);
+  assert.match(bag, /not proof of physical loss/);
+  assert.match(bag, /Review ledger/);
   assert.match(movementLog, /from\("inventory_movements"\)/);
   assert.match(movementLog, /formatSignedProductQuantity/);
 });
