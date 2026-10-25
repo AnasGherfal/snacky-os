@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES, isEligibleCashSourceBatch } from "@/lib/vms-cash-source";
 import { callXyWebApi, getXyWebApiConfig } from "@/lib/xy-web-api";
 import {
   extractXyLiveSalesRows,
@@ -453,8 +453,7 @@ async function assertNoQuarantinedSaleHashCollisions(
     const blocked = (data ?? [] as ExistingSaleHashRow[]).filter((value) => {
       const row = value as ExistingSaleHashRow;
       const batch = Array.isArray(row.batch) ? row.batch[0] : row.batch;
-      return !batch || batch.deleted_at !== null
-        || !CASH_ELIGIBLE_VMS_BATCH_STATUSES.includes(batch.status as (typeof CASH_ELIGIBLE_VMS_BATCH_STATUSES)[number]);
+      return !isEligibleCashSourceBatch(batch);
     });
     if (blocked.length) {
       throw new Error(
