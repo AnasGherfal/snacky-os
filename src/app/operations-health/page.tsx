@@ -77,7 +77,15 @@ export default async function OperationsHealthPage() {
       {!inventoryHealth.length?<EmptyState title="No open inventory health cases" body="Scan when a negative balance appears; corrected cases stay open until you close them with a note."/>:
       <DataTable headers={["Location","Product","Current qty","Case","Action"]}>{inventoryHealth.slice(0,50).map((row:any,index:number)=><tr key={row.case_id??[row.location_type,row.location_id,row.product_id,index].join("-")}>
         <td><div className="font-medium">{row.location_name??"-"}</div><div className="text-xs text-slate-500">{row.location_type}</div></td>
-        <td>{row.product_name}</td>
+        <td>
+          <div>{row.product_name}</div>
+          {row.location_type==="operator_bag" && row.location_id && row.product_id ? (
+            <Link className="mt-1 inline-block text-xs font-semibold text-emerald-800 underline underline-offset-2"
+              href={`/inventory/movements?product_id=${encodeURIComponent(String(row.product_id))}&bag_id=${encodeURIComponent(String(row.location_id))}`}>
+              Review exact bag movements
+            </Link>
+          ) : null}
+        </td>
         <td className={Number(row.current_quantity??0)<0?"font-semibold text-rose-700":"font-semibold text-emerald-700"}>{row.current_quantity??0}</td>
         <td>{row.case_id?<StatusBadge status={row.ready_to_resolve?"corrected_waiting_close":"open"}/>:<span className="text-xs text-amber-700">Scan cases first</span>}</td>
         <td>{row.ready_to_resolve&&row.case_id?<DataHealthActionButton action="resolve_inventory_case" targetId={row.case_id} label="Close corrected case" defaultReason="Physical and ledger balance verified after correction"/>:row.case_id&&row.location_type==="operator_bag"&&Number(row.current_quantity??0)<0?<OperatorBagReconcileControl caseId={row.case_id} currentQty={Number(row.current_quantity??0)} operatorName={row.location_name??"Operator"} productName={row.product_name??"Product"}/>:<Link className="link-secondary" href="/inventory/reconciliation">Review inventory</Link>}</td>
