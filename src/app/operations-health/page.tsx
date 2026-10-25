@@ -22,6 +22,23 @@ export default async function OperationsHealthPage() {
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
+  const tripoliDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const todayStart = `${tripoliDate}T00:00:00+02:00`;
+  const tomorrowStart = new Date(Date.parse(todayStart) + 86400000).toISOString();
+  const [todayCashResult,todayCashUncountedResult,todayRoutesResult] = await Promise.all([
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart)
+      .in("custody_status",["removed","in_storage"]),
+    db.from("routes").select("id",{count:"exact",head:true})
+      .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
+      .not("status","in", "(cancelled,canceled,voided)"),
+  ]);
+  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
+  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
+  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+
   const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult,cashSourceGapsResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
@@ -64,6 +81,29 @@ export default async function OperationsHealthPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
+
+    <section aria-label="Daily closeout" className="surface-card space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="text-lg font-semibold">Daily owner closeout · {tripoliDate}</h2>
+        <p className="mt-1 text-sm text-slate-600">Read-only snapshot of today's operations in Tripoli time. Counts are records, not proof that all tasks were completed.</p></div>
+        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Cash action queue</SecondaryButton><SecondaryButton href="/routes/inventory-review">Inventory differences</SecondaryButton></div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {([
+          ["Today's cash removals",todayCashCount,"/cash-collections"],
+          ["Today's cash bags awaiting count",todayCashUncounted,"/cash-collections/action-queue"],
+          ["Today's routes recorded",todayRouteCount,"/routes"],
+        ] as const).map(([label,count,href])=><Link key={label} href={href} className="rounded-lg border border-slate-200 p-4">
+          <div className="text-xs text-slate-600">{label}</div>
+          <div className="mt-2 text-2xl font-semibold">{count === null ? "Unverified" : count}</div>
+          <div className="mt-2 text-xs text-sky-800">Review records →</div>
+        </Link>)}
+      </div>
+      {todayCashCount === null || todayCashUncounted === null || todayRouteCount === null ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.</p>
+      ) : null}
+      <p className="text-xs text-slate-500">Historical exceptions, unpaid supplier purchases, missing sales imports and open route differences remain in the existing review sections below. This snapshot never posts cash, closes routes or changes stock.</p>
+    </section>
 
     {(openRouteDiscrepancyCount === null || cashSourceGapCount === null) ? (
       <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
