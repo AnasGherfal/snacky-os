@@ -739,6 +739,7 @@ export async function latestXyLiveSalesHealth() {
     latestRunAt: null,
     latestRunStatus: null,
     latestInsertedRows: 0,
+    sourceReadVerified: false,
   };
 
   const [paymentResult, deliveryResult, runResult] = await Promise.all([
@@ -776,6 +777,14 @@ export async function latestXyLiveSalesHealth() {
       .maybeSingle(),
   ]);
 
+  // Failed source reads are unknown, not evidence of zero active sales.
+  const sourceReadVerified = !paymentResult.error && !deliveryResult.error;
+  if (!sourceReadVerified) {
+    console.error("[xy-live-sales] Could not verify eligible raw cash sale freshness", {
+      paymentError: paymentResult.error?.message ?? null,
+      deliveryError: deliveryResult.error?.message ?? null,
+    });
+  }
   const latestPaymentAt = String((paymentResult.data as { payment_time?: string | null } | null)?.payment_time ?? "") || null;
   const latestDeliveryAt = String((deliveryResult.data as { delivery_time?: string | null } | null)?.delivery_time ?? "") || null;
   const latestSaleAt = [latestPaymentAt, latestDeliveryAt]
@@ -788,6 +797,7 @@ export async function latestXyLiveSalesHealth() {
     latestRunAt: run?.completed_at ?? null,
     latestRunStatus: run?.status ?? null,
     latestInsertedRows: Number(run?.response_summary?.inserted_rows ?? 0),
+    sourceReadVerified,
   };
 }
 
