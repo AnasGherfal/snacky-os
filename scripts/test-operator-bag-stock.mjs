@@ -43,7 +43,7 @@ test("a zero line stays absent but never excludes a negative balance", () => {
 });
 
 test("invalid, duplicate or missing operator bag ledger data fails closed", () => {
-  for (const qty of [null, "NaN", "2.4", Number.POSITIVE_INFINITY]) {
+  for (const qty of [null, undefined, "", " ", "\t\n", false, {}, "NaN", "2.4", Number.POSITIVE_INFINITY]) {
     assert.throws(() => normalizeOperatorBagBalances([balance(qty)], packages));
   }
   assert.throws(() => normalizeOperatorBagBalances([balance(3, { product_id: null })], packages));
