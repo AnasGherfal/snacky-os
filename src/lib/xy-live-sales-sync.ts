@@ -419,6 +419,7 @@ function toDbRow({
 
 type ExistingSaleHashRow = {
   duplicate_hash: string | null;
+  transaction_status: string | null;
   batch: { status: string | null; deleted_at: string | null } | Array<{ status: string | null; deleted_at: string | null }> | null;
 };
 
@@ -435,7 +436,17 @@ async function assertNoQuarantinedSaleHashCollisions(
   supabase: SupabaseAdmin,
   rows: ReturnType<typeof toDbRow>[],
 ) {
-  const hashes = [...new Set(rows.map((row) => String(row.duplicate_hash ?? "").trim()))];
+  const statusByHash = new Map<string, string>();
+  for (const row of rows) {
+    const hash = String(row.duplicate_hash ?? "").trim();
+    const status = String(row.transaction_status ?? "needs_review");
+    const prior = statusByHash.get(hash);
+    if (prior && prior !== status) {
+      throw new Error("XY sales feed gives conflicting transaction statuses for the same transaction identity; refusing to import unresolved sale/refund evidence.");
+    }
+    statusByHash.set(hash, status);
+  }
+  const hashes = [...statusByHash.keys()];
   if (hashes.some((hash) => !/^[0-9a-f]{64}$/i.test(hash))) {
     throw new Error("XY sales include an invalid duplicate hash; no transaction rows were saved.");
   }
@@ -444,7 +455,7 @@ async function assertNoQuarantinedSaleHashCollisions(
     const chunk = hashes.slice(index, index + chunkSize);
     const { data, error, count } = await supabase
       .from("vms_transactions_raw")
-      .select("duplicate_hash, batch:vms_import_batches(status, deleted_at)", { count: "exact" })
+      .select("duplicate_hash, transaction_status, batch:vms_import_batches(status, deleted_at)", { count: "exact" })
       .in("duplicate_hash", chunk)
       .limit(chunkSize + 1);
     if (error || count === null || count !== (data?.length ?? 0)) {
@@ -455,6 +466,15 @@ async function assertNoQuarantinedSaleHashCollisions(
       const batch = Array.isArray(row.batch) ? row.batch[0] : row.batch;
       return !isEligibleCashSourceBatch(batch);
     });
+    const statusConflicts = (data ?? []).filter((row) => {
+      const source = row as ExistingSaleHashRow;
+      return String(source.transaction_status ?? "") !== statusByHash.get(String(source.duplicate_hash ?? ""));
+    });
+    if (statusConflicts.length) {
+      throw new Error(
+        `XY sales status changed for ${statusConflicts.length} previously imported transaction(s). A refund or failed-vend update needs audited reconciliation; the importer will not keep the old success silently or rewrite the source row.`,
+      );
+    }
     if (blocked.length) {
       throw new Error(
         `XY sales duplicate conflict: ${blocked.length} transaction(s) already belong to deleted, failed, or unverified batches. Import halted before raw writes. Review historical batch provenance; do not silently reuse or reactivate those rows.`,
