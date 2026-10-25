@@ -10,6 +10,7 @@ import {
   renderXyLiveSalesRequestTemplate,
 } from "../src/lib/xy-live-sales.ts";
 import { createVmsOrderDetailsDuplicateHash } from "../src/lib/vms-order-details.ts";
+import { isEligibleCashSourceBatch } from "../src/lib/vms-cash-source.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const syncSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-live-sales-sync.ts"), "utf8");
@@ -220,6 +221,33 @@ test("request template only renders caller-supplied placeholders into JSON", () 
     pageSize: 200,
     start: "2026-10-03 00:00:00",
   });
+});
+
+test("only active non-deleted imported batch states can supply cash reconciliation", () => {
+  for (const status of ["imported", "imported_with_warnings", "partially_imported"]) {
+    assert.equal(isEligibleCashSourceBatch({ status, deleted_at: null }), true);
+  }
+  for (const status of ["failed", "draft", "deleted", "previewed"]) {
+    assert.equal(isEligibleCashSourceBatch({ status, deleted_at: null }), false);
+  }
+  assert.equal(isEligibleCashSourceBatch({ status: "imported", deleted_at: "2026-07-14T00:00:00Z" }), false);
+  assert.equal(isEligibleCashSourceBatch({ status: "imported" }), false, "unknown deletion marker must not pass");
+  assert.equal(isEligibleCashSourceBatch(null), false);
+  assert.equal(isEligibleCashSourceBatch(undefined), false);
+});
+
+test("live sales importer refuses quarantined duplicate hashes before any upsert", () => {
+  assert.match(syncSource, /async function assertNoQuarantinedSaleHashCollisions\(/);
+  assert.match(syncSource, /\.select\("duplicate_hash, batch:vms_import_batches\(status, deleted_at\)"/);
+  assert.match(syncSource, /\.in\("duplicate_hash", chunk\)/);
+  assert.match(syncSource, /count !== \(data\?\.length \?\? 0\)/);
+  assert.match(syncSource, /!isEligibleCashSourceBatch\(batch\)/);
+  assert.match(syncSource, /Import halted before raw writes/);
+  assert.ok(
+    syncSource.indexOf("await assertNoQuarantinedSaleHashCollisions(supabase, dbRows)") <
+    syncSource.indexOf("await saveRows(supabase, dbRows)"),
+  );
+  assert.match(syncSource, /needsReviewRows === 0 && mappedMachineRows === allRawRows.length/);
 });
 
 test("live sales sync writes the existing canonical VMS transaction pipeline only", () => {
