@@ -64,7 +64,11 @@ export function normalizeOperatorBagBalances(
       caseQuantity,
     });
   }
+  // Investigate negative custody first, then group the remaining balances by
+  // operator. Positive quantities remain visible without another filter tab.
   return rows.sort((a, b) =>
-    a.operatorName.localeCompare(b.operatorName) || a.productName.localeCompare(b.productName)
+    Number(a.quantity >= 0) - Number(b.quantity >= 0)
+    || a.operatorName.localeCompare(b.operatorName)
+    || a.productName.localeCompare(b.productName)
   );
 }
