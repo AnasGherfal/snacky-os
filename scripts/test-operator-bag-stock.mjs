@@ -5,6 +5,7 @@ import {
   normalizeOperatorBagBalances,
 } from "../src/lib/operator-bag-stock.ts";
 import { formatSignedProductQuantity } from "../src/lib/product-quantity.ts";
+import { combineMovementFilterGroups } from "../src/lib/inventory-movement-filter-groups.ts";
 
 const balance = (qty, overrides = {}) => ({
   product_id: "product-1",
@@ -102,4 +103,20 @@ test("discrepancy drilldown filters to one validated operator bag and preserves 
   assert.match(audit, /Invalid operator bag filter/);
   assert.match(audit, /Back to operator bags/);
   assert.match(audit, /\.eq\("product_id", params\.product_id\)/);
+});
+
+test("bag filter cannot be overwritten by text search or machine filters", () => {
+  const bag = ["and(from_entity_type.eq.operator_bag,from_entity_id.eq.bag)", "and(to_entity_type.eq.operator_bag,to_entity_id.eq.bag)"];
+  const machine = ["related_machine_id.eq.machine", "to_entity_id.eq.machine", "from_entity_id.eq.machine"];
+  const search = ["notes.ilike.*x*", "product_id.in.(p1)"];
+  const expression = combineMovementFilterGroups([bag, machine, search]);
+  assert.ok(expression.startsWith("and("), expression);
+  assert.ok(expression.includes("or(" + bag.join(",") + ")"), expression);
+  assert.ok(expression.includes("or(" + machine.join(",") + ")"), expression);
+  assert.ok(expression.includes("or(" + search.join(",") + ")"), expression);
+  assert.equal(combineMovementFilterGroups([]), null);
+  assert.equal(combineMovementFilterGroups([bag]), bag.join(","));
+  const audit = readFileSync("src/app/inventory/movements/page.tsx", "utf8");
+  assert.match(audit, /combineMovementFilterGroups\(alternativeGroups\)/);
+  assert.equal((audit.match(/movementQuery = movementQuery\.or\(/g) ?? []).length, 1);
 });
