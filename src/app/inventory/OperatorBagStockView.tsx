@@ -93,7 +93,10 @@ export async function OperatorBagStockView({
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(Math.max(page, 1), pageCount);
   const rows = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const negativeCount = records.filter((r) => r.quantity < 0).length;
+  const negativeBalances = records.filter((r) => r.quantity < 0);
+  const negativeCount = negativeBalances.length;
+  const affectedOperators = new Set(negativeBalances.map((r) => r.operatorId)).size;
+  const deficitUnits = negativeBalances.reduce((sum, r) => sum + Math.abs(r.quantity), 0);
   const operatorCount = new Set(records.map((r) => r.operatorId)).size;
 
   return <div dir={locale === "ar" ? "rtl" : "ltr"}>
@@ -105,9 +108,34 @@ export async function OperatorBagStockView({
       )}
       action={<SecondaryButton href="/inventory">{tr("Back to Storage", "العودة للمخزن")}</SecondaryButton>}
     />
-    {negativeCount > 0 ? <div role="alert" className="mb-4 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm font-semibold text-rose-900">
-      {tr("Negative operator bag balances need investigation", "هناك أرصدة سالبة في حقائب المشغلين تحتاج تحقيقاً")}: {negativeCount}
-    </div> : null}
+    {negativeCount > 0 ? <section role="alert" aria-label={tr("Operator bag exceptions", "فروقات حقائب المشغلين")}
+      className="mb-4 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-900">
+      <h2 className="font-semibold">{tr("Negative operator bag balances need investigation", "هناك أرصدة سالبة في حقائب المشغلين تحتاج تحقيقاً")}</h2>
+      <p className="mt-1 text-xs text-rose-900">
+        {negativeCount} {tr("products", "منتجات")} · {deficitUnits} {tr("units below zero", "وحدة أقل من الصفر")}
+        {" · "}{affectedOperators} {tr("operator bags", "حقائب مشغلين")}
+      </p>
+      <p className="mt-2 text-xs leading-5">
+        {tr("These are system ledger discrepancies, not proof of physical loss. Review pickups, fills and returns before adjusting anything.",
+          "هذه فروقات في السجل وليست إثباتاً بفقدان بضاعة. راجع السحب والتعبئة والإرجاع قبل أي تعديل.")}
+      </p>
+      <div className="mt-3 space-y-2">
+        {negativeBalances.map((r) => (
+          <div key={`${r.operatorId}:${r.productId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-white p-2">
+            <div className="min-w-0">
+              <strong className="block break-words text-sm">{r.productName}</strong>
+              <span className="text-xs text-rose-800">{r.operatorName} · {r.quantity} {tr("units", "وحدة")}</span>
+            </div>
+            {canSeeMovementHistory ? (
+              <Link href={`/inventory/movements?product_id=${encodeURIComponent(r.productId)}`}
+                className="text-xs font-semibold text-rose-900 underline underline-offset-2">
+                {tr("Review ledger", "مراجعة السجل")}
+              </Link>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section> : null}
     {packagingMissingCount > 0 ? <div role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
       {tr("Packaging details are missing for some balances; those quantities are shown in units only.", "تنقص بيانات الصناديق لبعض الأرصدة؛ نعرض كمياتها بالوحدات فقط.")}
       {" "}({packagingMissingCount})
