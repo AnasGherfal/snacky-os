@@ -38,7 +38,7 @@ function matchesBagSearch(row: BagDisplayRow, q: string) {
  * checked inventory access. This read-only screen must never post ledger rows.
  */
 export async function OperatorBagStockView({
-  client, locale, q, page, pageSize, searchParams, canSeeMovementHistory,
+  client, locale, q, page, pageSize, searchParams, canSeeMovementHistory, canReviewHealth,
 }: {
   client: SupabaseClient;
   locale: string;
@@ -47,6 +47,7 @@ export async function OperatorBagStockView({
   pageSize: number;
   searchParams: SearchParamsRecord;
   canSeeMovementHistory: boolean;
+  canReviewHealth: boolean;
 }) {
   const tr = (en: string, ar: string) => labelError(locale, en, ar);
   const balances = await safeSupabaseQuery<BagLedgerRow>({
@@ -119,6 +120,12 @@ export async function OperatorBagStockView({
         {tr("These are system ledger discrepancies, not proof of physical loss. Review pickups, fills and returns before adjusting anything.",
           "هذه فروقات في السجل وليست إثباتاً بفقدان بضاعة. راجع السحب والتعبئة والإرجاع قبل أي تعديل.")}
       </p>
+      {canReviewHealth ? <div className="mt-3">
+        <Link href="/operations-health#inventory-health"
+          className="inline-flex min-h-11 items-center rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-900">
+          {tr("Review case and verify physical count", "مراجعة الحالة والتحقق بالجرد الفعلي")}
+        </Link>
+      </div> : null}
       <div className="mt-3 space-y-2">
         {negativeBalances.map((r) => (
           <div key={`${r.operatorId}:${r.productId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-white p-2">
