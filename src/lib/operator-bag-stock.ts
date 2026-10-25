@@ -37,10 +37,15 @@ export function normalizeOperatorBagBalances(
   for (const balance of balances) {
     const productId = String(balance.product_id ?? "").trim();
     const operatorId = String(balance.location_id ?? "").trim();
-    if (!productId || !operatorId || balance.quantity_on_hand === null) {
+    const rawQuantity = balance.quantity_on_hand;
+    if (!productId || !operatorId || rawQuantity === null || rawQuantity === undefined
+        || (typeof rawQuantity === "string" && rawQuantity.trim() === "")) {
       throw new Error("Operator bag ledger has a missing identity or quantity");
     }
-    const quantity = Number(balance.quantity_on_hand);
+    if (typeof rawQuantity !== "number" && typeof rawQuantity !== "string") {
+      throw new Error("Operator bag quantity is not a whole signed unit");
+    }
+    const quantity = Number(rawQuantity);
     if (!Number.isSafeInteger(quantity)) {
       throw new Error("Operator bag quantity is not a whole signed unit");
     }
