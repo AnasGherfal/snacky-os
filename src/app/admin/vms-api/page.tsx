@@ -9,6 +9,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
 import { getXyLiveSalesConfig, latestXyLiveSalesHealth } from "@/lib/xy-live-sales-sync";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
 import { XY_MACHINE_ACTIVITY_PROFILES } from "@/lib/xy-stock-activity-alert-rules";
 import { saveXyActivitySiteOverridesAction } from "@/lib/xy-stock-activity-actions";
 import {
@@ -250,6 +251,19 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     );
   }
 
+  const [eligibleCashRawResult, deletedCashRawResult] = await Promise.all([
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+      .is("batch.deleted_at", null),
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .eq("batch.status", "deleted"),
+  ]);
+  const eligibleCashRawRows = !eligibleCashRawResult.error && typeof eligibleCashRawResult.count === "number"
+    ? eligibleCashRawResult.count : null;
+  const deletedCashRawRows = !deletedCashRawResult.error && typeof deletedCashRawResult.count === "number"
+    ? deletedCashRawResult.count : null;
   const liveSalesHealth = await latestXyLiveSalesHealth();
   const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt, liveSalesHealth.sourceReadVerified);
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
@@ -376,6 +390,34 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <p className="mt-3 text-sm leading-6 text-slate-500">Unmatched VMS products are kept for mapping instead of being dropped.</p>
         </section>
       </div>
+
+      <section className="surface-card mb-6" id="cash-transaction-integrity">
+        <h2 className="text-base font-semibold text-slate-900">Cash transaction-source integrity</h2>
+        <p className="mt-1 text-sm text-slate-600">These are read-only raw transaction counts, not revenue totals. Cash reconciliation can only use rows linked to imported, non-deleted source batches; an imported batch still needs its transaction dates, machine mapping and payment methods checked.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">Raw rows in eligible import batches</div>
+            <strong className="mt-1 block text-2xl">{eligibleCashRawRows === null ? "Unverified" : eligibleCashRawRows.toLocaleString("en-US")}</strong>
+            <div className="mt-1 text-xs text-slate-600">Eligibility alone does not confirm complete sales coverage</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">Raw rows in deleted import batches</div>
+            <strong className="mt-1 block text-2xl">{deletedCashRawRows === null ? "Unverified" : deletedCashRawRows.toLocaleString("en-US")}</strong>
+            <div className="mt-1 text-xs text-slate-600">Retained for audit, excluded from cash calculations</div>
+          </div>
+        </div>
+        {eligibleCashRawRows === 0 && deletedCashRawRows !== null && deletedCashRawRows > 0 ? (
+          <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            No raw transactions currently qualify as a cash source, although deleted imports retain history. Do not reactivate or reassign deleted records automatically; review the original deletion and import evidence first.
+          </div>
+        ) : eligibleCashRawRows === null || deletedCashRawRows === null ? (
+          <p role="alert" className="mt-4 text-sm text-amber-900">Transaction batch eligibility could not be verified. Do not interpret missing counts as zero.</p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-4 text-sm">
+          <a href="/vms-import" className="font-medium underline underline-offset-2">Review VMS import history</a>
+          <a href="/cash-collections/action-queue" className="font-medium underline underline-offset-2">Review cash exceptions</a>
+        </div>
+      </section>
 
       <section className="surface-card mb-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
