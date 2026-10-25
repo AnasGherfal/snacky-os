@@ -34,8 +34,11 @@ export type StorageProductBalance = {
 
 export function parseStorageUnits(value: unknown, field: string): number {
   // A missing ledger quantity must not become zero without evidence.
-  if (value === null || value === undefined || value === "") throw new Error(`Missing ${field}`);
-  const n = typeof value === "number" ? value : Number(value);
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+    throw new Error(`Missing ${field}`);
+  }
+  if (typeof value !== "number" && typeof value !== "string") throw new Error(`Invalid whole-unit ${field}`);
+  const n = Number(value);
   if (!Number.isSafeInteger(n)) throw new Error(`Invalid whole-unit ${field}`);
   return n;
 }
