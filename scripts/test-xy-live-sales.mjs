@@ -101,9 +101,29 @@ test("verified XY Trade details fields normalize without guessed aliases", () =>
   assert.equal(normalized.salesPrice, 5);
   assert.equal(normalized.paymentAmount, 5);
   assert.equal(normalized.paymentMethod, "cash");
+  assert.equal(normalized.canonicalRow.payment_method, "Cash", "SQL cash reconciliation reads payment_method");
+  assert.equal(normalized.canonicalRow.mode_of_payment, "Cash");
   assert.equal(normalized.thirdPartyTransactionNumber, "TXN-9001");
   assert.equal(normalized.transactionStatus, "successful_sale");
   assert.equal(normalized.businessDate, "2026-10-04");
+});
+
+test("XY live sales preserve explicit payment-method mapping without inventing cash", () => {
+  const cash = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", showzffs: "Cash", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  const card = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", showzffs: "Card", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  const missing = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  assert.equal(cash.canonicalRow.payment_method, "Cash");
+  assert.equal(card.canonicalRow.payment_method, "Card");
+  assert.equal(missing.canonicalRow.payment_method, "", "no payment method must be invented");
 });
 
 test("verified XY live-sales defaults use Trade details and no longer require endpoint templates", () => {
