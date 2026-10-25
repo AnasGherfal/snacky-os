@@ -48,7 +48,7 @@ test("unmapped products with ledger quantity show an investigation row", () => {
 });
 
 test("invalid or truncated ledger amounts are not converted into plausible stock", () => {
-  for (const bad of [null, undefined, "", "not-a-number", "1.3", Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+  for (const bad of [null, undefined, "", " ", "\t", "\n", false, {}, "not-a-number", "1.3", Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => parseStorageUnits(bad, "qty"), Error);
   }
   assert.throws(() => buildPhysicalStorageBalances([product("a")], [{ product_id: "a", quantity_on_hand: null }]));
