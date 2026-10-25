@@ -22,8 +22,9 @@ test("dashboard restock reuses the in-flight refill rows", () => {
     /safeRestockPriorityForDashboard\(supabase, errors, refillRowsPromise\.then\(\(result\) => result\.data\)\)/,
   );
   assert.match(restockData, /recommendationsPromise\?: PromiseLike<RestockRecommendationRow\[]>/);
-  assert.match(restockData, /options\.recommendationsPromise/);
-  assert.match(restockData, /: safeSupabaseQuery<RestockRecommendationRow>\(/);
+  assert.match(restockData, /const recommendationSummariesPromise = options\.recommendationsPromise/);
+  assert.match(restockData, /\? Promise\.resolve\(\{ data: undefined as RestockRecommendationSummaryRow\[] \| undefined/);
+  assert.match(restockData, /inventoryReadClient\.rpc\("snacky_restock_refill_summary_v1"\)/);
 });
 
 test("dedicated restock page keeps its own recommendation read", () => {

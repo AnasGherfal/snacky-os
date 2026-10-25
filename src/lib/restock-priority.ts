@@ -52,6 +52,12 @@ export type RestockRecommendationRow = {
   priority?: string | null;
 };
 
+export type RestockRecommendationSummaryRow = {
+  product_id: string | null;
+  recommended_refill_qty?: number | string | null;
+  machine_names?: string[] | null;
+};
+
 export type RestockRouteNeedRow = {
   product_id: string | null;
   planned_qty?: number | string | null;
@@ -125,6 +131,7 @@ export type RestockPriorityInput = {
   products: RestockProductInput[];
   storageRows?: RestockStorageRow[];
   recommendations?: RestockRecommendationRow[];
+  recommendationSummaries?: RestockRecommendationSummaryRow[];
   routeNeeds?: RestockRouteNeedRow[];
   machineSlots?: RestockMachineSlotRow[];
   vmsStockRows?: RestockVmsStockRow[];
@@ -199,13 +206,23 @@ export function computeRestockPriority(input: RestockPriorityInput): RestockPrio
 
   const refillQtyByProduct = new Map<string, number>();
   const machinesNeedingNames = new Map<string, Set<string>>();
-  (input.recommendations ?? []).forEach((row) => {
-    if (!row.product_id) return;
-    const qty = Math.max(wholeNumber(row.final_qty_to_take), wholeNumber(row.suggested_qty));
-    if (qty <= 0) return;
-    refillQtyByProduct.set(row.product_id, (refillQtyByProduct.get(row.product_id) ?? 0) + qty);
-    addName(machinesNeedingNames, row.product_id, row.machine_name);
-  });
+  if (input.recommendationSummaries !== undefined) {
+    input.recommendationSummaries.forEach((row) => {
+      if (!row.product_id) return;
+      const qty = wholeNumber(row.recommended_refill_qty);
+      if (qty <= 0) return;
+      refillQtyByProduct.set(row.product_id, (refillQtyByProduct.get(row.product_id) ?? 0) + qty);
+      (row.machine_names ?? []).forEach((name) => addName(machinesNeedingNames, row.product_id!, name));
+    });
+  } else {
+    (input.recommendations ?? []).forEach((row) => {
+      if (!row.product_id) return;
+      const qty = Math.max(wholeNumber(row.final_qty_to_take), wholeNumber(row.suggested_qty));
+      if (qty <= 0) return;
+      refillQtyByProduct.set(row.product_id, (refillQtyByProduct.get(row.product_id) ?? 0) + qty);
+      addName(machinesNeedingNames, row.product_id, row.machine_name);
+    });
+  }
 
   const routeNeedByProduct = new Map<string, number>();
   (input.routeNeeds ?? []).forEach((row) => {
