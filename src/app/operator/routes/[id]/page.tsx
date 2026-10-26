@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import { RouteBagStockFlow } from "@/components/operator/RouteBagStockFlow";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { lyd } from "@/lib/format";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -151,7 +152,7 @@ export default async function OperatorRouteDetailPage({
 }) {
   const { id: routeId } = await params;
   const { success, error } = await searchParams;
-  const { t } = await getServerI18n();
+  const { t, locale } = await getServerI18n();
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
@@ -467,6 +468,10 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
         </div>
 
+        {(routeProductsPrepared || hasPickup || (routeBagBalances?.length ?? 0) > 0) ? (
+          <RouteBagStockFlow routeId={routeId} locale={locale} />
+        ) : null}
+
         {manualSalesError ? (
           <section className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
             {t("manualSales.loadError", "Manual sales could not load. The rest of the route is still available.")}
@@ -605,7 +610,7 @@ export default async function OperatorRouteDetailPage({
                       <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
                     </div>
                     <span className="shrink-0 text-slate-600">
-                      {Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
+                      {Number(item.picked_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
                         ? t("verified remaining unavailable")
                         : `${verifiedRemaining} ${t("remaining in operator bag")}`}
                     </span>
