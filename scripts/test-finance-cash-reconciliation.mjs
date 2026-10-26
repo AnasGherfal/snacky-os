@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 import { compareOwnerCashCountToLedger } from "../src/lib/finance-cash-reconciliation.ts";
+import { verifyFinanceOpeningEvidence } from "../src/lib/finance-opening-evidence.ts";
 
 function entry(date,amount) {
   return {transaction_date:date,transaction_status:"active",import_status:"imported",
@@ -60,4 +61,31 @@ test("growth page only displays same-date differences and never posts financial 
  assert.ok(src.includes("Reconciliation differences are not proven losses"));
  const contract=readFileSync("src/lib/finance-cash-reconciliation.ts","utf8");
  assert.doesNotMatch(contract,/\.update\(|\.insert\(|\.delete\(|\.upsert\(/);
+});
+
+test("opening evidence requires matching Finance cutoff and all four accounts",()=>{
+ const rows=[
+  ["snacky_lyd","9514"],["snacky_usd","660"],["owner_lyd","-24360.50"],["owner_usd","-418"],
+ ].map(([account_id,opening_balance])=>({account_id,opening_balance,balance_date:"2026-05-15"}));
+ const settings={reconciliation_cutoff_date:"2026-05-15"};
+ const complete=verifyFinanceOpeningEvidence(settings,rows);
+ assert.equal(complete.verified,true);
+ if(!complete.verified)throw Error("missing");
+ assert.equal(complete.cutoffDate,"2026-05-15");
+ assert.equal(complete.openingBalances.snacky_lyd,9514);
+ assert.equal(complete.openingBalances.owner_lyd,-24360.5);
+ assert.equal(verifyFinanceOpeningEvidence(settings,rows.slice(0,3)).verified,false);
+ assert.equal(verifyFinanceOpeningEvidence(settings,[...rows,rows[0]]).verified,false);
+ assert.equal(verifyFinanceOpeningEvidence({reconciliation_cutoff_date:"2026-10-26"},rows).verified,false);
+ assert.equal(verifyFinanceOpeningEvidence(null,rows).verified,false);
+});
+
+test("growth reconciliation reads authenticated Finance settings and matching opening records",()=>{
+ const src=readFileSync("src/app/finance/growth-decisions/page.tsx","utf8");
+ assert.ok(src.includes('from("finance_settings")'));
+ assert.ok(src.includes('from("finance_opening_balances")'));
+ assert.ok(src.includes("verifyFinanceOpeningEvidence("));
+ assert.ok(src.includes("openingBalances: financeOpening.openingBalances"));
+ assert.ok(src.includes("cutoffDate: financeOpening.cutoffDate"));
+ assert.ok(src.includes('unverifiedLedgerCash === null ?'));
 });
