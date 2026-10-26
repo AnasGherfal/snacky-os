@@ -75,3 +75,137 @@ export async function loadFinanceLedgerRows({ buildQuery, label }: { label: stri
   }
   return { data: [], count: 0, error: lastError, level: "legacy", selectedColumns: FINANCE_TRANSACTION_LEGACY_COLUMNS, warning: "No finance transactions loaded." };
 }
+
+
+/**
+ * Fetch every visible Finance row in bounded pages and verify exact cardinality.
+ *
+ * A single .limit(10000) does not override the Supabase/PostgREST max_rows
+ * server limit. Accidentally reading the first 1,000 financial transactions
+ * can give a plausible but false cash balance or growth recommendation.
+ *
+ * Caller MUST order by created_at ASC and id ASC before range() to keep
+ * pagination deterministic. If any page, count or schema read is uncertain,
+ * return an error rather than treating a partial ledger as the full ledger.
+ */
+export async function loadCompleteFinanceLedgerRows({
+  buildQuery,
+  label,
+}: {
+  label: string;
+  buildQuery: (
+    columns: readonly string[],
+    level: FinanceLedgerLevel,
+    from: number,
+    to: number,
+  ) => PromiseLike<{
+    data: any[] | null;
+    count?: number | null;
+    error: unknown | null;
+  }>;
+}): Promise<FinanceLedgerQueryResult> {
+  const pageSize = 500;
+  const maxRows = 25000;
+  const attempts: { level: FinanceLedgerLevel; columns: readonly string[] }[] = [
+    { level: "full", columns: FINANCE_TRANSACTION_FULL_COLUMNS },
+    { level: "stable", columns: FINANCE_TRANSACTION_STABLE_COLUMNS },
+    { level: "legacy", columns: FINANCE_TRANSACTION_LEGACY_COLUMNS },
+  ];
+  let previousSchemaError: unknown = null;
+
+  for (const [attemptIndex, attempt] of attempts.entries()) {
+    const allRows: any[] = [];
+    const seenIds = new Set<string>();
+    let expectedCount: number | null = null;
+    let readError: unknown = null;
+
+    for (let from = 0; from < maxRows; from += pageSize) {
+      const result = await buildQuery(attempt.columns, attempt.level, from, from + pageSize - 1);
+      if (result.error) {
+        readError = result.error;
+        break;
+      }
+      if (!Number.isSafeInteger(result.count) || Number(result.count) < 0) {
+        readError = new Error("Finance ledger exact row count unavailable; refusing a partial balance.");
+        break;
+      }
+      const count = Number(result.count);
+      if (expectedCount === null) {
+        expectedCount = count;
+        if (count > maxRows) {
+          readError = new Error(`Finance ledger contains ${count} rows, above the safe ${maxRows} row read cap.`);
+          break;
+        }
+      } else if (count !== expectedCount) {
+        readError = new Error("Finance ledger changed during pagination; retry before using balances.");
+        break;
+      }
+      const rows = result.data;
+      const requiredPageSize = Math.min(pageSize, Math.max(0, count - from));
+      if (!Array.isArray(rows) || rows.length !== requiredPageSize) {
+        readError = new Error(
+          `Finance ledger page ${from} is incomplete: expected ${requiredPageSize} rows, got ${rows?.length ?? "none"}.`,
+        );
+        break;
+      }
+      let duplicateFound = false;
+      for (const row of rows) {
+        const id = typeof row?.id === "string" ? row.id : "";
+        if (!id || seenIds.has(id)) {
+          duplicateFound = true;
+          break;
+        }
+        seenIds.add(id);
+      }
+      if (duplicateFound) {
+        readError = new Error("Finance ledger pagination returned missing or duplicate IDs.");
+        break;
+      }
+      allRows.push(...rows);
+      if (allRows.length === count) {
+        const missing = previousSchemaError
+          ? missingColumnFromError(previousSchemaError, attempts[attemptIndex - 1]?.columns ?? [])
+          : null;
+        const warning = attempt.level === "full"
+          ? null
+          : missing
+            ? `Finance ledger used ${attempt.level} columns because column "${missing}" is missing.`
+            : `Finance ledger used ${attempt.level} columns because latest schema is unavailable.`;
+        return {
+          data: allRows.map(normalizeFinanceLedgerRow),
+          count,
+          error: null,
+          level: attempt.level,
+          selectedColumns: attempt.columns,
+          warning,
+        };
+      }
+    }
+
+    if (!readError) readError = new Error("Finance ledger exceeded safe pagination limits.");
+    console.error(`[finance] ${label} incomplete ${attempt.level} read`, {
+      selected_columns: attempt.columns,
+      expected_rows: expectedCount,
+      received_rows: allRows.length,
+      reason: supabaseErrorDetails(readError),
+    });
+    // Schema fallback is allowed ONLY for missing-column errors. Never silently
+    // fallback on a partial page, missing count, data race or permission error.
+    if (!isFinanceColumnOrSchemaError(readError) ||
+      financeErrorText(readError).includes("transfer_destination_amount")) {
+      return {
+        data: [], count: null, error: readError, level: attempt.level,
+        selectedColumns: attempt.columns,
+        warning: "Finance ledger not completely verified.",
+      };
+    }
+    previousSchemaError = readError;
+  }
+  return {
+    data: [], count: null,
+    error: previousSchemaError ?? new Error("Finance ledger could not be verified."),
+    level: "legacy",
+    selectedColumns: FINANCE_TRANSACTION_LEGACY_COLUMNS,
+    warning: "Finance ledger not completely verified.",
+  };
+}
