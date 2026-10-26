@@ -456,6 +456,7 @@ export default async function OperatorRouteDetailPage({
             focus={nextFocus}
             machineName={focusedMachineName}
             hasPickup={hasPickup}
+            actionLabel={primaryAction?.label ?? tr("Continue", "متابعة")}
             locale={locale}
           />
         ) : null}
