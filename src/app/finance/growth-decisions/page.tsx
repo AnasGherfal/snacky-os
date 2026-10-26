@@ -679,6 +679,7 @@ export default async function GrowthDecisionsPage({
   // remain outside spendable cash and loan proceeds are not added twice.
   const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
   const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
+  const reconciliationGap = liquidity ? money(unverifiedLedgerCash - liquidity.directlyAccessible) : null;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -771,6 +772,9 @@ export default async function GrowthDecisionsPage({
             : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
           <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
             {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
+            {reconciliationGap !== null ? (ar
+              ? ` الفرق مع النقد والمصرف المحصيّ: ${formatFinanceMoney(reconciliationGap)} (ليس خسارة مثبتة؛ راجع حركة النقد لدى الغير).`
+              : ` Difference from counted cash + bank: ${formatFinanceMoney(reconciliationGap)} (not proven loss; investigate custody and ledger timing).`) : ""}
             {unpostedInvestorPayments > 0 ? ` Pending investor payments not posted: ${formatFinanceMoney(unpostedInvestorPayments)}.` : ""}
           </p>
           <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
