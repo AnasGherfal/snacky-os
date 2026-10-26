@@ -74,12 +74,13 @@ export function RouteBagStockFlow({
 
   const machineGroups = (() => {
     if (flow?.state !== "detailed" || !flow.machineFills) return [];
-    const groups = new Map<string, {
+    type FillGroup = {
       machineId: string; machineName: string | null; machineCode: string | null;
       locationName: string | null; total: number; items: RouteMachineFillLine[];
-    }>();
+    };
+    const groups = new Map<string, FillGroup>();
     for (const item of flow.machineFills) {
-      const current = groups.get(item.machineId) ?? {
+      const current: FillGroup = groups.get(item.machineId) ?? {
         machineId: item.machineId, machineName: item.machineName,
         machineCode: item.machineCode, locationName: item.locationName,
         total: 0, items: [],
