@@ -754,10 +754,11 @@ export default function LeftoversPage() {
                 <dd className="mt-1 font-semibold text-slate-900">{assignedBagOwnerName || tr("Name unavailable", "الاسم غير متاح")}</dd>
               </div>
             </dl>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">
-                {tr(`${stopSummaries.length} machine stops in this route`, `${stopSummaries.length} محطة جهاز في هذه الجولة`)}
-              </h2>
+            <details className="group">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                <span>{tr(`${stopSummaries.length} machine stops in this route`, `${stopSummaries.length} محطة جهاز في هذه الجولة`)}</span>
+                <span className="text-xs text-emerald-800">{tr("View stops", "عرض المواقع")}</span>
+              </summary>
               {visibleStopSummaries.length ? (
                 <ul className="mt-2 grid gap-2 sm:grid-cols-2">
                   {visibleStopSummaries.map((stop, index) => (
@@ -784,7 +785,7 @@ export default function LeftoversPage() {
               {hiddenStopCount > 0 ? (
                 <p className="mt-2 text-xs text-slate-500">{tr(`+${hiddenStopCount} more stops`, `+${hiddenStopCount} محطات أخرى`)}</p>
               ) : null}
-            </div>
+            </details>
           </div>
         </SectionCard>
 
