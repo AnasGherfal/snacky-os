@@ -75,7 +75,27 @@ export default async function OperationsHealthPage() {
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
     console.error("[data-health] Workspace unavailable",workspaceResult.error);
-    return <EmptyState title="Data Health unavailable" body="Snacky OS could not load the cleanup workspace."/>;
+    // Closeout is a separate read-only source; keep it usable when the
+    // legacy cleanup RPC is unavailable. NEVER show a green "no issues"
+    // state for a workspace that could not be verified.
+    return <div className="space-y-6">
+      <PageHeader title={tr("Data Health", "صحة البيانات")}
+        subtitle={tr("Owner daily closeout and operational checks", "ملخص الإغلاق اليومي ومراجعة التشغيل")}
+        action={<SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton>} />
+      <OwnerDailyCloseoutActionCenter
+        locale={locale}
+        date={tripoliDate}
+        routes={dueRouteCloseoutResult.data}
+        todayCashNotCounted={todayCashUncounted}
+        allCashNotCounted={allCashWithoutCount}
+        pendingCashReviews={cashReconciliationReviewCount}
+        openRouteStockDifferences={null}
+      />
+      <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+        {tr("Data Health cleanup workspace could not be verified. Inventory exception totals and cleanup controls are unavailable; this is not an all-clear.",
+          "تعذر التحقق من مساحة تنظيف صحة البيانات. إحصاءات فروقات المخزون وإجراءات التنظيف غير متاحة؛ لا يعني ذلك خلو التشغيل من المشاكل.")}
+      </div>
+    </div>;
   }
 
   const data=workspaceResult.data as any,counts=data.counts??{};
