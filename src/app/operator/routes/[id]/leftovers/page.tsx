@@ -850,7 +850,7 @@ export default function LeftoversPage() {
               </p>
             </label>
           ) : (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <div id="return-storage-location" className="scroll-mt-24 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
               {tr("No active storage location can receive this return. Ask an admin to activate one before finalizing the route.", "لا يوجد موقع تخزين نشط لاستلام هذا الإرجاع. اطلب من الإدارة تفعيل موقع قبل إنهاء الجولة.")}
             </div>
           )
@@ -964,7 +964,7 @@ export default function LeftoversPage() {
               <strong>{tr("Instructions:", "التعليمات:")}</strong> {tr("Count each product before handing the bag stock back to storage. Do not enter zero unless there are physically zero units in the bag.", "عدّ كل منتج قبل تسليم مخزون الحقيبة إلى المخزن. لا تدخل صفراً إلا إذا لم توجد أي وحدة فعلياً في الحقيبة.")}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={useLedgerCounts} className="btn-secondary">
-                  {tr("Use Snacky OS counts", "استخدام أرصدة Snacky OS")}
+                  {tr("Prefill ledger quantities — still count physically", "تعبئة الكميات من السجل — يجب العدّ الفعلي")}
                 </button>
               </div>
             </div>
