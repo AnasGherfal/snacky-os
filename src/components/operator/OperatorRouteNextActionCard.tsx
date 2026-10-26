@@ -5,11 +5,13 @@ export function OperatorRouteNextActionCard({
   focus,
   machineName,
   hasPickup,
+  actionLabel,
   locale,
 }: {
   focus: OperatorRouteNextFocus;
   machineName: string | null;
   hasPickup: boolean;
+  actionLabel: string;
   locale: "ar" | "en";
 }) {
   const ar = locale === "ar";
@@ -44,7 +46,7 @@ export function OperatorRouteNextActionCard({
         </div>
         <Link href={focus.href}
           className="flex min-h-12 w-full shrink-0 items-center justify-center rounded-xl bg-amber-400 px-5 py-3 text-center text-sm font-bold text-slate-950 transition-colors hover:bg-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-2 focus-visible:ring-offset-emerald-950 sm:w-auto">
-          {tr("Continue", "متابعة")}
+          {actionLabel}
         </Link>
       </div>
       <div className="px-4 py-3 sm:px-5">
