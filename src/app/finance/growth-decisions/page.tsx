@@ -22,6 +22,8 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import {
   computeFinanceBalancesFromCutoff,
   formatFinanceMoney,
+  FINANCE_RECONCILIATION_CUTOFF_DATE,
+  isFinanceLedgerTransaction,
 } from "@/lib/finance-balance";
 import {
   applyVisibleFinanceLedgerFilter,
@@ -683,7 +685,21 @@ export default async function GrowthDecisionsPage({
   // remain outside spendable cash and loan proceeds are not added twice.
   const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
   const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
-  const reconciliationGap = liquidity ? money(unverifiedLedgerCash - liquidity.directlyAccessible) : null;
+  // A cash count is date-stamped evidence. Compare the ledger to the
+  // attestation DATE, not a later balance that could include new activity.
+  // The cutoff opening balance cannot be back-projected before its date.
+  const countedAsOf = String(latestLiquidity?.as_of_date ?? "");
+  const activeUndatedLedgerRows = ledgerRows.some(row => isFinanceLedgerTransaction(row) && !row.transaction_date);
+  const ledgerAtCountDate = liquidity && countedAsOf >= FINANCE_RECONCILIATION_CUTOFF_DATE
+    && !activeUndatedLedgerRows
+    ? computeFinanceBalancesFromCutoff({
+        rows: ledgerRows.filter(row => row.transaction_date && row.transaction_date <= countedAsOf),
+      }).snacky_lyd
+    : null;
+  const differenceVsControlledCash = ledgerAtCountDate !== null && liquidity
+    ? money(ledgerAtCountDate - liquidity.directlyAccessible) : null;
+  const differenceVsAllCustody = ledgerAtCountDate !== null && liquidity
+    ? money(ledgerAtCountDate - liquidity.totalFundsIncludingCustody) : null;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -776,9 +792,15 @@ export default async function GrowthDecisionsPage({
             : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
           <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
             {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
-            {reconciliationGap !== null ? (ar
-              ? ` الفرق مع النقد والمصرف المحصيّ: ${formatFinanceMoney(reconciliationGap)} (ليس خسارة مثبتة؛ راجع حركة النقد لدى الغير).`
-              : ` Difference from counted cash + bank: ${formatFinanceMoney(reconciliationGap)} (not proven loss; investigate custody and ledger timing).`) : ""}
+            {differenceVsControlledCash !== null && differenceVsAllCustody !== null ? (ar
+              ? ` المطابقة بتاريخ الجرد ${countedAsOf}: الفرق عن النقد والمصرف ${formatFinanceMoney(differenceVsControlledCash)}؛ والفرق عن النقد والمصرف والأموال لدى الغير ${formatFinanceMoney(differenceVsAllCustody)}.`
+              : ` At the counted date (${countedAsOf}): ledger minus cash + bank = ${formatFinanceMoney(differenceVsControlledCash)}; ledger minus cash + bank + custody = ${formatFinanceMoney(differenceVsAllCustody)}.`) : ""}
+            {liquidity && ledgerAtCountDate === null ? (ar
+              ? " المقارنة بتاريخ الجرد غير متاحة بسبب نقص مصدر الحساب أو تاريخ سابق لرصيد الافتتاح."
+              : " Same-date reconciliation unavailable due to incomplete ledger dates or a count before the opening-balance cutoff.") : ""}
+            {liquidity ? (ar
+              ? " فروقات المطابقة ليست خسارة مثبتة ولا تُنشئ قيداً مالياً آلياً."
+              : " Reconciliation differences are not proven losses and never create balancing transactions.") : ""}
             {unpostedInvestorPayments > 0 ? ` Pending investor payments not posted: ${formatFinanceMoney(unpostedInvestorPayments)}.` : ""}
           </p>
           <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
