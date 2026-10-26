@@ -81,6 +81,9 @@ test("owner of route sees next action above stats and active stop is highlighted
  assert.ok(ui.includes("aria-valuenow={focus.doneStops}"));
  assert.ok(ui.includes('href="#route-machine-stops"'));
  assert.ok(ui.includes('href={focus.href}'));
+ assert.ok(ui.includes("{actionLabel}"));
+ assert.ok(page.includes('actionLabel={primaryAction?.label ?? tr("Continue", "متابعة")}'));
+
  assert.ok(ui.includes("الموقع التالي المقترح"));
  assert.ok(ui.includes("Progress counts completed and skipped stops"));
  assert.doesNotMatch(helper,/\.from\(|\.rpc\(|\bfetch\(|\.insert\(|\.update\(|\.delete\(/);
