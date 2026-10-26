@@ -90,20 +90,45 @@ type MachineContextRow = {
 };
 
 async function loadAllRouteMovements(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, routeId: string) {
-  const pageSize = 1000;
+  // A PostgREST server row cap can silently truncate one request even with
+  // range(0,999). Never call incomplete movements verified picked/fill data.
+  const pageSize = 400;
+  const maxRows = 20000;
   const rows: RouteInventoryMovementRow[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+  const seenIds = new Set<string>();
+  let expectedCount: number | null = null;
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, count, error } = await supabase
       .from("inventory_movements")
-      .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id")
+      .select("id, product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id", { count: "exact" })
       .eq("related_route_id", routeId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw error;
-    rows.push(...((data ?? []) as RouteInventoryMovementRow[]));
-    if ((data?.length ?? 0) < pageSize) return rows;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      throw new Error("Route inventory movement count could not be verified.");
+    }
+    if (expectedCount === null) {
+      expectedCount = count;
+      if (expectedCount > maxRows) throw new Error("Route movement history exceeds safe read cap.");
+    } else if (count !== expectedCount) {
+      throw new Error("Route inventory changed during descriptive movement read.");
+    }
+    const expected = Math.min(pageSize, Math.max(0, count - from));
+    if (!Array.isArray(data) || data.length !== expected) {
+      throw new Error("Route inventory movement page was truncated; quantities remain unverified.");
+    }
+    for (const item of data) {
+      if (typeof item.id !== "string" || !item.id || seenIds.has(item.id)) {
+        throw new Error("Route inventory movement page includes a missing or duplicate identifier.");
+      }
+      seenIds.add(item.id);
+    }
+    rows.push(...(data as RouteInventoryMovementRow[]));
+    if (rows.length === count) return rows;
   }
+  throw new Error("Route movement history did not complete within safe read cap.");
 }
 
 async function loadOptionalRouteMovements(
