@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 import {buildDueRouteCloseout} from "../src/lib/owner-daily-closeout.ts";
-import {loadAllExactOwnerRows} from "../src/lib/owner-closeout-source.ts";
+import {loadAllExactOwnerRows} from "../src/lib/owner-closeout-pagination.ts";
 
 const today="2026-10-27";
 const route=(id,status="in_progress",route_date="2026-10-26",operator_id="operator-1")=>
