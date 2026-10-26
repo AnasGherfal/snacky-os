@@ -59,13 +59,13 @@ export function OwnerDailyCloseoutActionCenter({
       count:allCashNotCounted,
       detail:tr("All dates, including older cash. Today's uncounted: ", "جميع التواريخ، بما فيها النقد السابق. غير المعدود اليوم: ")
         +(todayCashNotCounted===null?tr("Unverified", "غير مؤكد"):String(todayCashNotCounted)),
-      href:"/cash-collections/action-queue",
+      href:"/cash-collections",
     },
     {
       title:tr("Cash reconciliation pending or variance", "نقد بانتظار التسوية أو مراجعة الفروقات"),
       count:pendingCashReviews,
       detail:tr("All dates, including older records; not an asserted cash loss.", "كل التواريخ بما فيها السجلات القديمة؛ لا يعني فقد نقد مثبت."),
-      href:"/cash-collections/action-queue",
+      href:"/cash-collections",
     },
     {
       title:tr("Open route stock discrepancies", "فروقات مخزون الجولات المفتوحة"),
