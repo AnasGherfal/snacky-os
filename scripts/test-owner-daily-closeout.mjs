@@ -51,6 +51,17 @@ test("unassigned, empty-stop and inconsistent workflows require review instead o
  assert.equal(r.routeQueue.every(x=>x.action==="review_route"),true);
 });
 
+test("unstarted and unknown-status routes are workflow review, never treated as filling or bag return",()=>{
+  const r=buildDueRouteCloseout({
+    routes:[route("unstarted","assigned"),route("unknown","new_unknown_state")],
+    stops:[stop("s1","unstarted","picked"),stop("s2","unknown","in_progress")],
+    todayTripoli:today,
+  });
+  assert.equal(r.routesNeedingWorkflowReview,2);
+  assert.equal(r.routesWithUnfinishedStops,0);
+  assert.equal(r.routesNeedingBagCountReview,0);
+});
+
 test("priority is stable and does not mutate source, with an eight-item visual cap",()=>{
  const routes=Array.from({length:17},(_,i)=>route("route-"+i,"in_progress","2026-10-25"));
  const stops=routes.map((r,i)=>stop("s-"+i,r.id,"in_progress"));
