@@ -90,7 +90,7 @@ export default async function OwnerLiquidityPage({ searchParams }: {
 
     <section className="surface-card">
       <h2 className="text-lg font-semibold">Record a new cash and debt count / تسجيل رصيد جديد</h2>
-      <p className="mb-4 mt-1 text-sm text-slate-600">Append-only management snapshot. Enter the money actually held at this moment and the full balances you still owe. Do not enter the original loan as another cash asset when its proceeds are already in the bank.</p>
+      <p className="mb-4 mt-1 text-sm text-slate-600">Append-only management snapshot. Enter money physically held and the debts still outstanding. Do not add original loan proceeds again when they are already in the bank. Do not include investor distributions that are already recorded as investor amounts due in Growth Decisions.</p>
       <form action={recordOwnerLiquidityAttestation} className="space-y-4">
         <input type="hidden" name="client_submission_id" value={crypto.randomUUID()} />
         <div className="grid gap-4 sm:grid-cols-2">
