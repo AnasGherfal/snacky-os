@@ -4,7 +4,7 @@ import {
   isFinanceLedgerTransaction,
   type BalanceTransaction,
   type FinanceBalances,
-} from "./finance-balance";
+} from "@/lib/finance-balance";
 
 export type FinanceCashReconciliation =
   | { verified: false; reason: "invalid_count" | "invalid_date" | "before_opening_balance" | "undated_active_entry" }
