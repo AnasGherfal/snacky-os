@@ -58,10 +58,13 @@ export default async function OperationsHealthPage() {
   const staleRefills=Array.isArray(data.stale_refills)?data.stale_refills:[];
   const legacyCash=Array.isArray(data.legacy_cash)?data.legacy_cash:[];
   const vmsCleanup=Array.isArray(data.vms_cleanup)?data.vms_cleanup:[];
+  const machineSetupVerified = !machinesResult.error && !locationsResult.error
+    && Array.isArray(machinesResult.data) && Array.isArray(locationsResult.data);
   const machines=machinesResult.data??[],locations=locationsResult.data??[];
   const missingMachineLocation=machines.filter((m:any)=>!m.location_id);
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
-  const currentCashCount=currentCashResult.count??0;
+  const currentCashCount = !currentCashResult.error && typeof currentCashResult.count === "number"
+    ? currentCashResult.count : null;
   const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
     ? routeDiscrepanciesResult.count : null;
   const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
@@ -70,14 +73,16 @@ export default async function OperationsHealthPage() {
   const cards=[
     ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
     ...(cashSourceGapCount !== null ? [["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"] as const] : []),
-    ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
-    ["Active sites missing distance",missingDistance.length,"/machines/setup"],
+    ...(machineSetupVerified ? [["Machines missing site",missingMachineLocation.length,"/machines/setup"] as const] : []),
+    ...(machineSetupVerified ? [["Active sites missing distance",missingDistance.length,"/machines/setup"] as const] : []),
     ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
     ["Safe stale refill cancellations",Number(counts.safe_refill_cancellations??0),"#stale-refills"],
-    ["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"],
+    ...(currentCashCount !== null ? [["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"] as const] : []),
     ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
   ] as const;
   const activeCards=cards.filter(([,value])=>value>0);
+  const dataHealthCountsIncomplete = !machineSetupVerified || currentCashCount === null
+    || openRouteDiscrepancyCount === null || cashSourceGapCount === null;
 
   return <div className="space-y-6">
     <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
@@ -105,6 +110,13 @@ export default async function OperationsHealthPage() {
       <p className="text-xs text-slate-500">Historical exceptions, unpaid supplier purchases, missing sales imports and open route differences remain in the existing review sections below. This snapshot never posts cash, closes routes or changes stock.</p>
     </section>
 
+    {(currentCashCount === null || !machineSetupVerified) ? (
+      <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        {currentCashCount === null ? "Historical cash action count could not be verified. " : ""}
+        {!machineSetupVerified ? "Machine and location setup data could not be verified." : ""}
+        {" "}Unknown counts are never treated as zero.
+      </p>
+    ) : null}
     {(openRouteDiscrepancyCount === null || cashSourceGapCount === null) ? (
       <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
         {openRouteDiscrepancyCount === null ? <>Route inventory discrepancy totals could not be verified. They have not been treated as zero. <Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>. </> : null}
@@ -113,12 +125,20 @@ export default async function OperationsHealthPage() {
     ) : null}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No active data-health exceptions.</div>}
+      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div role={dataHealthCountsIncomplete ? "alert" : "status"} className={dataHealthCountsIncomplete
+        ? "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+        : "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"}>
+        {dataHealthCountsIncomplete ? "Some data-health counts are unverified. Do not treat an empty list as an all-clear." : "No active data-health exceptions."}
+      </div>}
     </section>
 
     <section className="surface-card">
       <div className="mb-4"><h2 className="text-lg font-semibold">Machine & location setup</h2><p className="mt-1 text-sm text-slate-500">Every operating machine needs its real current site; every active site should have one-way distance from storage.</p></div>
-      {!missingMachineLocation.length&&!missingDistance.length?<EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance."/>:
+      {!machineSetupVerified ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Machine and location setup could not be verified. No missing-site totals have been assumed to be zero.
+        </p>
+      ) : !missingMachineLocation.length&&!missingDistance.length?<EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance."/>:
       <div className="grid gap-5 xl:grid-cols-2">
         <div><h3 className="mb-2 font-medium">Machines without site</h3>{missingMachineLocation.map((m:any)=><div key={m.id} className="mb-2 rounded-lg border p-3"><strong>{m.name}</strong><p className="text-xs text-slate-500">{m.machine_code} · {m.status}</p></div>)}</div>
         <div><h3 className="mb-2 font-medium">Sites missing distance</h3>{missingDistance.map((l:any)=><div key={l.id} className="mb-2 rounded-lg border p-3"><strong>{l.name}</strong><p className="text-xs text-slate-500">{l.address??"No address recorded"}</p></div>)}</div>
