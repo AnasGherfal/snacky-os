@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { OwnerQaRouteCard } from "@/components/operator/OwnerQaRouteCard";
+import { prioritizeAssignedOperatorRoutes, routeQueueItem, type RouteQueueUrgency } from "@/lib/operator-route-list-focus";
 import { redirect } from "next/navigation";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";
@@ -29,7 +30,6 @@ import {
 } from "@/lib/operator-route-types";
 import {
   isOperatorVisibleRouteStatus,
-  isRouteStopDoneStatus,
   isTerminalRouteStatus,
   routeDisplayStatus,
 } from "@/lib/route-workflow";
@@ -163,6 +163,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
   const availableView = rawView === "available";
   const { t, locale } = await getServerI18n();
   const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
+  const tripoliToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
 
@@ -264,15 +265,18 @@ export default async function OperatorRoutesPage({ searchParams }: {
         .filter(Boolean),
     ),
   );
-  const { data: stopRows, error: stopsError } = routeIds.length
+  const { data: stopRows, error: stopsError, count: stopCount } = routeIds.length
     ? await routeReadClient
         .from("route_stops")
-        .select("id, route_id, status, stop_order, machine_id")
+        .select("id, route_id, status, stop_order, machine_id", { count: "exact" })
         .in("route_id", routeIds)
         .order("stop_order", { ascending: true })
-    : { data: [], error: null };
+    : { data: [], error: null, count: 0 };
 
-  if (stopsError) {
+  const stopsVerified = !stopsError && typeof stopCount === "number" && Array.isArray(stopRows)
+    && stopRows.length === stopCount
+    && new Set(stopRows.map(stop => stop.id)).size === stopRows.length;
+  if (stopsError || !stopsVerified) {
     logRouteLoaderIssue({
       step: "load_route_stop_summaries",
       query: "route_stops",
@@ -283,7 +287,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
   }
 
   const stopsByRouteId = new Map<string, OperatorRoutePreviewStopRow[]>();
-  if (!stopsError) {
+  if (stopsVerified) {
     (
       (stopRows ?? []) as (OperatorRoutePreviewStopRow & {
         route_id?: string | null;
@@ -307,9 +311,11 @@ export default async function OperatorRoutesPage({ searchParams }: {
   });
   const assignedRoutes = baseAssignedRoutes.map(attachStops);
   const availableRoutes = baseAvailableRoutes.map(attachStops);
-  const assignedOpenRoutes = assignedRoutes.filter(
-    (route) => !isTerminalRouteStatus(route.status),
-  );
+  const assignedOpenRoutes = prioritizeAssignedOperatorRoutes(
+    assignedRoutes.filter(route => !isTerminalRouteStatus(route.status)), tripoliToday, stopsVerified,
+  ).map(item => item.route);
+  const priorityRoute = assignedOpenRoutes[0] ?? null;
+  const priorityRouteSummary = priorityRoute ? routeQueueItem(priorityRoute, tripoliToday, stopsVerified) : null;
   const completedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))
     .sort((a, b) =>
