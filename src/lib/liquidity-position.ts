@@ -11,7 +11,7 @@ const round = (value: number) => Math.round(value * 100) / 100;
 
 export function validLyd(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
-    && value <= 1_000_000_000 && Math.round(value * 100) === value * 100;
+    && value <= 1_000_000_000 && Math.abs(value * 100 - Math.round(value * 100)) < 0.000001;
 }
 
 export function parseLydInput(value: FormDataEntryValue | null): number | null {
