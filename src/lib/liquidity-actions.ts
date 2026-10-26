@@ -74,11 +74,15 @@ export async function recordOwnerLiquidityAttestation(formData: FormData) {
     // A double-click / network retry must never generate a second attestation.
     if (error.code !== "23505") fail("Could not save the owner snapshot. No Finance ledger balance was changed.");
     const prior = await db.from("owner_liquidity_attestations")
-      .select("id,as_of_date,cash_on_hand_lyd,bank_lyd,custody_lyd,immediate_debt_lyd,short_term_debt_lyd,created_by")
+      .select("id,as_of_date,cash_on_hand_lyd,bank_lyd,custody_lyd,immediate_debt_lyd,short_term_debt_lyd,immediate_debt_due_date,short_term_debt_due_date,custody_details,debt_details,created_by")
       .eq("client_submission_id", submissionId).maybeSingle();
     const same = !prior.error && prior.data && prior.data.created_by === profile.id
       && prior.data.as_of_date === asOf
-      && moneyFields.every(name => Number(prior.data?.[name]) === row[name]);
+      && moneyFields.every(name => Number(prior.data?.[name]) === row[name])
+      && (prior.data.immediate_debt_due_date ?? null) === row.immediate_debt_due_date
+      && (prior.data.short_term_debt_due_date ?? null) === row.short_term_debt_due_date
+      && (prior.data.custody_details ?? null) === row.custody_details
+      && (prior.data.debt_details ?? null) === row.debt_details;
     if (!same) fail("This submission ID was already used with different figures. Reload and try again.");
   }
   revalidatePath("/finance/liquidity");
