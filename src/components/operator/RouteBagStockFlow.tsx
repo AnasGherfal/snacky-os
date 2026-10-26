@@ -24,7 +24,7 @@ export function RouteBagStockFlow({
   locale: "en" | "ar";
 }) {
   const ar = locale === "ar";
-  const tr = (en: string, arabic: string) => ar ? arabic : en;
+  const tr = useCallback((en: string, arabic: string) => ar ? arabic : en, [ar]);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [flow, setFlow] = useState<OperatorRouteStockFlow | null>(null);
@@ -62,12 +62,13 @@ export function RouteBagStockFlow({
       window.clearTimeout(timeout);
       setLoading(false);
     }
-  }, [routeId, loading, ar]);
+  }, [routeId, loading, tr]);
 
   const open = () => {
     if (expanded) { setExpanded(false); return; }
     setExpanded(true);
-    if (!flow) void refresh();
+    // Route inventory can change at every completed stop: refresh each open.
+    void refresh();
   };
 
   return (
