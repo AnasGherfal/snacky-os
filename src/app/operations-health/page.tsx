@@ -30,7 +30,11 @@ export default async function OperationsHealthPage() {
   const tripoliDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const todayStart = `${tripoliDate}T00:00:00+02:00`;
   const tomorrowStart = new Date(Date.parse(todayStart) + 86400000).toISOString();
-  const [todayCashResult,todayCashUncountedResult,todayRoutesResult] = await Promise.all([
+  const [
+    todayCashResult,todayCashUncountedResult,todayRoutesResult,
+    workspaceResult,machinesResult,locationsResult,currentCashResult,
+    routeDiscrepanciesResult,cashSourceGapsResult,
+  ] = await Promise.all([
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
     db.from("cash_collections").select("id",{count:"exact",head:true})
@@ -39,12 +43,6 @@ export default async function OperationsHealthPage() {
     db.from("routes").select("id",{count:"exact",head:true})
       .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
       .not("status","in", "(cancelled,canceled,voided)"),
-  ]);
-  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
-  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
-  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
-
-  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult,cashSourceGapsResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
@@ -52,6 +50,11 @@ export default async function OperationsHealthPage() {
     db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
   ]);
+  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
+  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
+  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+
+
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
     console.error("[data-health] Workspace unavailable",workspaceResult.error);
