@@ -1,4 +1,5 @@
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { loadAllExactOwnerRows } from "@/lib/owner-closeout-pagination";
 import { isTerminalRouteStatus } from "@/lib/route-workflow";
 import {
   buildDueRouteCloseout,
@@ -8,8 +9,6 @@ import {
 } from "@/lib/owner-daily-closeout";
 
 type DB = NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-
-import { loadAllExactOwnerRows } from "@/lib/owner-closeout-pagination";
 
 const routeIdBatchSize = 35;
 
