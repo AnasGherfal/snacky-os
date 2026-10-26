@@ -1099,8 +1099,12 @@ export default function LeftoversPage() {
 
             <div className="sticky bottom-2 z-20 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-lg backdrop-blur sm:static sm:mx-0 sm:rounded-xl sm:border sm:border-slate-200 sm:px-4 sm:shadow-none">
               <p aria-live="polite" className="text-xs font-semibold text-slate-700">
-                {tr(String(returnReadiness.countConfirmed) + " of " + returnReadiness.countTotal + " products physically confirmed",
-                  "تم تأكيد " + returnReadiness.countConfirmed + " من " + returnReadiness.countTotal + " منتجات بعد العدّ الفعلي")}
+                {returnReadiness.countTotal === 0
+                  ? returnReadiness.physicalCountComplete
+                    ? tr("Empty bag physically confirmed", "تم تأكيد خلو الحقيبة بعد الفحص الفعلي")
+                    : tr("Confirm the bag is physically empty", "تأكد فعلياً أن الحقيبة فارغة")
+                  : tr(String(returnReadiness.countConfirmed) + " of " + returnReadiness.countTotal + " products physically confirmed",
+                      "تم تأكيد " + returnReadiness.countConfirmed + " من " + returnReadiness.countTotal + " منتجات بعد العدّ الفعلي")}
               </p>
               {returnReadiness.nextStep && !submitting ? (
                 <a href={"#" + returnReadiness.nextStep.anchor}
