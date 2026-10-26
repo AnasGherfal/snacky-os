@@ -1,10 +1,14 @@
 import {
   nextOperatorRouteHref,
   isRouteStopDoneStatus,
-  type RouteStopLike,
 } from "@/lib/route-workflow";
 
-type RouteFocusStop = RouteStopLike & {machine_id?: string | null};
+type RouteFocusStop = {
+  id: string;
+  status?: string | null;
+  stop_order?: number | null;
+  machine_id?: string | null;
+};
 
 export type OperatorRouteNextFocus = {
   href: string;
