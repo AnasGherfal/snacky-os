@@ -5,6 +5,7 @@ import { canAccessOperatorRoute, isAdminRole } from "@/lib/authz";
 import { normalizeInventoryEntityType } from "@/lib/inventory-movement";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { summarizeRouteInventoryMovements, type RouteInventoryMovementRow } from "@/lib/route-inventory-summary";
+import { summarizeRouteMachineFillMovements } from "@/lib/route-machine-fill-detail";
 import { isRouteInventoryFinalizableStatus, isRouteStopDoneStatus, isTerminalRouteStatus } from "@/lib/route-workflow";
 
 const NO_STORE_HEADERS = {
@@ -415,6 +416,25 @@ export async function GET(
       ].some((value) => value !== 0))
       .sort((a, b) => a.productName.localeCompare(b.productName));
 
+    // Reuse the already paginated route movement rows. Only route-listed
+    // machines can receive an attributed filled quantity; other custody
+    // movements remain separate from actual machine filling.
+    const fillDetail = routeMovementsError
+      ? null : summarizeRouteMachineFillMovements(routeMovements, machineIds);
+    const machineFills = fillDetail?.verified ? fillDetail.rows.map((fill) => {
+      const machine = machineById.get(fill.machineId);
+      const location = Array.isArray(machine?.location) ? machine.location[0] : machine?.location;
+      return {
+        machineId: fill.machineId,
+        productId: fill.productId,
+        filledQty: fill.filledQty,
+        productName: productById.get(fill.productId) ?? fill.productId,
+        machineName: String(machine?.name ?? "").trim() || null,
+        machineCode: String(machine?.machine_code ?? "").trim() || null,
+        locationName: String(location?.name ?? "").trim() || null,
+      };
+    }) : null;
+
     const routeStatus = String(route.status ?? "");
     const stopStatuses = routeStopStatusRows.map((stop) => String(stop.status ?? ""));
     const unfinishedStopCount = stopStatuses.filter((status) => !isRouteStopDoneStatus(status)).length;
@@ -470,6 +490,8 @@ export async function GET(
       pendingStopIds,
       reconciliation,
       descriptiveReconciliationAvailable: !routeMovementsError,
+      machineFills,
+      machineFillCoverageComplete: Boolean(fillDetail?.verified),
       returnStorageOptions,
       suggestedStorageLocationId,
       requiresStorageSelection: returnStorageOptions.length > 1 && suggestedStorageLocationId === null,
