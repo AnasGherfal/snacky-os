@@ -29,6 +29,7 @@ import {
   loadFinanceLedgerRows,
 } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
+import { calculateLiquidityPosition, isCurrentLiquidityAttestation } from "@/lib/liquidity-position";
 import { summarizeDirectMachineExpenses } from "@/lib/machine-direct-operating-costs";
 import {
   calculateInvestorMonth,
@@ -363,6 +364,7 @@ export default async function GrowthDecisionsPage({
     refillResult,
     statementsResult,
     paymentsResult,
+    liquidityResult,
   ] = await Promise.all([
     loadFinanceLedgerRows({
       label: "growth-decisions.finance-ledger",
@@ -408,6 +410,9 @@ export default async function GrowthDecisionsPage({
     supabase
       .from("investor_payments")
       .select("amount_lyd, finance_posting_status"),
+    supabase.from("owner_liquidity_attestations")
+      .select("as_of_date,cash_on_hand_lyd,bank_lyd,custody_lyd,immediate_debt_lyd,short_term_debt_lyd,created_at")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   if (ledgerResult.error) {
@@ -656,9 +661,24 @@ export default async function GrowthDecisionsPage({
   const unpostedInvestorPayments = (paymentsResult.data ?? [])
     .filter((row) => row.finance_posting_status !== "posted")
     .reduce((sum, row) => sum + numeric(row.amount_lyd), 0);
-  const cashAvailable = money(
-    financeBalances.snacky_lyd - unpostedInvestorPayments,
-  );
+  const unverifiedLedgerCash = money(financeBalances.snacky_lyd - unpostedInvestorPayments);
+  const tripoliToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const latestLiquidity = !liquidityResult.error ? liquidityResult.data : null;
+  const liquidityVerified = Boolean(latestLiquidity
+    && isCurrentLiquidityAttestation(String(latestLiquidity.as_of_date), tripoliToday));
+  const liquidity = liquidityVerified && latestLiquidity ? calculateLiquidityPosition({
+    cashOnHandLyd: Number(latestLiquidity.cash_on_hand_lyd),
+    bankLyd: Number(latestLiquidity.bank_lyd),
+    custodyLyd: Number(latestLiquidity.custody_lyd),
+    immediateDebtLyd: Number(latestLiquidity.immediate_debt_lyd),
+    shortTermDebtLyd: Number(latestLiquidity.short_term_debt_lyd),
+  }) : null;
+  // The Finance ledger is not proof of currently held cash. Custodian funds
+  // remain outside spendable cash and loan proceeds are not added twice.
+  const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
+  const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -675,7 +695,9 @@ export default async function GrowthDecisionsPage({
   ).length;
 
   const decision = buildGrowthDecision({
-    cashAvailableLyd: cashAvailable,
+    cashAvailableLyd: cashAvailable ?? 0,
+    shortTermDebtLyd: knownShortTermDebt,
+    liquidityVerified,
     machineCostLyd: numeric(settings.machine_cost_lyd),
     minimumCashReserveLyd: numeric(settings.minimum_cash_reserve_lyd),
     restockReserveLyd: numeric(settings.restock_reserve_lyd),
@@ -737,6 +759,20 @@ export default async function GrowthDecisionsPage({
             {notice.text}
           </div>
         ) : null}
+
+        <section className={liquidityVerified ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" : "rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"}>
+          <strong>{ar ? "السيولة الفعلية قبل التوسع" : "Owner cash and repayment check"}</strong>
+          {liquidity ? <p className="mt-1">{ar ? "النقد والمصرف" : "Cash + bank"}: {formatFinanceMoney(liquidity.directlyAccessible)}.
+            {" "}{ar ? "لدى الغير (غير متاح للصرف)" : "Held by others (not spendable)"}: {formatFinanceMoney(liquidity.physicallyHeldElsewhere)}.
+            {" "}{ar ? "ديون قصيرة مستحقة" : "Outstanding short-term debt"}: {formatFinanceMoney(liquidity.totalDebts)}.
+            {" "}{ar ? "بعد حجز الديون" : "After setting aside debts"}: {formatFinanceMoney(liquidity.afterAllDebts)}.
+          </p> : <p className="mt-1">{ar
+            ? "لا يوجد جرد حديث مؤكد للنقد والمصرف والديون. توصيات شراء الأجهزة معلقة إلى حين توثيق السيولة."
+            : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
+          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
+            {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}</p>
+          <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
+        </section>
 
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
           <span className="font-semibold text-slate-900">
@@ -855,7 +891,7 @@ export default async function GrowthDecisionsPage({
                   {ar ? "النقد بعد شراء الجهاز" : "Cash after machine purchase"}
                 </div>
                 <div className="mt-1 text-xl font-semibold">
-                  {formatFinanceMoney(decision.cashAfterMachinePurchaseLyd)}
+                  {liquidityVerified ? formatFinanceMoney(decision.cashAfterMachinePurchaseLyd) : (ar ? "غير مؤكد" : "Unverified")}
                 </div>
               </div>
             </div>
@@ -935,7 +971,7 @@ export default async function GrowthDecisionsPage({
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            [ar ? "النقد المتاح" : "Available Snacky cash", cashAvailable],
+            [ar ? "النقد والبنك حسب الجرد" : "Counted cash + bank", cashAvailable],
             [
               ar ? "متوسط الربح التشغيلي" : "Average monthly operating profit",
               reliableAverageMonthlyOperatingProfit,
