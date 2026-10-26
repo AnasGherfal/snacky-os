@@ -37,12 +37,24 @@ test("multiple custodians are aggregated per route, explicitly warning of handof
    {productId:"water",productName:"Water",bagOwnerId:"operator-1",signedQuantity:2},
    {productId:"water",productName:"Water",bagOwnerId:"operator-2",signedQuantity:1},
   ],
-  requiresManagerReconciliation:true,
+  requiresManagerReconciliation:false, // owner/admin still sees mixed custody
  });
  assert.equal(result.state,"detailed");
  if(result.state==="unverified")throw Error("unexpected");
  assert.equal(result.balances.length,1);
  assert.equal(result.totalRemaining,3);
+ assert.equal(result.custodyNeedsReview,true);
+});
+
+test("bag custody assigned to someone else is never presented as personal operator stock",()=>{
+ const result=parseOperatorRouteStockFlow({
+  ...payload,
+  assignedBagOwnerId:"operator-1",
+  bagHistoryItems:[{productId:"water",productName:"Water",bagOwnerId:"operator-2",signedQuantity:3}],
+  requiresManagerReconciliation:false,
+ });
+ assert.equal(result.state,"detailed");
+ if(result.state==="unverified")throw Error("unexpected");
  assert.equal(result.custodyNeedsReview,true);
 });
 
