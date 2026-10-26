@@ -29,6 +29,7 @@ import {
   loadFinanceLedgerRows,
 } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
+import { summarizeDirectMachineExpenses } from "@/lib/machine-direct-operating-costs";
 import {
   calculateInvestorMonth,
   manualRouteSalesAsProfitRows,
@@ -469,6 +470,8 @@ export default async function GrowthDecisionsPage({
   );
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const ledgerRows = ledgerResult.data;
+  const directOperatingCosts = summarizeDirectMachineExpenses(ledgerRows, latestStart, latestEnd);
+  const canInspectMachineExpenseLinks = ledgerResult.level !== "legacy";
   const monthly = monthStarts.map((start) => {
     const end = endOfMonth(start);
     const vmsRow = vmsMonthlyByKey.get(start.slice(0, 7));
@@ -591,6 +594,7 @@ export default async function GrowthDecisionsPage({
       name: machine.name ?? machine.id,
       site: Array.isArray(machine.location) ? machine.location[0]?.name ?? null : machine.location?.name ?? null,
       recordedRent: rentVerified ? rentValue : null,
+      directRecordedServiceCost: canInspectMachineExpenseLinks ? directOperatingCosts.machineAmounts.get(machine.id) ?? 0 : null,
       hasVmsMachineMatch,
       rentVerified,
       reviewReason: !hasVmsMachineMatch
@@ -860,6 +864,10 @@ export default async function GrowthDecisionsPage({
                 <div className="min-w-0">
                   <div className="font-medium text-slate-950">{machine.name}</div>
                   <p className="mt-1 text-xs text-slate-500">{machine.site ?? (ar ? "الموقع غير مسجل" : "Site not recorded")} · {ar ? "الإيجار المسجل" : "Recorded rent"}: {machine.recordedRent === null ? (ar ? "غير موثق" : "Unverified") : formatFinanceMoney(machine.recordedRent)}</p>
+                  <p className="mt-1 text-xs text-slate-600">{ar ? "مصاريف خدمة مباشرة مسجلة" : "Linked direct service costs"}: {machine.directRecordedServiceCost === null
+                    ? (ar ? "غير متاح" : "Unavailable")
+                    : formatFinanceMoney(machine.directRecordedServiceCost)}
+                  </p>
                   {machine.reviewReason ? <p className="mt-1 text-xs text-amber-900">{machine.reviewReason}</p> : (
                     <p className="mt-1 text-xs text-slate-500">{ar ? "بعد الإيجار المسجل، قبل المصاريف المشتركة" : "After recorded rent, before shared overhead"}</p>
                   )}
@@ -871,6 +879,21 @@ export default async function GrowthDecisionsPage({
             ))}
             {!machineProfitRows.length ? <p className="text-sm text-slate-600">{ar ? "لا توجد أجهزة نشطة للمقارنة" : "No active machines to compare"}</p> : null}
           </div>
+        </section>
+
+        <section className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+          <strong>{ar ? "تغطية مصاريف التشغيل حسب الجهاز" : "Machine operating-cost coverage"}</strong>
+          <p className="mt-1">{ar
+            ? "يُعرض فقط ما سُجل صراحةً للجهاز من تكاليف الصيانة أو النقل والخدمة. لا نوزع مصاريف الجولات المشتركة تلقائياً، ولا نخصم مشتريات المنتجات مرة أخرى من ربح المبيعات."
+            : "Only explicit machine-linked maintenance, transport and service expenses are identified. Shared route costs are not allocated automatically, and product purchases are not deducted again from sales gross profit."}</p>
+          <p className="mt-2">{ar ? "مصاريف جولات مشتركة غير موزعة" : "Unallocated route operating expenses"}: {formatFinanceMoney(directOperatingCosts.unallocatedRouteAmount)} ({directOperatingCosts.unallocatedRouteCount} {ar ? "سجل" : "records"}).
+            {directOperatingCosts.needsMappingCount > 0 ? ` ${directOperatingCosts.needsMappingCount} operating records require evidence review.` : ""}
+            {!canInspectMachineExpenseLinks ? (ar ? " ربط المصاريف بالجهاز غير متاح من نسخة دفتر المالية الحالية." : " Machine expense links could not be read from the current finance schema.") : ""}
+          </p>
+          <p className="mt-2 text-xs">{ar
+            ? "الأرقام غير المكتملة ليست صفراً مؤكداً. هذه مقارنة مساهمة أولية وليست ربحاً صافياً أو قراراً آلياً بنقل الجهاز."
+            : "Unrecorded or unattributed costs are unknown, not verified zero. Figures remain provisional contribution, not net profit or an automatic relocation decision."}</p>
+          <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/expenses">{ar ? "مراجعة مصاريف التشغيل" : "Review operating expenses"}</Link>
         </section>
 
         {unverifiedMachineCount > 0 ? (
