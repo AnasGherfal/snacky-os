@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { DashboardPriorityFocus } from "@/components/DashboardPriorityFocus";
+import { splitDashboardActions } from "@/lib/dashboard-action-priority";
 import { KpiSection } from "@/components/KpiDashboard";
 import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { StatCard } from "@/components/StatCard";
@@ -1024,6 +1026,8 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     });
   }
 
+  const { priority: priorityActions, remaining: remainingActions } = splitDashboardActions(actionItems);
+
   const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
 
@@ -1038,6 +1042,13 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
             <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
           </div>
         )}
+      />
+
+      <DashboardPriorityFocus
+        actions={priorityActions}
+        remainingCount={remainingActions.length}
+        partialSources={partialSections.length > 0}
+        locale={locale}
       />
 
       <div className="mb-6">
