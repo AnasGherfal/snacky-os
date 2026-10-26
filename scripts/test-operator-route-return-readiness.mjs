@@ -113,6 +113,16 @@ test("operator closeout uses anchored bilingual physical progress and preserves 
  }
  assert.ok(page.includes("confirmed: confirmedCountKeys.includes(custodyKey(item))"));
  assert.ok(page.includes("returnReadiness.physicalCountComplete"));
+ assert.ok(page.includes('id="bag-empty-confirmation"'));
+ assert.ok(page.includes('id="return-storage-location"'));
+ assert.ok(page.includes('id="route-cancellation-reason"'));
+ assert.ok(page.includes('id="return-variance-reason"'));
+ assert.ok(page.includes('returnReadiness.nextStep.anchor'));
+ assert.ok(page.includes('Optional: detailed route stock movements'));
+ assert.ok(page.includes('View stops'));
+ assert.ok(page.indexOf("<RouteReturnProgress") < page.indexOf("<SectionCard>"));
+ assert.ok(page.includes('Prefill ledger quantities — still count physically'));
+
  assert.ok(page.includes("finalizeRouteInventory({"));
  assert.ok(page.includes("ledgerToken,"));
  assert.ok(page.includes("const unconfirmedRows = displayItems.filter"));
