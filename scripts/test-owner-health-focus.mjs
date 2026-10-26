@@ -18,6 +18,12 @@ test("cash and machine setup unverified reads do not become fake zero or all cle
  assert.ok(page.includes('currentCashCount !== null ? [['));
  assert.ok(page.includes('machineSetupVerified ? [['));
  assert.ok(page.includes('const dataHealthCountsIncomplete ='));
+ assert.ok(page.includes("const negativeInventoryCount = verifiedCount(counts.negative_inventory)"));
+ assert.ok(page.includes("const safeRefillCancellationCount = verifiedCount(counts.safe_refill_cancellations)"));
+ assert.ok(page.includes("const recentVmsAttentionCount = verifiedCount(counts.vms_recent_attention)"));
+ assert.ok(page.includes("negativeInventoryCount === null"));
+ assert.ok(page.includes("todayCashCount === null || todayCashUncounted === null || todayRouteCount === null"));
+
  assert.ok(page.includes("(currentCashCount !== null && currentCashCount > 0)"));
  assert.ok(page.includes('dataHealthCountsIncomplete ? "alert" : "status"'));
  assert.ok(page.includes('No missing-site totals have been assumed to be zero'));
