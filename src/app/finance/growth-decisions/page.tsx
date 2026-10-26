@@ -590,6 +590,15 @@ export default async function GrowthDecisionsPage({
       name: machine.name ?? machine.id,
       hasVmsMachineMatch,
       rentVerified,
+      reviewReason: !hasVmsMachineMatch
+        ? (ar ? "ربط مبيعات الجهاز غير مؤكد" : "No verified machine sales match")
+        : !rentVerified
+          ? (ar ? "الإيجار الشهري غير موثق" : "Monthly rent not verified")
+          : !vmsCoverageComplete
+            ? (ar ? "تغطية مبيعات أو تكاليف VMS غير مكتملة" : "VMS sales or cost coverage incomplete")
+            : !manualCoverageComplete
+              ? (ar ? "بيانات المبيعات اليدوية غير مكتملة" : "Manual sales data incomplete")
+              : null,
       profitAfterRent: sourceReady
         ? money(vmsGrossProfit + manualGrossProfit - (rentValue ?? 0))
         : null,
@@ -824,6 +833,34 @@ export default async function GrowthDecisionsPage({
                 </div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="surface-card">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">{ar ? "مقارنة ربحية الأجهزة" : "Machine profitability comparison"}</h2>
+              <p className="mt-1 text-sm text-slate-600">{ar
+                ? "ربح إجمالي المبيعات ناقص الإيجار المسجل فقط. لا يشمل مصاريف النقل أو الخدمة أو المصاريف غير الموزعة، ولا يُعتبر صافي ربح نهائياً."
+                : "Sales gross profit less recorded rent only. Excludes unallocated route, service and overhead costs; this is not final net profit."}</p>
+            </div>
+            <Link className="text-sm font-medium underline underline-offset-2" href="/finance/operations">{ar ? "التقرير المالي" : "Finance operations"}</Link>
+          </div>
+          <div className="space-y-2">
+            {machineProfitRows.map((machine) => (
+              <div key={machine.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-950">{machine.name}</div>
+                  {machine.reviewReason ? <p className="mt-1 text-xs text-amber-900">{machine.reviewReason}</p> : (
+                    <p className="mt-1 text-xs text-slate-500">{ar ? "بعد الإيجار المسجل، قبل المصاريف المشتركة" : "After recorded rent, before shared overhead"}</p>
+                  )}
+                </div>
+                <strong className={machine.profitAfterRent === null ? "text-amber-900" : machine.profitAfterRent < 0 ? "text-rose-800" : "text-emerald-800"}>
+                  {machine.profitAfterRent === null ? (ar ? "غير مؤكد" : "Unverified") : formatFinanceMoney(machine.profitAfterRent)}
+                </strong>
+              </div>
+            ))}
+            {!machineProfitRows.length ? <p className="text-sm text-slate-600">{ar ? "لا توجد أجهزة نشطة للمقارنة" : "No active machines to compare"}</p> : null}
           </div>
         </section>
 
