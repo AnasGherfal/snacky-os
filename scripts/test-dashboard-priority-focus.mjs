@@ -70,3 +70,10 @@ test("owner priority cards do not introduce database writes or new source reques
     assert.doesNotMatch(file,/\.from\(|\.rpc\(|\.insert\(|\.update\(|\.upsert\(|\.delete\(/);
   }
 });
+
+test("unverified VMS reads do not create false missing-import tasks",()=>{
+ const dashboard=readFileSync("src/app/dashboard/page.tsx","utf8");
+ assert.ok(dashboard.includes("if (!errors.vmsBatches && !activeDetailedCount)"));
+ assert.ok(dashboard.includes("if (!errors.vmsBatches && !activeStockCount)"));
+ assert.ok(dashboard.includes("partialSources={partialSections.length > 0}"));
+});
