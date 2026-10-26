@@ -12,7 +12,7 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canViewFinancials, hasAnyRole } from "@/lib/authz";
 import {
   computeFinanceBalancesFromCutoff,
   FINANCE_RECONCILIATION_CUTOFF_DATE,
@@ -383,11 +383,10 @@ export default async function FinancePage({
       <PageHeader
         title="Finance"
         subtitle={`Actual balances from reconciled opening records dated ${cutoffDate} plus Snacky OS transactions after that date.`}
-        action={
-          <PrimaryButton href="/finance/transactions/new">
-            Manual money in/out
-          </PrimaryButton>
-        }
+        action={<div className="flex flex-wrap gap-2">
+          {profile && hasAnyRole(profile, ["owner"]) ? <SecondaryButton href="/finance/liquidity">Owner cash &amp; debts / السيولة</SecondaryButton> : null}
+          <PrimaryButton href="/finance/transactions/new">Manual money in/out</PrimaryButton>
+        </div>}
       />
 
       {params.settingsError ? (
