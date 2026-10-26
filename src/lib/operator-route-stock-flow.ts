@@ -20,6 +20,16 @@ export type RouteFlowLine = {
   remainingQty: number;
 };
 
+export type RouteMachineFillLine = {
+  machineId: string;
+  productId: string;
+  productName: string;
+  machineName: string | null;
+  machineCode: string | null;
+  locationName: string | null;
+  filledQty: number;
+};
+
 export type RouteBagBalanceLine = {
   productId: string;
   productName: string;
@@ -32,6 +42,7 @@ export type OperatorRouteStockFlow =
       state: "balance_only" | "detailed";
       balances: RouteBagBalanceLine[];
       rows: RouteFlowLine[];
+      machineFills: RouteMachineFillLine[] | null;
       totalLoaded: number | null;
       totalFilled: number | null;
       totalRemaining: number;
@@ -64,6 +75,7 @@ function makeBalanceOnly(
     state: "balance_only",
     balances,
     rows: [],
+    machineFills: null,
     totalLoaded: null,
     totalFilled: null,
     totalRemaining: balances.reduce((sum, row) => sum + row.remainingQty, 0),
@@ -159,10 +171,53 @@ export function parseOperatorRouteStockFlow(raw: unknown): OperatorRouteStockFlo
   if (!Number.isSafeInteger(totalLoaded) || !Number.isSafeInteger(totalFilled)) {
     return makeBalanceOnly(balances, custodyNeedsReview);
   }
+  // The per-machine breakdown is verified only when its product totals
+  // reconcile exactly to the existing route-level movement summary. A
+  // malformed/older endpoint safely keeps route figures but hides machine
+  // detail rather than inventing a machine assignment.
+  let machineFills: RouteMachineFillLine[] | null = null;
+  if (source.machineFillCoverageComplete === true && Array.isArray(source.machineFills)) {
+    const parsedFills: RouteMachineFillLine[] = [];
+    const usedKeys = new Set<string>();
+    let valid = true;
+    for (const entry of source.machineFills) {
+      const machine = asRecord(entry);
+      const machineId = label(machine?.machineId);
+      const productId = label(machine?.productId);
+      const filledQty = units(machine?.filledQty);
+      const key = machineId + ":" + productId;
+      if (!machine || !machineId || !productId || filledQty === null || filledQty <= 0 || usedKeys.has(key)) {
+        valid = false; break;
+      }
+      usedKeys.add(key);
+      parsedFills.push({
+        machineId, productId, filledQty,
+        productName: label(machine.productName) || productId,
+        machineName: label(machine.machineName) || null,
+        machineCode: label(machine.machineCode) || null,
+        locationName: label(machine.locationName) || null,
+      });
+    }
+    if (valid) {
+      const totalByProduct = new Map<string, number>();
+      parsedFills.forEach(fill => totalByProduct.set(fill.productId,
+        (totalByProduct.get(fill.productId) ?? 0) + fill.filledQty));
+      valid = [...totalByProduct.values()].every(Number.isSafeInteger)
+        && rows.every(row => (totalByProduct.get(row.productId) ?? 0) === row.filledQty)
+        && [...totalByProduct.keys()].every(id => rows.some(row => row.productId === id));
+      if (valid) {
+        machineFills = parsedFills.sort((a,b) =>
+          (a.machineName || a.machineCode || a.machineId).localeCompare(b.machineName || b.machineCode || b.machineId)
+          || a.productName.localeCompare(b.productName));
+      }
+    }
+  }
+
   return {
     state: "detailed",
     balances,
     rows,
+    machineFills,
     totalLoaded,
     totalFilled,
     totalRemaining: balances.reduce((sum,row) => sum + row.remainingQty, 0),
