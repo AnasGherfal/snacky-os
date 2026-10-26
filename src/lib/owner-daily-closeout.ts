@@ -70,13 +70,13 @@ export function buildDueRouteCloseout({
       const totalStops = relatedStops.length;
       const completedOrSkippedStops = relatedStops.filter(stop => isRouteStopDoneStatus(stop.status)).length;
       const unfinishedStops = totalStops - completedOrSkippedStops;
-      const action: DueRouteAction = totalStops === 0 || !route.operator_id
+      // An assigned/unstarted or unknown-status route must not be described
+      // as ready to visit machines. Its pickup/start workflow needs review.
+      const action: DueRouteAction = totalStops === 0 || !route.operator_id || !isActiveRouteStatus(route.status)
         ? "review_route"
         : unfinishedStops > 0
           ? "finish_machine_stops"
-          : isActiveRouteStatus(route.status)
-            ? "return_bag_count"
-            : "review_route";
+          : "return_bag_count";
       return {
         routeId: route.id,
         routeDate: route.route_date ?? "",
