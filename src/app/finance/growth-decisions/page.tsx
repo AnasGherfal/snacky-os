@@ -22,9 +22,8 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import {
   computeFinanceBalancesFromCutoff,
   formatFinanceMoney,
-  FINANCE_RECONCILIATION_CUTOFF_DATE,
-  isFinanceLedgerTransaction,
 } from "@/lib/finance-balance";
+import { compareOwnerCashCountToLedger } from "@/lib/finance-cash-reconciliation";
 import {
   applyVisibleFinanceLedgerFilter,
   FINANCE_TRANSACTIONS_TABLE,
@@ -685,21 +684,18 @@ export default async function GrowthDecisionsPage({
   // remain outside spendable cash and loan proceeds are not added twice.
   const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
   const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
-  // A cash count is date-stamped evidence. Compare the ledger to the
-  // attestation DATE, not a later balance that could include new activity.
-  // The cutoff opening balance cannot be back-projected before its date.
+  // Compare the exact same date, not an arbitrary later ledger total.
   const countedAsOf = String(latestLiquidity?.as_of_date ?? "");
-  const activeUndatedLedgerRows = ledgerRows.some(row => isFinanceLedgerTransaction(row) && !row.transaction_date);
-  const ledgerAtCountDate = liquidity && countedAsOf >= FINANCE_RECONCILIATION_CUTOFF_DATE
-    && !activeUndatedLedgerRows
-    ? computeFinanceBalancesFromCutoff({
-        rows: ledgerRows.filter(row => row.transaction_date && row.transaction_date <= countedAsOf),
-      }).snacky_lyd
-    : null;
-  const differenceVsControlledCash = ledgerAtCountDate !== null && liquidity
-    ? money(ledgerAtCountDate - liquidity.directlyAccessible) : null;
-  const differenceVsAllCustody = ledgerAtCountDate !== null && liquidity
-    ? money(ledgerAtCountDate - liquidity.totalFundsIncludingCustody) : null;
+  const cashToLedger = liquidity ? compareOwnerCashCountToLedger({
+    rows: ledgerRows,
+    asOfDate: countedAsOf,
+    directlyAccessibleLyd: liquidity.directlyAccessible,
+    custodyLyd: liquidity.physicallyHeldElsewhere,
+  }) : null;
+  const differenceVsControlledCash = cashToLedger?.verified
+    ? cashToLedger.differenceFromCashAndBankLyd : null;
+  const differenceVsAllCustody = cashToLedger?.verified
+    ? cashToLedger.differenceIncludingCustodyLyd : null;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -795,7 +791,7 @@ export default async function GrowthDecisionsPage({
             {differenceVsControlledCash !== null && differenceVsAllCustody !== null ? (ar
               ? ` المطابقة بتاريخ الجرد ${countedAsOf}: الفرق عن النقد والمصرف ${formatFinanceMoney(differenceVsControlledCash)}؛ والفرق عن النقد والمصرف والأموال لدى الغير ${formatFinanceMoney(differenceVsAllCustody)}.`
               : ` At the counted date (${countedAsOf}): ledger minus cash + bank = ${formatFinanceMoney(differenceVsControlledCash)}; ledger minus cash + bank + custody = ${formatFinanceMoney(differenceVsAllCustody)}.`) : ""}
-            {liquidity && ledgerAtCountDate === null ? (ar
+            {liquidity && (!cashToLedger || !cashToLedger.verified) ? (ar
               ? " المقارنة بتاريخ الجرد غير متاحة بسبب نقص مصدر الحساب أو تاريخ سابق لرصيد الافتتاح."
               : " Same-date reconciliation unavailable due to incomplete ledger dates or a count before the opening-balance cutoff.") : ""}
             {liquidity ? (ar
