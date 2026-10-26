@@ -16,6 +16,11 @@ function fmt(value: unknown) {
   return Number.isNaN(d.getTime()) ? String(value) : new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Tripoli" }).format(d);
 }
 function daysAgo(days:number){const d=new Date();d.setUTCDate(d.getUTCDate()-days);return d.toISOString();}
+function verifiedCount(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
 
 export default async function OperationsHealthPage() {
   const profile=await getCurrentProfile();
@@ -78,15 +83,18 @@ export default async function OperationsHealthPage() {
   const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
     ? cashSourceGapsResult.count : null;
 
+  const negativeInventoryCount = verifiedCount(counts.negative_inventory);
+  const safeRefillCancellationCount = verifiedCount(counts.safe_refill_cancellations);
+  const recentVmsAttentionCount = verifiedCount(counts.vms_recent_attention);
   const cards=[
     ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
     ...(cashSourceGapCount !== null ? [["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"] as const] : []),
     ...(machineSetupVerified ? [["Machines missing site",missingMachineLocation.length,"/machines/setup"] as const] : []),
     ...(machineSetupVerified ? [["Active sites missing distance",missingDistance.length,"/machines/setup"] as const] : []),
-    ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
-    ["Safe stale refill cancellations",Number(counts.safe_refill_cancellations??0),"#stale-refills"],
+    ...(negativeInventoryCount !== null ? [["Negative stock balances",negativeInventoryCount,"#inventory-health"] as const] : []),
+    ...(safeRefillCancellationCount !== null ? [["Safe stale refill cancellations",safeRefillCancellationCount,"#stale-refills"] as const] : []),
     ...(currentCashCount !== null ? [["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"] as const] : []),
-    ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
+    ...(recentVmsAttentionCount !== null ? [["Recent VMS failures / partial",recentVmsAttentionCount,"#vms-health"] as const] : []),
   ] as const;
   const labelsAr: Record<string, string> = {
     "Open route stock differences": "فروقات مخزون الجولات المفتوحة",
@@ -104,7 +112,10 @@ export default async function OperationsHealthPage() {
   const uiLabel = (en: string) => ar ? labelsAr[en] ?? en : en;
   const activeCards=cards.filter(([,value])=>value>0);
   const dataHealthCountsIncomplete = !machineSetupVerified || currentCashCount === null
-    || openRouteDiscrepancyCount === null || cashSourceGapCount === null;
+    || openRouteDiscrepancyCount === null || cashSourceGapCount === null
+    || todayCashCount === null || todayCashUncounted === null || todayRouteCount === null
+    || negativeInventoryCount === null || safeRefillCancellationCount === null
+    || recentVmsAttentionCount === null;
 
   return <div className="space-y-6">
     <PageHeader title={tr("Data Health", "صحة البيانات")} subtitle={tr("Fix operational exceptions safely. Cleanup preserves audit history.", "راجع الحالات التشغيلية دون فقدان سجل المراجعة أو إجراء تعديلات تلقائية.")} action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{tr("Machine setup", "إعداد الأجهزة")}</SecondaryButton><SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton></div>}/>
