@@ -144,15 +144,20 @@ export default async function OperationsHealthPage() {
     ) : null}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div role={dataHealthCountsIncomplete ? "alert" : "status"} className={dataHealthCountsIncomplete
+      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href}
+        className="group rounded-xl border border-slate-200 border-s-4 border-s-amber-400 bg-white p-4 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+        <div className="text-xs font-semibold text-slate-600">{uiLabel(label)}</div>
+        <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{value}</div>
+        <div className="mt-2 text-xs font-semibold text-emerald-800">{tr("Review records", "عرض السجلات")}</div>
+      </Link>):<div role={dataHealthCountsIncomplete ? "alert" : "status"} className={dataHealthCountsIncomplete
         ? "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
         : "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"}>
-        {dataHealthCountsIncomplete ? "Some data-health counts are unverified. Do not treat an empty list as an all-clear." : "No active data-health exceptions."}
+        {dataHealthCountsIncomplete ? tr("Some data-health counts are unverified. Do not treat an empty list as an all-clear.", "بعض إحصاءات صحة البيانات غير مؤكدة؛ لا تعتبر القائمة الفارغة دليلاً على خلوها من المشاكل.") : tr("No active data-health exceptions.", "لا توجد مشاكل ظاهرة في سجلات صحة البيانات المتاحة.")}
       </div>}
     </section>
 
     <section className="surface-card">
-      <div className="mb-4"><h2 className="text-lg font-semibold">Machine & location setup</h2><p className="mt-1 text-sm text-slate-500">Every operating machine needs its real current site; every active site should have one-way distance from storage.</p></div>
+      <div className="mb-4"><h2 className="text-lg font-semibold">{tr("Machine & location setup", "إعداد الأجهزة والمواقع")}</h2><p className="mt-1 text-sm text-slate-500">{tr("Every operating machine needs its real current site; every active site should have one-way distance from storage.", "كل جهاز عامل يحتاج إلى موقعه الفعلي، وكل موقع نشط يحتاج إلى المسافة باتجاه واحد من المخزن.")}</p></div>
       {!machineSetupVerified ? (
         <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           Machine and location setup could not be verified. No missing-site totals have been assumed to be zero.
