@@ -101,6 +101,7 @@ export function parseOperatorRouteStockFlow(raw: unknown): OperatorRouteStockFlo
   }
 
   const balanceMap = new Map<string, RouteBagBalanceLine>();
+  const activeBagOwners = new Set<string>();
   for (const entry of source.bagHistoryItems) {
     const row = asRecord(entry);
     const productId = label(row?.productId);
@@ -108,6 +109,9 @@ export function parseOperatorRouteStockFlow(raw: unknown): OperatorRouteStockFlo
     if (!row || !productId || signedQuantity === null) {
       return { state: "unverified", reason: "invalid_bag_balance" };
     }
+    // Preserve actual custody identity; a manager's right to view the route
+    // does not imply every stock item belongs to the assigned operator.
+    if (signedQuantity !== 0) activeBagOwners.add(label(row.bagOwnerId) || "unassigned");
     const current = balanceMap.get(productId);
     balanceMap.set(productId, {
       productId,
@@ -117,11 +121,16 @@ export function parseOperatorRouteStockFlow(raw: unknown): OperatorRouteStockFlo
   }
   const balances = Array.from(balanceMap.values())
     .sort((a,b) => a.productName.localeCompare(b.productName));
-  if (balances.some(row => !Number.isSafeInteger(row.remainingQty))) {
+  if (balances.some(row => !Number.isSafeInteger(row.remainingQty))
+    || !Number.isSafeInteger(balances.reduce((sum, row) => sum + row.remainingQty, 0))) {
     return { state: "unverified", reason: "bag_balance_overflow" };
   }
+  const assignedBagOwnerId = label(source.assignedBagOwnerId);
   const custodyNeedsReview = source.hasUnassignedCustody === true
-    || source.requiresManagerReconciliation === true;
+    || source.requiresManagerReconciliation === true
+    || activeBagOwners.size > 1
+    || activeBagOwners.has("unassigned")
+    || (assignedBagOwnerId !== "" && [...activeBagOwners].some(id => id !== assignedBagOwnerId));
 
   if (source.descriptiveReconciliationAvailable !== true) {
     return makeBalanceOnly(balances, custodyNeedsReview);
