@@ -34,8 +34,7 @@ function safeUnits(n: number) {
 export function operatorReturnReadiness(input: ReturnReadinessInput) {
   const countTotal = input.rows.length;
   const invalidValues = input.rows.some(row =>
-    !row.key || !safeUnits(row.ledgerQty) && !Number.isSafeInteger(row.ledgerQty)
-    || !safeUnits(row.enteredQty),
+    !row.key || !Number.isSafeInteger(row.ledgerQty) || !safeUnits(row.enteredQty),
   );
   const confirmedRows = input.rows.filter(row => row.confirmed && safeUnits(row.enteredQty));
   const enteredTotal = input.rows.reduce((sum, row) => sum + (safeUnits(row.enteredQty) ? row.enteredQty : 0), 0);
