@@ -13,19 +13,19 @@ const authz = readFileSync("src/lib/authz.ts", "utf8");
 
 test("physical cash, bank, custodian funds and debts are each counted exactly once", () => {
   const p = calculateLiquidityPosition({
-    cashOnHandLyd: 37715,
-    bankLyd: 11659,
-    custodyLyd: 2750,
-    immediateDebtLyd: 20000,
-    shortTermDebtLyd: 13000,
+    cashOnHandLyd: 45000,
+    bankLyd: 10000,
+    custodyLyd: 2500,
+    immediateDebtLyd: 15000,
+    shortTermDebtLyd: 9000,
   });
-  assert.equal(p.directlyAccessible, 49374);
-  assert.equal(p.physicallyHeldElsewhere, 2750);
-  assert.equal(p.totalFundsIncludingCustody, 52124);
-  assert.equal(p.totalDebts, 33000);
-  assert.equal(p.afterImmediateDebt, 29374);
-  assert.equal(p.afterAllDebts, 16374);
-  assert.equal(p.afterAllDebtsIncludingCustody, 19124);
+  assert.equal(p.directlyAccessible, 55000);
+  assert.equal(p.physicallyHeldElsewhere, 2500);
+  assert.equal(p.totalFundsIncludingCustody, 57500);
+  assert.equal(p.totalDebts, 24000);
+  assert.equal(p.afterImmediateDebt, 40000);
+  assert.equal(p.afterAllDebts, 31000);
+  assert.equal(p.afterAllDebtsIncludingCustody, 33500);
 });
 
 test("money values are exact, nonnegative and bounded", () => {
@@ -51,8 +51,8 @@ test("attestations stale after a week or dated in the future never authorize buy
 
 test("growth decision holds buying when owner cash is unverified, and deducts debt", () => {
   const input = {
-    cashAvailableLyd: 49374, shortTermDebtLyd: 33000, liquidityVerified: false,
-    machineCostLyd: 20000, minimumCashReserveLyd: 15000, restockReserveLyd: 0,
+    cashAvailableLyd: 55000, shortTermDebtLyd: 24000, liquidityVerified: false,
+    machineCostLyd: 33000, minimumCashReserveLyd: 15000, restockReserveLyd: 0,
     investorDueLyd: 0, minimumMonthlyOperatingProfitLyd: 100,
     averageMonthlyOperatingProfitLyd: 10000, averageMachineProfitAfterRentLyd: 5000,
     targetPaybackMonths: 20, acceptedLocationCount: 1, criticalRestockCount: 0,
@@ -64,10 +64,10 @@ test("growth decision holds buying when owner cash is unverified, and deducts de
   assert.equal(unverified.code, "verify_liquidity");
   assert.notEqual(unverified.code, "buy_now");
   const checked = buildGrowthDecision({...input,liquidityVerified:true});
-  assert.equal(checked.cashAfterCommitmentsLyd, 16374);
-  assert.equal(checked.cashAfterMachinePurchaseLyd, -3626);
+  assert.equal(checked.cashAfterCommitmentsLyd, 31000);
+  assert.equal(checked.cashAfterMachinePurchaseLyd, -2000);
   assert.notEqual(checked.code, "buy_now");
-  assert.ok(checked.priorities.some(p => p.key === "short_term_debt" && p.amountLyd === 33000));
+  assert.ok(checked.priorities.some(p => p.key === "short_term_debt" && p.amountLyd === 24000));
 });
 
 test("owner attestation RLS is owner-only, append-only and ledger-independent", () => {
