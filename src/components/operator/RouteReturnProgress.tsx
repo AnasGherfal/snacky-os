@@ -20,6 +20,7 @@ export function RouteReturnProgress({
   nextStep,
   canSubmit,
   pendingDraft,
+  inventoryServiceReady,
   locale,
 }: {
   countTotal: number;
@@ -31,6 +32,7 @@ export function RouteReturnProgress({
   nextStep: ReturnReadinessStep | null;
   canSubmit: boolean;
   pendingDraft: boolean;
+  inventoryServiceReady: boolean;
   locale: "ar" | "en";
 }) {
   const ar = locale === "ar";
@@ -86,6 +88,12 @@ export function RouteReturnProgress({
             "هناك فرق محتمل في المخزون. أكّد العدّ الفعلي قبل اعتباره فرقاً نهائياً.")}
         </p>
       ) : null}
+      {!inventoryServiceReady ? (
+        <p role="alert" className="mx-4 mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 sm:mx-5">
+          {tr("Verified inventory closeout is unavailable. Do not submit stock until the system is repaired.",
+            "إنهاء المخزون المتحقق منه غير متاح. لا ترسل المخزون حتى يُصلح النظام.")}
+        </p>
+      ) : null}
       {pendingDraft ? (
         <p role="status" className="mx-4 mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 sm:mx-5">
           {tr("Restore or discard the saved draft before completing the route.",
@@ -97,7 +105,11 @@ export function RouteReturnProgress({
         <strong className={canSubmit ? "text-emerald-800" : "text-amber-900"}>
           {canSubmit
             ? tr("Checks ready for final submission", "الفحوصات جاهزة للإرسال النهائي")
-            : tr("Physical count / handoff checks still pending", "العدّ الفعلي أو تسليم المخزون لم يكتمل")}
+            : !inventoryServiceReady
+              ? tr("System verification needed", "مطلوب التحقق من النظام")
+              : pendingDraft
+                ? tr("Resolve saved draft before finalizing", "راجع المسودة المحفوظة قبل الإنهاء")
+                : tr("Physical count / handoff checks still pending", "العدّ الفعلي أو تسليم المخزون لم يكتمل")}
         </strong>
         {nextStep ? (
           <a href={"#" + nextStep.anchor}
