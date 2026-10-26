@@ -81,6 +81,17 @@ test("missing or mismatched per-machine proof hides only machine detail, not can
  }
 });
 
+test("descriptive movement pagination requires exact count and rejects server row-cap truncation",()=>{
+ const api=readFileSync("src/app/api/operator/routes/[id]/picked-items/route.ts","utf8");
+ assert.ok(api.includes("const pageSize = 400"));
+ assert.ok(api.includes('count: "exact"'));
+ assert.ok(api.includes("data.length !== expected"));
+ assert.ok(api.includes("Route inventory movement page was truncated"));
+ assert.ok(api.includes("Route inventory changed during descriptive movement read"));
+ assert.ok(api.includes("seenIds.has(item.id)"));
+ assert.ok(api.includes('descriptiveReconciliationAvailable: !routeMovementsError'));
+});
+
 test("existing authenticated route endpoint adds fill detail from SAME route movements, not another request",()=>{
  const api=readFileSync("src/app/api/operator/routes/[id]/picked-items/route.ts","utf8");
  const ui=readFileSync("src/components/operator/RouteBagStockFlow.tsx","utf8");
