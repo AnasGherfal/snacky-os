@@ -29,5 +29,5 @@ test("daily close links to existing financial and route review workflows",()=>{
  assert.ok(page.includes('href="/cash-collections/action-queue"'));
  assert.ok(page.includes('href="/routes/inventory-review"'));
  assert.ok(page.includes('href="/cash-collections"'));
- assert.ok(page.includes('href="/routes"'));
+ assert.ok(page.includes('["Today's routes recorded",todayRouteCount,"/routes"]'));
 });
