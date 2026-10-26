@@ -661,7 +661,7 @@ export default async function GrowthDecisionsPage({
   const unpostedInvestorPayments = (paymentsResult.data ?? [])
     .filter((row) => row.finance_posting_status !== "posted")
     .reduce((sum, row) => sum + numeric(row.amount_lyd), 0);
-  const unverifiedLedgerCash = money(financeBalances.snacky_lyd - unpostedInvestorPayments);
+  const unverifiedLedgerCash = money(financeBalances.snacky_lyd);
   const tripoliToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
@@ -770,7 +770,9 @@ export default async function GrowthDecisionsPage({
             ? "لا يوجد جرد حديث مؤكد للنقد والمصرف والديون. توصيات شراء الأجهزة معلقة إلى حين توثيق السيولة."
             : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
           <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
-            {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}</p>
+            {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
+            {unpostedInvestorPayments > 0 ? ` Pending investor payments not posted: ${formatFinanceMoney(unpostedInvestorPayments)}.` : ""}
+          </p>
           <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
         </section>
 
