@@ -30,6 +30,9 @@ export async function recordOwnerLiquidityAttestation(formData: FormData) {
   const db = await getAuthenticatedSupabaseServerClient();
   if (!db) fail("The signed-in Finance database session is unavailable.");
 
+  if (formData.get("confirmed_no_double_count") !== "on") {
+    fail("Confirm that money in others' custody and existing bank loan proceeds have not been counted twice.");
+  }
   const submissionId = String(formData.get("client_submission_id") ?? "").trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId)) {
     fail("Reload Finance and try again; the submission token is invalid.");
