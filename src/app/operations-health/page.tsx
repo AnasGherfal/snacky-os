@@ -5,6 +5,7 @@ import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
+import { getServerI18n } from "@/lib/i18n/server";
 import { ROUTE_INVENTORY_OPEN_STATUSES } from "@/lib/route-inventory-discrepancies";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,11 @@ function fmt(value: unknown) {
   return Number.isNaN(d.getTime()) ? String(value) : new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Tripoli" }).format(d);
 }
 function daysAgo(days:number){const d=new Date();d.setUTCDate(d.getUTCDate()-days);return d.toISOString();}
+function verifiedCount(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
 
 export default async function OperationsHealthPage() {
   const profile=await getCurrentProfile();
@@ -22,10 +28,18 @@ export default async function OperationsHealthPage() {
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
+  const { locale } = await getServerI18n();
+  const ar = locale === "ar";
+  const tr = (en: string, arabic: string) => ar ? arabic : en;
+
   const tripoliDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const todayStart = `${tripoliDate}T00:00:00+02:00`;
   const tomorrowStart = new Date(Date.parse(todayStart) + 86400000).toISOString();
-  const [todayCashResult,todayCashUncountedResult,todayRoutesResult] = await Promise.all([
+  const [
+    todayCashResult,todayCashUncountedResult,todayRoutesResult,
+    workspaceResult,machinesResult,locationsResult,currentCashResult,
+    routeDiscrepanciesResult,cashSourceGapsResult,
+  ] = await Promise.all([
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
     db.from("cash_collections").select("id",{count:"exact",head:true})
@@ -34,12 +48,6 @@ export default async function OperationsHealthPage() {
     db.from("routes").select("id",{count:"exact",head:true})
       .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
       .not("status","in", "(cancelled,canceled,voided)"),
-  ]);
-  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
-  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
-  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
-
-  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult,cashSourceGapsResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
@@ -47,6 +55,11 @@ export default async function OperationsHealthPage() {
     db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
   ]);
+  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
+  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
+  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+
+
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
     console.error("[data-health] Workspace unavailable",workspaceResult.error);
@@ -58,35 +71,60 @@ export default async function OperationsHealthPage() {
   const staleRefills=Array.isArray(data.stale_refills)?data.stale_refills:[];
   const legacyCash=Array.isArray(data.legacy_cash)?data.legacy_cash:[];
   const vmsCleanup=Array.isArray(data.vms_cleanup)?data.vms_cleanup:[];
+  const machineSetupVerified = !machinesResult.error && !locationsResult.error
+    && Array.isArray(machinesResult.data) && Array.isArray(locationsResult.data);
   const machines=machinesResult.data??[],locations=locationsResult.data??[];
   const missingMachineLocation=machines.filter((m:any)=>!m.location_id);
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
-  const currentCashCount=currentCashResult.count??0;
+  const currentCashCount = !currentCashResult.error && typeof currentCashResult.count === "number"
+    ? currentCashResult.count : null;
   const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
     ? routeDiscrepanciesResult.count : null;
   const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
     ? cashSourceGapsResult.count : null;
 
+  const negativeInventoryCount = verifiedCount(counts.negative_inventory);
+  const safeRefillCancellationCount = verifiedCount(counts.safe_refill_cancellations);
+  const recentVmsAttentionCount = verifiedCount(counts.vms_recent_attention);
   const cards=[
     ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
     ...(cashSourceGapCount !== null ? [["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"] as const] : []),
-    ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
-    ["Active sites missing distance",missingDistance.length,"/machines/setup"],
-    ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
-    ["Safe stale refill cancellations",Number(counts.safe_refill_cancellations??0),"#stale-refills"],
-    ["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"],
-    ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
+    ...(machineSetupVerified ? [["Machines missing site",missingMachineLocation.length,"/machines/setup"] as const] : []),
+    ...(machineSetupVerified ? [["Active sites missing distance",missingDistance.length,"/machines/setup"] as const] : []),
+    ...(negativeInventoryCount !== null ? [["Negative stock balances",negativeInventoryCount,"#inventory-health"] as const] : []),
+    ...(safeRefillCancellationCount !== null ? [["Safe stale refill cancellations",safeRefillCancellationCount,"#stale-refills"] as const] : []),
+    ...(currentCashCount !== null ? [["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"] as const] : []),
+    ...(recentVmsAttentionCount !== null ? [["Recent VMS failures / partial",recentVmsAttentionCount,"#vms-health"] as const] : []),
   ] as const;
+  const labelsAr: Record<string, string> = {
+    "Open route stock differences": "فروقات مخزون الجولات المفتوحة",
+    "Cash missing expected-source verification": "نقد يحتاج إلى التحقق من مصدره المتوقع",
+    "Machines missing site": "أجهزة دون موقع مسجل",
+    "Active sites missing distance": "مواقع نشطة دون مسافة مسجلة",
+    "Negative stock balances": "أرصدة مخزون سالبة",
+    "Safe stale refill cancellations": "طلبات تعبئة قديمة قابلة للإلغاء الآمن",
+    "Cash actions 3–30 days old": "مهام نقد متأخرة من ٣ إلى ٣٠ يوماً",
+    "Recent VMS failures / partial": "استيرادات VMS فاشلة أو غير مكتملة",
+    "Today's cash removals": "تحصيلات النقد اليوم",
+    "Today's cash bags awaiting count": "أكياس النقد بانتظار العد اليوم",
+    "Today's routes recorded": "الجولات المسجلة اليوم",
+  };
+  const uiLabel = (en: string) => ar ? labelsAr[en] ?? en : en;
   const activeCards=cards.filter(([,value])=>value>0);
+  const dataHealthCountsIncomplete = !machineSetupVerified || currentCashCount === null
+    || openRouteDiscrepancyCount === null || cashSourceGapCount === null
+    || todayCashCount === null || todayCashUncounted === null || todayRouteCount === null
+    || negativeInventoryCount === null || safeRefillCancellationCount === null
+    || recentVmsAttentionCount === null;
 
   return <div className="space-y-6">
-    <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
+    <PageHeader title={tr("Data Health", "صحة البيانات")} subtitle={tr("Fix operational exceptions safely. Cleanup preserves audit history.", "راجع الحالات التشغيلية دون فقدان سجل المراجعة أو إجراء تعديلات تلقائية.")} action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{tr("Machine setup", "إعداد الأجهزة")}</SecondaryButton><SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton></div>}/>
 
-    <section aria-label="Daily closeout" className="surface-card space-y-3">
+    <section aria-label={tr("Daily closeout", "الإغلاق اليومي")} className="surface-card space-y-3 border-t-4 border-t-emerald-700">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="text-lg font-semibold">Daily owner closeout · {tripoliDate}</h2>
-        <p className="mt-1 text-sm text-slate-600">Read-only snapshot of today's operations in Tripoli time. Counts are records, not proof that all tasks were completed.</p></div>
-        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Cash action queue</SecondaryButton><SecondaryButton href="/routes/inventory-review">Inventory differences</SecondaryButton></div>
+        <div><h2 className="text-lg font-semibold">{tr("Daily owner closeout", "ملخص الإغلاق اليومي")} · <span dir="ltr" className="inline-block tabular-nums">{tripoliDate}</span></h2>
+        <p className="mt-1 text-sm text-slate-600">{tr("Read-only counts in Tripoli time. Recorded activity does not prove that every task was completed.", "أرقام للعرض فقط بتوقيت طرابلس. تسجيل الحركة لا يعني اكتمال جميع المهام.")}</p></div>
+        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">{tr("Cash action queue", "مهام النقد")}</SecondaryButton><SecondaryButton href="/routes/inventory-review">{tr("Inventory differences", "فروقات المخزون")}</SecondaryButton></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {([
@@ -94,17 +132,24 @@ export default async function OperationsHealthPage() {
           ["Today's cash bags awaiting count",todayCashUncounted,"/cash-collections/action-queue"],
           ["Today's routes recorded",todayRouteCount,"/routes"],
         ] as const).map(([label,count,href])=><Link key={label} href={href} className="rounded-lg border border-slate-200 p-4">
-          <div className="text-xs text-slate-600">{label}</div>
-          <div className="mt-2 text-2xl font-semibold">{count === null ? "Unverified" : count}</div>
-          <div className="mt-2 text-xs text-sky-800">Review records →</div>
+          <div className="text-xs font-medium text-slate-600">{uiLabel(label)}</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">{count === null ? tr("Unverified", "غير مؤكد") : count}</div>
+          <div className="mt-2 text-xs font-semibold text-emerald-800">{tr("Review records", "عرض السجلات")}</div>
         </Link>)}
       </div>
       {todayCashCount === null || todayCashUncounted === null || todayRouteCount === null ? (
-        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.</p>
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{tr("One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.", "تعذر التحقق من أحد مصادر الإغلاق اليومي. لا تُعرض الأرقام غير المعروفة كأنها صفر.")}</p>
       ) : null}
-      <p className="text-xs text-slate-500">Historical exceptions, unpaid supplier purchases, missing sales imports and open route differences remain in the existing review sections below. This snapshot never posts cash, closes routes or changes stock.</p>
+      <p className="text-xs leading-5 text-slate-500">{tr("Older cash, unpaid purchases, sales sources and stock exceptions remain in the review sections below. This snapshot never posts cash, closes routes or changes stock.", "تبقى مهام النقد السابقة والمشتريات غير المدفوعة ومصادر المبيعات وفروقات المخزون في الأقسام أدناه. هذا الملخص لا يثبت النقد أو يغلق الجولات أو يغير المخزون.")}</p>
     </section>
 
+    {(currentCashCount === null || !machineSetupVerified) ? (
+      <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        {currentCashCount === null ? "Historical cash action count could not be verified. " : ""}
+        {!machineSetupVerified ? "Machine and location setup data could not be verified." : ""}
+        {" "}Unknown counts are never treated as zero.
+      </p>
+    ) : null}
     {(openRouteDiscrepancyCount === null || cashSourceGapCount === null) ? (
       <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
         {openRouteDiscrepancyCount === null ? <>Route inventory discrepancy totals could not be verified. They have not been treated as zero. <Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>. </> : null}
@@ -113,12 +158,25 @@ export default async function OperationsHealthPage() {
     ) : null}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No active data-health exceptions.</div>}
+      {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href}
+        className="group rounded-xl border border-slate-200 border-s-4 border-s-amber-400 bg-white p-4 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+        <div className="text-xs font-semibold text-slate-600">{uiLabel(label)}</div>
+        <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{value}</div>
+        <div className="mt-2 text-xs font-semibold text-emerald-800">{tr("Review records", "عرض السجلات")}</div>
+      </Link>):<div role={dataHealthCountsIncomplete ? "alert" : "status"} className={dataHealthCountsIncomplete
+        ? "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+        : "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"}>
+        {dataHealthCountsIncomplete ? tr("Some data-health counts are unverified. Do not treat an empty list as an all-clear.", "بعض إحصاءات صحة البيانات غير مؤكدة؛ لا تعتبر القائمة الفارغة دليلاً على خلوها من المشاكل.") : tr("No active data-health exceptions.", "لا توجد مشاكل ظاهرة في سجلات صحة البيانات المتاحة.")}
+      </div>}
     </section>
 
     <section className="surface-card">
-      <div className="mb-4"><h2 className="text-lg font-semibold">Machine & location setup</h2><p className="mt-1 text-sm text-slate-500">Every operating machine needs its real current site; every active site should have one-way distance from storage.</p></div>
-      {!missingMachineLocation.length&&!missingDistance.length?<EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance."/>:
+      <div className="mb-4"><h2 className="text-lg font-semibold">{tr("Machine & location setup", "إعداد الأجهزة والمواقع")}</h2><p className="mt-1 text-sm text-slate-500">{tr("Every operating machine needs its real current site; every active site should have one-way distance from storage.", "كل جهاز عامل يحتاج إلى موقعه الفعلي، وكل موقع نشط يحتاج إلى المسافة باتجاه واحد من المخزن.")}</p></div>
+      {!machineSetupVerified ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Machine and location setup could not be verified. No missing-site totals have been assumed to be zero.
+        </p>
+      ) : !missingMachineLocation.length&&!missingDistance.length?<EmptyState title="Machine setup is complete" body="Every machine has a site and every active site has a distance."/>:
       <div className="grid gap-5 xl:grid-cols-2">
         <div><h3 className="mb-2 font-medium">Machines without site</h3>{missingMachineLocation.map((m:any)=><div key={m.id} className="mb-2 rounded-lg border p-3"><strong>{m.name}</strong><p className="text-xs text-slate-500">{m.machine_code} · {m.status}</p></div>)}</div>
         <div><h3 className="mb-2 font-medium">Sites missing distance</h3>{missingDistance.map((l:any)=><div key={l.id} className="mb-2 rounded-lg border p-3"><strong>{l.name}</strong><p className="text-xs text-slate-500">{l.address??"No address recorded"}</p></div>)}</div>
@@ -161,7 +219,7 @@ export default async function OperationsHealthPage() {
 
     <section className="surface-card">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls. Missing expected-source information does not establish a cash shortage.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
-      {(currentCashCount>0||Number(counts.legacy_cash_unclassified??0)>0||Number(counts.legacy_cash_classified??0)>0)?<div className="mb-4 grid gap-3 sm:grid-cols-3">{currentCashCount>0?<div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div>:null}{Number(counts.legacy_cash_unclassified??0)>0?<div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified)}</strong></div>:null}{Number(counts.legacy_cash_classified??0)>0?<div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified)}</strong></div>:null}</div>:null}
+      {((currentCashCount !== null && currentCashCount > 0)||Number(counts.legacy_cash_unclassified??0)>0||Number(counts.legacy_cash_classified??0)>0)?<div className="mb-4 grid gap-3 sm:grid-cols-3">{(currentCashCount !== null && currentCashCount > 0)?<div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div>:null}{Number(counts.legacy_cash_unclassified??0)>0?<div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified)}</strong></div>:null}{Number(counts.legacy_cash_classified??0)>0?<div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified)}</strong></div>:null}</div>:null}
       {!legacyCash.length?<EmptyState title="No legacy cash backlog" body="Older unresolved cash has been cleared or classified."/>:
       <DataTable headers={["Collected","Custody","Reconciliation","Counted","Expected","Classification","Action"]}>{legacyCash.slice(0,50).map((row:any)=><tr key={row.id}>
         <td>{fmt(row.collected_at)}</td><td><StatusBadge status={row.custody_status}/></td><td><StatusBadge status={row.reconciliation_status}/></td><td>{row.actual_cash_collected??"-"}</td><td>{row.vms_expected_cash??"-"}</td>

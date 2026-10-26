@@ -36,10 +36,10 @@ jobs:
           const result=spawnSync(process.execPath,['--experimental-strip-types','--experimental-vm-modules','--loader','./scripts/ts-alias-loader.mjs','--test','--test-concurrency=4',...files],{encoding:'utf8',maxBuffer:40e6});
           fs.writeFileSync('diagnostics/all-unit.tap',(result.stdout||'')+'\n'+(result.stderr||''));
           if ((result.status ?? 1) !== 0) {
-            const rows=(result.stdout||'').split('\\n');
+            const rows=(result.stdout||'').split('\n');
             rows.forEach((line,index) => {
               if (!line.startsWith('not ok ')) return;
-              console.error('\\n--- failing regression ---\\n' + rows.slice(Math.max(0,index-4),Math.min(rows.length,index+32)).join('\\n'));
+              console.error('\\n--- failing regression ---\\n' + rows.slice(Math.max(0,index-4),Math.min(rows.length,index+32)).join('\n'));
             });
             console.error('\\n--- Full failed test output (last 35000 chars) ---\\n' + (result.stdout||'').slice(-35000));
             console.error((result.stderr||'').slice(-3000));
