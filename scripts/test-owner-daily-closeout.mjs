@@ -96,6 +96,7 @@ test("read-only management action center uses precise cash counting, owner guard
  const page=readFileSync("src/app/operations-health/page.tsx","utf8");
  const ui=readFileSync("src/components/OwnerDailyCloseoutActionCenter.tsx","utf8");
  const source=readFileSync("src/lib/owner-closeout-source.ts","utf8");
+ const paging=readFileSync("src/lib/owner-closeout-pagination.ts","utf8");
  assert.ok(page.includes('hasAnyRole(profile,["owner","admin"])'));
  assert.ok(page.includes("readOwnerDueRouteCloseout(db,tripoliDate)"));
  assert.ok(page.includes("<OwnerDailyCloseoutActionCenter"));
@@ -107,7 +108,7 @@ test("read-only management action center uses precise cash counting, owner guard
  assert.ok(source.includes('.select("id,route_date,status,operator_id", {count:"exact"})'));
  assert.ok(source.includes('.select("id,route_id,status", {count:"exact"})'));
  assert.ok(source.includes('isTerminalRouteStatus(route.status)'));
- assert.ok(source.includes("count !== expected"));
+ assert.ok(paging.includes("result.count !== expected"));
  assert.ok(ui.includes("/operator/routes/"));
  assert.ok(ui.includes("/cash-collections/action-queue"));
  assert.ok(ui.includes("/routes/inventory-review"));
