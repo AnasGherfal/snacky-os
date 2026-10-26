@@ -8,10 +8,11 @@ import { canEditFinancialTransactions } from "@/lib/authz";
 import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
 import { createManualFinancialTransaction } from "@/lib/finance-actions";
 
-export default async function NewFinanceTransactionPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function NewFinanceTransactionPage({ searchParams }: { searchParams: Promise<{ error?: string; route?: string }> }) {
   const profile = await getCurrentProfile();
   if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
-  const { error } = await searchParams;
+  const { error, route: routeParam } = await searchParams;
+  const selectedRouteId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(routeParam ?? "")) ? String(routeParam) : null;
   const today = new Date().toISOString().slice(0, 10);
   const supabase = await getAuthenticatedSupabaseServerClient();
   const [{ data: machines }, { data: locations }, { data: routes }, categoriesResult] = supabase
@@ -23,6 +24,9 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [], error: null }];
   const categories = (categoriesResult.error ? DEFAULT_FINANCE_CATEGORIES : (categoriesResult.data ?? DEFAULT_FINANCE_CATEGORIES)) as FinanceCategoryOption[];
+  const routeInList = selectedRouteId && (routes ?? []).some((route: any) => route.id === selectedRouteId);
+  const prefilledRouteId = routeInList ? selectedRouteId : "";
+  const selectedRoute = routeInList ? (routes ?? []).find((route: any) => route.id === selectedRouteId) : null;
 
   return (
     <>
@@ -46,13 +50,14 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
           <FormSection title="Money movement">
             <ManualFinanceTransactionFields categories={categories} defaults={{ transactionDate: today, direction: "money_out", accountId: "snacky_lyd" }} />
           </FormSection>
+          {selectedRoute ? <div role="status" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950">Recording an actual expense for the selected route ({selectedRoute.route_date}). Enter the paid amount and evidence; do not estimate fuel, split shared costs by stop, or record the same expense twice.</div> : null}
           <FormSection title="Details">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Payment method"><select name="payment_method" className="field-input"><option value="">Not set</option><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></FormField>
               <FormField label="Transaction type"><input name="transaction_type" placeholder="Rent, salary, maintenance, owner transfer..." className="field-input" /></FormField>
               <FormField label="Location"><input name="location" className="field-input" /></FormField>
               <FormField label="Bucket"><input name="bucket" placeholder="Inventory, Inflow, Operations..." className="field-input" /></FormField>
-              <FormField label="Related route"><select name="related_route_id" className="field-input"><option value="">None</option>{(routes ?? []).map((route: any) => <option key={route.id} value={route.id}>{route.route_date} - {route.status}</option>)}</select></FormField>
+              <FormField label="Related route"><select name="related_route_id" className="field-input" defaultValue={prefilledRouteId}><option value="">None</option>{(routes ?? []).map((route: any) => <option key={route.id} value={route.id}>{route.route_date} - {route.status}</option>)}</select></FormField>
               <FormField label="Related machine"><select name="related_machine_id" className="field-input"><option value="">None</option>{(machines ?? []).map((machine: any) => <option key={machine.id} value={machine.id}>{machine.machine_code ?? machine.name} - {machine.name}</option>)}</select></FormField>
               <FormField label="Related location"><select name="related_location_id" className="field-input"><option value="">None</option>{(locations ?? []).map((location: any) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></FormField>
               <FormField label="Receipt URL"><input name="receipt_url" type="url" className="field-input" /></FormField>
