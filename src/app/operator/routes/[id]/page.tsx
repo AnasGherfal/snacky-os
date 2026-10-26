@@ -11,6 +11,7 @@ import { getServerI18n } from "@/lib/i18n/server";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
+import { operatorRouteNextFocus } from "@/lib/operator-route-next-focus";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isActiveRouteStatus, isAvailableRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
@@ -153,6 +154,7 @@ export default async function OperatorRouteDetailPage({
   const { id: routeId } = await params;
   const { success, error } = await searchParams;
   const { t, locale } = await getServerI18n();
+  const tr = (en: string, arabic: string) => locale === "ar" ? arabic : en;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
@@ -401,6 +403,27 @@ export default async function OperatorRouteDetailPage({
           : t("Continue Route"),
       }
     : null;
+  const nextFocus = operatorRouteNextFocus({
+    routeId,
+    routeStatus: routeRow.status,
+    hasPickup,
+    routeProductsPrepared,
+    stops: routeStops.map(stop => ({
+      id: stop.id,
+      status: stop.status,
+      stop_order: Number(stop.stop_order ?? 0),
+      machine_id: stop.machine_id,
+    })),
+  });
+  const focusedStop = nextFocus?.stopId
+    ? routeStops.find(stop => stop.id === nextFocus.stopId) ?? null : null;
+  const focusedMachine = focusedStop?.machine_id
+    ? machineById.get(focusedStop.machine_id) ?? null : null;
+  const focusedMachineName = focusedStop
+    ? formatMachineDisplayName(focusedMachine, { includeArea: true }) : null;
+  const nextFocusMatchesPrimaryAction = Boolean(nextFocus && primaryAction
+    && nextFocus.href === primaryAction.href);
+  const unfinishedStops = totalStops - doneStops;
   const routeStatus = routeDisplayStatus(routeRow.status, routeRow.operator_id);
   const translatedSuccess = success ? t(success, success) : null;
   const translatedError = error ? t(error, error) : null;
