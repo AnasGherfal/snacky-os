@@ -3006,8 +3006,22 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-          <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+        <div className="sticky bottom-2 z-20 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-lg backdrop-blur sm:mx-0 sm:rounded-xl sm:border sm:border-slate-200 sm:px-4">
+          <p aria-live="polite" className={stopReadiness.remainingCount > 0 ? "text-sm font-semibold text-amber-900" : "text-sm font-semibold text-emerald-800"}>
+            {submitting ? tr("Saving actual stock and completing stop…", "جارٍ حفظ المخزون الفعلي وإنهاء الموقع…")
+              : finalPhotoSaving ? tr("Saving machine photo…", "جارٍ حفظ صورة الجهاز…")
+              : stopReadiness.remainingCount > 0
+                ? tr(String(stopReadiness.remainingCount) + " check(s) remaining.", "متبقي " + stopReadiness.remainingCount + " من الفحوصات.")
+                : tr("Ready. Actual quantities save on Complete Stop.", "جاهز. تُحفظ الكميات الفعلية عند إنهاء الموقع.")}
+          </p>
+          {stopReadiness.next && !submitting && !finalPhotoSaving ? (
+            <a href={"#" + stopReadiness.next.anchor}
+              onClick={stopReadiness.next.kind === "cleaning" ? () => setShowCleaningChecklist(true) : undefined}
+              className="btn-secondary flex min-h-11 items-center justify-center text-center">
+              {tr("Go to next unfinished check", "الانتقال للفحص الناقص التالي")}
+            </a>
+          ) : null}
+          <button type="button" onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary min-h-12 w-full disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? `${t("Saving")}...` : t("Complete Stop")}
           </button>
           <SecondaryButton href={routeHref} type="button">{tr("Cancel", "إلغاء")}</SecondaryButton>
