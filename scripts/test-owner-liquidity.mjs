@@ -9,6 +9,7 @@ const finance = readFileSync("src/app/finance/page.tsx", "utf8");
 const form = readFileSync("src/app/finance/liquidity/page.tsx", "utf8");
 const action = readFileSync("src/lib/liquidity-actions.ts", "utf8");
 const sql = readFileSync("supabase/migrations/20261026143000_owner_liquidity_attestations.sql", "utf8");
+const authz = readFileSync("src/lib/authz.ts", "utf8");
 
 test("physical cash, bank, custodian funds and debts are each counted exactly once", () => {
   const p = calculateLiquidityPosition({
@@ -94,4 +95,17 @@ test("owner pages use confirmed custody/loan positions, never ledger balance for
   assert.ok(growth.includes("ledger balance (reconciliation only)") || growth.includes("Finance ledger balance (reconciliation only)"));
   assert.ok(growth.includes("cashAvailableLyd: cashAvailable ?? 0"));
   assert.ok(growth.includes("shortTermDebtLyd: knownShortTermDebt"));
+});
+
+test("liquidity route is owner-only ahead of generic finance role access", () => {
+  assert.ok(authz.includes('if (matchesPrefix(pathname, ["/finance/liquidity"])) return hasAnyRole(user, ["owner"])'));
+  const gate = authz.indexOf('matchesPrefix(pathname, ["/finance/liquidity"])');
+  const fallback = authz.indexOf('matchesPrefix(pathname, ["/finance"])');
+  assert.ok(gate >= 0 && fallback > gate);
+});
+
+test("Finance warns that ledger balances do not verify cash or outstanding debts", () => {
+  assert.ok(finance.includes("Ledger balance is not freely spendable cash."));
+  assert.ok(finance.includes("outstanding private loans"));
+  assert.ok(growth.includes("reconciliationGap"));
 });
