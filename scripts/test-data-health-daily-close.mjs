@@ -18,7 +18,10 @@ test("existing owner-only data-health screen includes a Tripoli-local daily clos
 test("daily close counts are independent, read-only and fail closed",()=>{
  assert.ok(page.includes('from("cash_collections").select("id",{count:"exact",head:true})'));
  assert.ok(page.includes('from("routes").select("id",{count:"exact",head:true})'));
- assert.ok(page.includes('.in("custody_status",["removed","in_storage"])'));
+ // A cash bag is awaiting COUNT only when counted_at is null, regardless
+ // of its movement through custody statuses (removed, in_storage, etc.).
+ assert.ok(page.includes('.is("counted_at",null)'));
+ assert.ok(!page.includes('.in("custody_status",["removed","in_storage"])'));
  assert.ok(page.includes('todayCashCount === null || todayCashUncounted === null || todayRouteCount === null'));
  assert.ok(page.includes('Unknown counts are not shown as zero'));
  assert.ok(page.includes('This snapshot never posts cash, closes routes or changes stock'));
