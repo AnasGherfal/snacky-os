@@ -18,6 +18,7 @@ test("cash and machine setup unverified reads do not become fake zero or all cle
  assert.ok(page.includes('currentCashCount !== null ? [['));
  assert.ok(page.includes('machineSetupVerified ? [['));
  assert.ok(page.includes('const dataHealthCountsIncomplete ='));
+ assert.ok(page.includes("(currentCashCount !== null && currentCashCount > 0)"));
  assert.ok(page.includes('dataHealthCountsIncomplete ? "alert" : "status"'));
  assert.ok(page.includes('No missing-site totals have been assumed to be zero'));
  assert.ok(page.includes('An empty list as an all-clear') || page.includes('an all-clear'));
