@@ -26,7 +26,7 @@ import {
 import {
   applyVisibleFinanceLedgerFilter,
   FINANCE_TRANSACTIONS_TABLE,
-  loadFinanceLedgerRows,
+  loadCompleteFinanceLedgerRows,
 } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
 import { calculateLiquidityPosition, isCurrentLiquidityAttestation } from "@/lib/liquidity-position";
@@ -366,11 +366,15 @@ export default async function GrowthDecisionsPage({
     paymentsResult,
     liquidityResult,
   ] = await Promise.all([
-    loadFinanceLedgerRows({
+    loadCompleteFinanceLedgerRows({
       label: "growth-decisions.finance-ledger",
-      buildQuery: (columns, level) =>
+      buildQuery: (columns, level, from, to) =>
         applyVisibleFinanceLedgerFilter(
-          supabase.from(FINANCE_TRANSACTIONS_TABLE).select(columns.join(",")),
+          supabase.from(FINANCE_TRANSACTIONS_TABLE)
+            .select(columns.join(","), { count: "exact" })
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
           level,
         ),
     }),
