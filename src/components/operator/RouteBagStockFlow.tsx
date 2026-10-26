@@ -176,7 +176,7 @@ export function RouteBagStockFlow({
                 {([
                   [tr("Picked from storage", "المستلم من المخزن"), flow.totalLoaded],
                   [tr("Filled at machines", "المعبأ في الأجهزة"), flow.totalFilled],
-                  [tr("Signed bag balance", "رصيد الحقيبة الفعلي"), flow.totalRemaining],
+                  [tr("Signed bag ledger balance", "رصيد الحقيبة حسب السجل"), flow.totalRemaining],
                 ] as const).map(([name, count]) => (
                   <div key={name} className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
                     <div className="text-xs font-medium leading-5 text-slate-600">{name}</div>
@@ -195,7 +195,7 @@ export function RouteBagStockFlow({
                         {([
                           [tr("Picked", "المستلم"), row.loadedQty],
                           [tr("Filled", "المعبأ"), row.filledQty],
-                          [tr("In bag", "في الحقيبة"), row.remainingQty],
+                          [tr("Bag ledger", "رصيد الحقيبة"), row.remainingQty],
                         ] as const).map(([name,count]) => (
                           <div key={name} className="rounded-lg bg-slate-50 px-2 py-2">
                             <span className="block text-xs text-slate-600">{name}</span>
