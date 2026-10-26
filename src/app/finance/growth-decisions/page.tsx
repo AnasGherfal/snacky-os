@@ -579,28 +579,40 @@ export default async function GrowthDecisionsPage({
             : 0)
         );
       }, 0);
+    const hasVmsMachineMatch = Boolean(vmsRow);
+    const rentValue = machine.rent_amount === null || machine.rent_amount === undefined
+      ? null : Number(machine.rent_amount);
+    const rentVerified = rentValue !== null && Number.isFinite(rentValue) && rentValue >= 0;
+    const sourceReady = hasVmsMachineMatch && rentVerified
+      && vmsCoverageComplete && manualCoverageComplete;
     return {
       id: machine.id,
       name: machine.name ?? machine.id,
-      profitAfterRent: money(
-        vmsGrossProfit + manualGrossProfit - numeric(machine.rent_amount),
-      ),
+      hasVmsMachineMatch,
+      rentVerified,
+      profitAfterRent: sourceReady
+        ? money(vmsGrossProfit + manualGrossProfit - rentValue)
+        : null,
     };
   });
-  const averageMachineProfitAfterRent = machineProfitRows.length
+  const verifiedMachineProfitRows = machineProfitRows.filter(
+    (row) => row.profitAfterRent !== null,
+  );
+  const unverifiedMachineCount = machineProfitRows.length - verifiedMachineProfitRows.length;
+  const averageMachineProfitAfterRent = verifiedMachineProfitRows.length
     ? money(
-        machineProfitRows.reduce((sum, row) => sum + row.profitAfterRent, 0) /
-          machineProfitRows.length,
+        verifiedMachineProfitRows.reduce((sum, row) => sum + (row.profitAfterRent ?? 0), 0) /
+          verifiedMachineProfitRows.length,
       )
-    : 0;
-  const weakMachineCount = machineProfitRows.filter(
-    (row) => row.profitAfterRent <= 0,
+    : null;
+  const weakMachineCount = verifiedMachineProfitRows.filter(
+    (row) => (row.profitAfterRent ?? 0) <= 0,
   ).length;
   const reliableProfitCoverage = vmsCoverageComplete && manualCoverageComplete;
   const reliableAverageMonthlyOperatingProfit = reliableProfitCoverage
     ? averageMonthlyOperatingProfit
     : null;
-  const reliableAverageMachineProfitAfterRent = reliableProfitCoverage
+  const reliableAverageMachineProfitAfterRent = reliableProfitCoverage && unverifiedMachineCount === 0
     ? averageMachineProfitAfterRent
     : null;
   const financeBalances = computeFinanceBalancesFromCutoff({
@@ -813,6 +825,20 @@ export default async function GrowthDecisionsPage({
             </div>
           </div>
         </section>
+
+        {unverifiedMachineCount > 0 ? (
+          <section role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <strong>{ar ? "ربحية بعض الأجهزة غير مؤكدة" : "Machine profitability needs verification"}</strong>
+            <p className="mt-1">{ar
+              ? `${unverifiedMachineCount} من ${machineProfitRows.length} أجهزة نشطة لم تتوفر لها تغطية مبيعات أو تكاليف أو بيانات إيجار يمكن التحقق منها. لن يحتسبها سناكي كأجهزة خاسرة تلقائياً ولن يعطي متوسط ربح مضللاً.`
+              : `${unverifiedMachineCount} of ${machineProfitRows.length} active machines lack verified sales coverage, source mapping or rental data. Snacky will not classify them as loss-making or show a misleading fleet average.`}</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <Link href="/machines" className="font-semibold underline underline-offset-2">{ar ? "راجع الأجهزة ومواقعها" : "Review machines and sites"}</Link>
+              <Link href="/finance/rent" className="font-semibold underline underline-offset-2">{ar ? "راجع الإيجارات" : "Review rent records"}</Link>
+              <Link href="/vms-import" className="font-semibold underline underline-offset-2">{ar ? "راجع مصدر المبيعات" : "Review sales sources"}</Link>
+            </div>
+          </section>
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
