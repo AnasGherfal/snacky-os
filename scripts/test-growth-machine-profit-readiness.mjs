@@ -47,3 +47,17 @@ test("growth engine holds expansion instead of inferring zero-loss machines", as
  assert.notEqual(decision.code,"buy_now");
  assert.match(decision.summary,/incomplete evidence/);
 });
+
+test("machine comparison distinguishes provisional after-rent figures from net profit",()=>{
+ assert.ok(page.includes("Machine profitability comparison"));
+ assert.ok(page.includes("Machine profitability needs verification"));
+ assert.ok(page.includes("Sales gross profit less recorded rent only"));
+ assert.ok(page.includes("this is not final net profit"));
+ assert.ok(page.includes("machine.reviewReason"));
+ assert.ok(page.includes('No verified machine sales match'));
+ assert.ok(page.includes('Monthly rent not verified'));
+ assert.ok(page.includes('VMS sales or cost coverage incomplete'));
+ assert.ok(page.includes('Manual sales data incomplete'));
+ assert.ok(page.includes('machine.profitAfterRent === null'));
+ assert.ok(page.includes('href="/finance/operations"'));
+});
