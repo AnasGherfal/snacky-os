@@ -2,6 +2,8 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import { RouteBagStockFlow } from "@/components/operator/RouteBagStockFlow";
+import { OperatorRouteNextActionCard } from "@/components/operator/OperatorRouteNextActionCard";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { lyd } from "@/lib/format";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -10,6 +12,7 @@ import { getServerI18n } from "@/lib/i18n/server";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
+import { operatorRouteNextFocus } from "@/lib/operator-route-next-focus";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isActiveRouteStatus, isAvailableRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
@@ -151,7 +154,8 @@ export default async function OperatorRouteDetailPage({
 }) {
   const { id: routeId } = await params;
   const { success, error } = await searchParams;
-  const { t } = await getServerI18n();
+  const { t, locale } = await getServerI18n();
+  const tr = (en: string, arabic: string) => locale === "ar" ? arabic : en;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
@@ -400,6 +404,27 @@ export default async function OperatorRouteDetailPage({
           : t("Continue Route"),
       }
     : null;
+  const nextFocus = operatorRouteNextFocus({
+    routeId,
+    routeStatus: routeRow.status,
+    hasPickup,
+    routeProductsPrepared,
+    stops: routeStops.map(stop => ({
+      id: stop.id,
+      status: stop.status,
+      stop_order: Number(stop.stop_order ?? 0),
+      machine_id: stop.machine_id,
+    })),
+  });
+  const focusedStop = nextFocus?.stopId
+    ? routeStops.find(stop => stop.id === nextFocus.stopId) ?? null : null;
+  const focusedMachine = focusedStop?.machine_id
+    ? machineById.get(focusedStop.machine_id) ?? null : null;
+  const focusedMachineName = focusedStop
+    ? formatMachineDisplayName(focusedMachine, { includeArea: true }) : null;
+  const nextFocusMatchesPrimaryAction = Boolean(nextFocus && primaryAction
+    && nextFocus.href === primaryAction.href);
+  const unfinishedStops = totalStops - doneStops;
   const routeStatus = routeDisplayStatus(routeRow.status, routeRow.operator_id);
   const translatedSuccess = success ? t(success, success) : null;
   const translatedError = error ? t(error, error) : null;
@@ -424,6 +449,16 @@ export default async function OperatorRouteDetailPage({
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
 {t("Some route details could not load. The route is still available, but a few non-critical details may be missing.")}
           </div>
+        ) : null}
+
+        {nextFocusMatchesPrimaryAction && nextFocus ? (
+          <OperatorRouteNextActionCard
+            focus={nextFocus}
+            machineName={focusedMachineName}
+            hasPickup={hasPickup}
+            actionLabel={primaryAction?.label ?? tr("Continue", "متابعة")}
+            locale={locale}
+          />
         ) : null}
 
         {/* Route Status Cards */}
@@ -455,17 +490,16 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="text-sm text-slate-500 mb-1">{t("Action")}</div>
-              {primaryAction ? (
-                <Link href={primaryAction.href} className="btn-primary w-full text-base">
-                  {primaryAction.label}
-                </Link>
-              ) : (
-                <div className="text-sm text-slate-600">{routeProductsPrepared ? t("Route completed") : t("Waiting for product quantities")}</div>
-              )}
+              <div className="mb-1 text-sm text-slate-500">{tr("Unfinished stops", "المواقع غير المنتهية")}</div>
+              <div className="text-lg font-semibold tabular-nums text-slate-900">{unfinishedStops}</div>
+              <p className="mt-1 text-xs text-slate-500">{tr("Follow the next action above.", "تابع الخطوة التالية الموضحة بالأعلى.")}</p>
             </div>
           </SectionCard>
         </div>
+
+        {(routeProductsPrepared || hasPickup || (routeBagBalances?.length ?? 0) > 0) ? (
+          <RouteBagStockFlow routeId={routeId} locale={locale} />
+        ) : null}
 
         {manualSalesError ? (
           <section className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
@@ -605,7 +639,7 @@ export default async function OperatorRouteDetailPage({
                       <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
                     </div>
                     <span className="shrink-0 text-slate-600">
-                      {Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
+                      {Number(item.picked_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
                         ? t("verified remaining unavailable")
                         : `${verifiedRemaining} ${t("remaining in operator bag")}`}
                     </span>
@@ -629,7 +663,7 @@ export default async function OperatorRouteDetailPage({
         ) : null}
 
         {/* Machine Stops */}
-        <section className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <section id="route-machine-stops" className="scroll-mt-6 rounded-lg border border-slate-200 bg-white overflow-hidden">
           <div className="p-4 md:p-6 border-b border-slate-200">
             <h2 className="text-lg font-semibold">{t("Machine Stops")} ({totalStops})</h2>
           </div>
@@ -644,7 +678,9 @@ export default async function OperatorRouteDetailPage({
                 const machine = stop.machine_id ? machineById.get(stop.machine_id) ?? null : null;
 
                 return (
-                <div key={stop.id} className="p-4 md:p-6 hover:bg-slate-50 transition">
+                <div key={stop.id} className={nextFocus?.stopId === stop.id
+                  ? "border-s-4 border-s-emerald-600 bg-emerald-50/50 p-4 transition hover:bg-emerald-50 md:p-6"
+                  : "p-4 transition hover:bg-slate-50 md:p-6"}>
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 items-start gap-3">
                       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
@@ -658,6 +694,11 @@ export default async function OperatorRouteDetailPage({
                       </div>
                     </div>
                     <div className="shrink-0">
+                      {nextFocus?.stopId === stop.id ? (
+                        <span className="mb-2 block rounded-full bg-emerald-100 px-3 py-1 text-center text-xs font-semibold text-emerald-900">
+                          {tr("Next suggested machine", "الجهاز المقترح التالي")}
+                        </span>
+                      ) : null}
                       <StatusBadge status={stop.status} label={t(String(stop.status ?? "unknown"), String(stop.status ?? "unknown"))} />
                     </div>
                   </div>

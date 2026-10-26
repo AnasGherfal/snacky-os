@@ -5,6 +5,7 @@ import { canAccessOperatorRoute, isAdminRole } from "@/lib/authz";
 import { normalizeInventoryEntityType } from "@/lib/inventory-movement";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { summarizeRouteInventoryMovements, type RouteInventoryMovementRow } from "@/lib/route-inventory-summary";
+import { summarizeRouteMachineFillMovements } from "@/lib/route-machine-fill-detail";
 import { isRouteInventoryFinalizableStatus, isRouteStopDoneStatus, isTerminalRouteStatus } from "@/lib/route-workflow";
 
 const NO_STORE_HEADERS = {
@@ -89,20 +90,45 @@ type MachineContextRow = {
 };
 
 async function loadAllRouteMovements(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, routeId: string) {
-  const pageSize = 1000;
+  // A PostgREST server row cap can silently truncate one request even with
+  // range(0,999). Never call incomplete movements verified picked/fill data.
+  const pageSize = 400;
+  const maxRows = 20000;
   const rows: RouteInventoryMovementRow[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+  const seenIds = new Set<string>();
+  let expectedCount: number | null = null;
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, count, error } = await supabase
       .from("inventory_movements")
-      .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id")
+      .select("id, product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id", { count: "exact" })
       .eq("related_route_id", routeId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw error;
-    rows.push(...((data ?? []) as RouteInventoryMovementRow[]));
-    if ((data?.length ?? 0) < pageSize) return rows;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      throw new Error("Route inventory movement count could not be verified.");
+    }
+    if (expectedCount === null) {
+      expectedCount = count;
+      if (expectedCount > maxRows) throw new Error("Route movement history exceeds safe read cap.");
+    } else if (count !== expectedCount) {
+      throw new Error("Route inventory changed during descriptive movement read.");
+    }
+    const expected = Math.min(pageSize, Math.max(0, count - from));
+    if (!Array.isArray(data) || data.length !== expected) {
+      throw new Error("Route inventory movement page was truncated; quantities remain unverified.");
+    }
+    for (const item of data) {
+      if (typeof item.id !== "string" || !item.id || seenIds.has(item.id)) {
+        throw new Error("Route inventory movement page includes a missing or duplicate identifier.");
+      }
+      seenIds.add(item.id);
+    }
+    rows.push(...(data as RouteInventoryMovementRow[]));
+    if (rows.length === count) return rows;
   }
+  throw new Error("Route movement history did not complete within safe read cap.");
 }
 
 async function loadOptionalRouteMovements(
@@ -415,6 +441,25 @@ export async function GET(
       ].some((value) => value !== 0))
       .sort((a, b) => a.productName.localeCompare(b.productName));
 
+    // Reuse the already paginated route movement rows. Only route-listed
+    // machines can receive an attributed filled quantity; other custody
+    // movements remain separate from actual machine filling.
+    const fillDetail = routeMovementsError
+      ? null : summarizeRouteMachineFillMovements(routeMovements, machineIds);
+    const machineFills = fillDetail?.verified ? fillDetail.rows.map((fill) => {
+      const machine = machineById.get(fill.machineId);
+      const location = Array.isArray(machine?.location) ? machine.location[0] : machine?.location;
+      return {
+        machineId: fill.machineId,
+        productId: fill.productId,
+        filledQty: fill.filledQty,
+        productName: productById.get(fill.productId) ?? fill.productId,
+        machineName: String(machine?.name ?? "").trim() || null,
+        machineCode: String(machine?.machine_code ?? "").trim() || null,
+        locationName: String(location?.name ?? "").trim() || null,
+      };
+    }) : null;
+
     const routeStatus = String(route.status ?? "");
     const stopStatuses = routeStopStatusRows.map((stop) => String(stop.status ?? ""));
     const unfinishedStopCount = stopStatuses.filter((status) => !isRouteStopDoneStatus(status)).length;
@@ -470,6 +515,8 @@ export async function GET(
       pendingStopIds,
       reconciliation,
       descriptiveReconciliationAvailable: !routeMovementsError,
+      machineFills,
+      machineFillCoverageComplete: Boolean(fillDetail?.verified),
       returnStorageOptions,
       suggestedStorageLocationId,
       requiresStorageSelection: returnStorageOptions.length > 1 && suggestedStorageLocationId === null,
