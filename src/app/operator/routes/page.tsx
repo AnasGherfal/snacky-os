@@ -362,7 +362,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
         action={headerAction}
       />
 
-      <nav className="hidden flex-wrap gap-2 md:flex" aria-label={tr("Route views", "عرض الجولات")}>
+      <nav className="flex flex-wrap gap-2" aria-label={tr("Route views", "عرض الجولات")}>
         <Link href="/operator/routes" aria-current={!availableView ? "page" : undefined}
           className={`inline-flex min-h-11 items-center rounded-lg border px-4 py-2 text-sm font-semibold ${!availableView ? "border-emerald-600 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700"}`}>
           {tr("Assigned", "المسندة")} ({assignedOpenRoutes.length})
@@ -373,7 +373,53 @@ export default async function OperatorRoutesPage({ searchParams }: {
         </Link>
       </nav>
 
+      {!availableView && !assignedRoutesError && priorityRoute && priorityRouteSummary ? (
+        <section aria-labelledby="operator-route-focus-title" className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4 bg-emerald-950 p-4 text-white sm:p-5">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-amber-300">
+                {tr(canManageAllRoutes ? "TEAM · ROUTE TO REVIEW" : "YOUR NEXT ROUTE", canManageAllRoutes ? "الفريق · جولة للمراجعة" : "جولتك التالية")}
+              </p>
+              <h2 id="operator-route-focus-title" className="mt-2 text-xl font-bold">
+                {priorityRouteSummary.urgency === "in_progress"
+                  ? tr("Resume an active route", "تابع جولة قيد التنفيذ")
+                  : priorityRouteSummary.urgency === "overdue"
+                    ? tr("Review an overdue route", "راجع جولة متأخرة")
+                    : priorityRouteSummary.urgency === "today"
+                      ? tr("Route scheduled today", "جولة مجدولة اليوم")
+                      : tr("Next scheduled route", "الجولة المجدولة التالية")}
+              </h2>
+              <p dir="ltr" className="mt-1 inline-block font-semibold tabular-nums text-emerald-100">{priorityRoute.route_date ?? "—"}</p>
+              <p className="mt-2 text-sm leading-6 text-emerald-100">
+                {priorityRouteSummary.unfinishedStops === null
+                  ? tr("Stop progress could not be verified.", "تعذر التحقق من تقدم المواقع.")
+                  : priorityRouteSummary.totalStops === 0
+                    ? tr("No machine stops are configured for this route.", "لا توجد مواقع أجهزة مسجلة لهذه الجولة.")
+                    : tr(
+                        String(priorityRouteSummary.unfinishedStops) + " stops unfinished; " + String(priorityRouteSummary.doneStops) + " completed or skipped.",
+                        "متبقي " + priorityRouteSummary.unfinishedStops + " مواقع؛ المكتملة أو المتخطاة " + priorityRouteSummary.doneStops + ".",
+                      )}
+              </p>
+            </div>
+            <Link href={`/operator/routes/${priorityRoute.id}`}
+              className="flex min-h-12 w-full shrink-0 items-center justify-center rounded-xl bg-amber-400 px-5 py-3 text-center text-sm font-bold text-slate-950 transition-colors hover:bg-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-2 focus-visible:ring-offset-emerald-950 sm:w-auto">
+              {tr("Open route", "فتح الجولة")}
+            </Link>
+          </div>
+          <p className="px-4 py-3 text-xs leading-5 text-slate-600 sm:px-5">
+            {tr("Active routes are shown first, followed by overdue and scheduled work. This does not assign routes or change stop order.", "تظهر الجولات الجارية أولاً ثم المتأخرة والمجدولة. هذا لا يغيّر التكليفات ولا ترتيب المواقع داخل الجولة.")}
+          </p>
+        </section>
+      ) : null}
+
       {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
+
+      {!stopsVerified ? (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          {tr("Stop counts could not be completely verified. No route progress or unfinished-stop count has been assumed to be zero.",
+            "تعذر التحقق الكامل من أعداد المواقع. لم تُعتبر أعداد المواقع غير المنتهية أو تقدم الجولات صفراً.")}
+        </div>
+      ) : null}
 
       {assignedRoutesError || availableRoutesError ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -443,8 +489,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>
@@ -471,8 +519,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")} - ${t("ready to claim")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>
@@ -495,8 +545,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>
