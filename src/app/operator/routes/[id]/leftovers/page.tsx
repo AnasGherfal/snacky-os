@@ -5,6 +5,8 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { useLanguage } from "@/components/I18nProvider";
 import { QuantityStepper } from "@/components/QuantityStepper";
+import { RouteReturnProgress } from "@/components/operator/RouteReturnProgress";
+import { operatorReturnReadiness } from "@/lib/operator-return-readiness";
 import { ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { finalizeRouteInventory } from "@/lib/operator-actions";
 
@@ -679,6 +681,22 @@ export default function LeftoversPage() {
   const hasPhysicalVariance = displayItems.some((item) => (
     Math.max(0, Number(countedQtys[custodyKey(item)] ?? 0)) !== Number(item.signedQuantity ?? 0)
   ));
+  const returnReadiness = operatorReturnReadiness({
+    rows: displayItems.map((item) => ({
+      key: custodyKey(item),
+      ledgerQty: Number(item.signedQuantity ?? 0),
+      enteredQty: Number(countedQtys[custodyKey(item)] ?? 0),
+      confirmed: confirmedCountKeys.includes(custodyKey(item)),
+    })),
+    emptyBagConfirmed,
+    reconciliationReason,
+    cancellationReason,
+    cancelMode: isCancelMode,
+    storageLocationId,
+    storageLocationCount: returnStorageOptions.length,
+    pendingDraft: Boolean(localDraft.pendingDraft),
+    inventoryFinalizationAvailable,
+  });
   const useLedgerCounts = () => {
     setCountedQtys(suggestedPhysicalCounts(displayItems));
     setConfirmedCountKeys([]);
@@ -756,6 +774,19 @@ export default function LeftoversPage() {
           </div>
         </SectionCard>
 
+        <RouteReturnProgress
+          countTotal={returnReadiness.countTotal}
+          countConfirmed={returnReadiness.countConfirmed}
+          enteredTotal={returnReadiness.enteredTotal}
+          confirmedTotal={returnReadiness.confirmedTotal}
+          possibleVariance={returnReadiness.possibleVariance}
+          physicalCountComplete={returnReadiness.physicalCountComplete}
+          nextStep={returnReadiness.nextStep}
+          canSubmit={returnReadiness.canSubmit}
+          pendingDraft={Boolean(localDraft.pendingDraft)}
+          locale={locale}
+        />
+
         {error && (
           <div
             ref={errorAlertRef}
@@ -787,7 +818,7 @@ export default function LeftoversPage() {
           ) : null}
 
         {isCancelMode ? (
-          <label className="block rounded-lg border border-rose-200 bg-white p-4">
+          <label id="route-cancellation-reason" className="scroll-mt-24 block rounded-lg border border-rose-200 bg-white p-4">
             <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Reason for cancelling the route", "سبب إلغاء الجولة")}</span>
             <textarea
               className="field-input min-h-24"
@@ -801,7 +832,7 @@ export default function LeftoversPage() {
 
         {totalPhysicalCount > 0 ? (
           returnStorageOptions.length ? (
-            <label className="block rounded-lg border border-slate-200 bg-white p-4">
+            <label id="return-storage-location" className="scroll-mt-24 block rounded-lg border border-slate-200 bg-white p-4">
               <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Physical return destination", "وجهة الإرجاع الفعلي")}</span>
               <select
                 className="field-input"
@@ -905,7 +936,7 @@ export default function LeftoversPage() {
         </SectionCard>
 
         {displayItems.length === 0 ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
+          <div id="bag-empty-confirmation" className="scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
             <p className="font-medium text-emerald-800">{tr("No route bag products to count", "لا توجد منتجات في حقيبة الجولة لعدّها")}</p>
             <p className="mt-1 text-sm text-emerald-700">{tr("The route has no operator-bag history or balance. If you physically found a product, add it above before finalizing.", "لا تحتوي الجولة على سجل أو رصيد لحقيبة المشغل. إذا وجدت منتجاً فعلياً فأضفه أعلاه قبل إنهاء الجولة.")}</p>
             <label className="mx-auto mt-4 flex max-w-md cursor-pointer items-center justify-center gap-2 text-sm font-medium text-emerald-950">
@@ -976,7 +1007,10 @@ export default function LeftoversPage() {
                     </div>
                     <div className="space-y-3 p-3">
                       {group.items.map((item) => (
-                        <div key={custodyKey(item)} className="rounded-lg border border-slate-200 bg-white p-4">
+                        <div id={"bag-count-" + displayItems.findIndex((candidate) => custodyKey(candidate) === custodyKey(item))}
+                          key={custodyKey(item)} className={confirmedCountKeys.includes(custodyKey(item))
+                            ? "scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50/30 p-4"
+                            : "scroll-mt-24 rounded-lg border border-amber-200 bg-white p-4"}>
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                             <div className="min-w-0 flex-1">
                               <p className="font-semibold text-slate-900">{item.productName}</p>
@@ -1030,7 +1064,7 @@ export default function LeftoversPage() {
             </div>
 
             {hasPhysicalVariance ? (
-              <label className="block rounded-lg border border-amber-200 bg-white p-4">
+              <label id="return-variance-reason" className="scroll-mt-24 block rounded-lg border border-amber-200 bg-white p-4">
                 <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Reason for inventory difference", "سبب فرق المخزون")}</span>
                 <textarea
                   className="field-input min-h-24"
@@ -1044,7 +1078,10 @@ export default function LeftoversPage() {
 
             <SectionCard>
               <div className="p-4">
-                <div className="text-sm text-slate-500 mb-1">{tr("Total physical units to return", "إجمالي الوحدات الفعلية للإعادة")}</div>
+                <div className="mb-1 text-sm text-slate-500">{tr(
+                  returnReadiness.physicalCountComplete ? "Counted units to return" : "Entered units to return · pending physical verification",
+                  returnReadiness.physicalCountComplete ? "الوحدات المعدودة للإرجاع" : "وحدات مدخلة للإرجاع · بانتظار تأكيد العدّ الفعلي",
+                )}</div>
                 <div className="text-3xl font-bold text-slate-900">{totalPhysicalCount}</div>
                 <p className="text-xs text-slate-600 mt-2">{tr("units", "وحدة")}</p>
               </div>
