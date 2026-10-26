@@ -5,6 +5,7 @@ import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
+import { getServerI18n } from "@/lib/i18n/server";
 import { ROUTE_INVENTORY_OPEN_STATUSES } from "@/lib/route-inventory-discrepancies";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,10 @@ export default async function OperationsHealthPage() {
   if(!profile||profile.active_status!=="active"||!hasAnyRole(profile,["owner","admin"]))redirect("/unauthorized");
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
+
+  const { locale } = await getServerI18n();
+  const ar = locale === "ar";
+  const tr = (en: string, arabic: string) => ar ? arabic : en;
 
   const tripoliDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const todayStart = `${tripoliDate}T00:00:00+02:00`;
@@ -80,6 +85,20 @@ export default async function OperationsHealthPage() {
     ...(currentCashCount !== null ? [["Cash actions 3–30 days old",currentCashCount,"/cash-collections/action-queue"] as const] : []),
     ["Recent VMS failures / partial",Number(counts.vms_recent_attention??0),"#vms-health"],
   ] as const;
+  const labelsAr: Record<string, string> = {
+    "Open route stock differences": "فروقات مخزون الجولات المفتوحة",
+    "Cash missing expected-source verification": "نقد يحتاج إلى التحقق من مصدره المتوقع",
+    "Machines missing site": "أجهزة دون موقع مسجل",
+    "Active sites missing distance": "مواقع نشطة دون مسافة مسجلة",
+    "Negative stock balances": "أرصدة مخزون سالبة",
+    "Safe stale refill cancellations": "طلبات تعبئة قديمة قابلة للإلغاء الآمن",
+    "Cash actions 3–30 days old": "مهام نقد متأخرة من ٣ إلى ٣٠ يوماً",
+    "Recent VMS failures / partial": "استيرادات VMS فاشلة أو غير مكتملة",
+    "Today's cash removals": "تحصيلات النقد اليوم",
+    "Today's cash bags awaiting count": "أكياس النقد بانتظار العد اليوم",
+    "Today's routes recorded": "الجولات المسجلة اليوم",
+  };
+  const uiLabel = (en: string) => ar ? labelsAr[en] ?? en : en;
   const activeCards=cards.filter(([,value])=>value>0);
   const dataHealthCountsIncomplete = !machineSetupVerified || currentCashCount === null
     || openRouteDiscrepancyCount === null || cashSourceGapCount === null;
