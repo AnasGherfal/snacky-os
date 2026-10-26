@@ -27,7 +27,7 @@ export function DashboardPriorityFocus({
     <section aria-labelledby="dashboard-priority-title" className="mb-6 overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-4 bg-emerald-950 px-5 py-5 text-white sm:px-6">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-widest text-amber-300">
+          <p className={ar ? "text-xs font-semibold text-amber-300" : "text-xs font-semibold uppercase tracking-widest text-amber-300"}>
             {tr("SNACKY · TODAY", "سناكي · اليوم")}
           </p>
           <h2 id="dashboard-priority-title" className="mt-1 text-xl font-bold tracking-tight sm:text-2xl">
