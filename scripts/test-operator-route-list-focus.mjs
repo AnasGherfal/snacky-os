@@ -90,3 +90,21 @@ test("routes page exposes mobile tabs, focused work and source-complete progress
  assert.ok(page.includes("This does not assign routes or change stop order"));
  assert.doesNotMatch(page,/\.update\(|\.insert\(|\.delete\(|\.upsert\(/);
 });
+
+test("operator home and assigned route list share the same priority source",()=>{
+ const home=readFileSync("src/app/operator/page.tsx","utf8");
+ const list=readFileSync("src/app/operator/routes/page.tsx","utf8");
+ assert.ok(home.includes("prioritizeAssignedOperatorRoutes("));
+ assert.ok(list.includes("prioritizeAssignedOperatorRoutes("));
+ assert.ok(home.includes("const featuredRoute = activeAssignedRoutes[0] ?? null"));
+ assert.ok(home.includes("const featuredSummary = featuredRoute ? routeQueueItem("));
+ assert.ok(home.includes('id="operator-home-next-route-title"'));
+ assert.ok(home.includes('href={`/operator/routes/${featuredRoute.id}`}'));
+ assert.ok(home.includes("YOUR NEXT ROUTE"));
+ assert.ok(home.includes("Existing assignments and pickup safeguards remain unchanged."));
+ assert.ok(home.includes("item.progressPercent !== null"));
+ assert.ok(home.includes("Stop progress unavailable"));
+ assert.ok(home.includes("متبقي"));
+ assert.ok(!home.includes("completedStops/totalStops"));
+ assert.doesNotMatch(home,/\.update\(|\.insert\(|\.delete\(|\.upsert\(/);
+});
