@@ -6,6 +6,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canExecuteRoutes, canManageOperations, hasRole } from "@/lib/authz";
 import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
+import { prioritizeAssignedOperatorRoutes, routeQueueItem } from "@/lib/operator-route-list-focus";
 import { getServerI18n } from "@/lib/i18n/server";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
@@ -13,6 +14,10 @@ export const dynamic = "force-dynamic";
 
 export default async function OperatorPage() {
   const { locale } = await getServerI18n();
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
+  const todayTripoli = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!supabase) {
@@ -56,7 +61,11 @@ export default async function OperatorPage() {
   ]);
   const routesError = assignedResult.error ?? availableResult.error;
   const assignedRoutes = (assignedResult.data ?? []) as OperatorRoutePreviewRow[];
-  const activeAssignedRoutes = assignedRoutes.filter((route) => !isTerminalRouteStatus(route.status));
+  const activeAssignedRoutes = prioritizeAssignedOperatorRoutes(
+    assignedRoutes.filter(route => !isTerminalRouteStatus(route.status)), todayTripoli, true,
+  ).map(item => item.route);
+  const featuredRoute = activeAssignedRoutes[0] ?? null;
+  const featuredSummary = featuredRoute ? routeQueueItem(featuredRoute,todayTripoli,true) : null;
   const completedAssignedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))
     .sort((a, b) => String(b.route_date ?? "").localeCompare(String(a.route_date ?? "")))
@@ -80,10 +89,41 @@ export default async function OperatorPage() {
       <div className="space-y-6">
         {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
         <PageHeader
-          title="Operator"
-          subtitle="Assigned refill routes and daily execution workflow."
-          action={<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end"><div className="hidden md:block"><NotificationCenter label="Notifications" /></div><PrimaryButton href="/operator/routes">All my routes</PrimaryButton></div>}
+          title={tr("Operator", "المشغّل")}
+          subtitle={tr("Assigned refill routes and daily execution workflow.", "جولات التعبئة المسندة وخطوات العمل اليومي.")}
+          action={<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end"><div className="hidden md:block"><NotificationCenter label="Notifications" /></div><PrimaryButton href="/operator/routes">{tr("All my routes", "كل جولاتي")}</PrimaryButton></div>}
         />
+
+        {featuredRoute && featuredSummary ? (
+          <section aria-labelledby="operator-home-next-route-title"
+            className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3 bg-emerald-950 p-4 text-white sm:p-5">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-amber-300">{tr(canManageAllRoutes ? "TEAM · NEXT ROUTE" : "YOUR NEXT ROUTE", canManageAllRoutes ? "الفريق · الجولة التالية" : "جولتك التالية")}</p>
+                <h2 id="operator-home-next-route-title" className="mt-1 text-xl font-bold">
+                  {featuredSummary.urgency === "in_progress"
+                    ? tr("Resume active work", "تابع الجولة الجارية")
+                    : featuredSummary.urgency === "overdue"
+                      ? tr("Review overdue work", "راجع الجولة المتأخرة")
+                      : tr("Open next scheduled route", "افتح الجولة المجدولة التالية")}
+                </h2>
+                <p dir="ltr" className="mt-1 inline-block tabular-nums text-sm text-emerald-100">{featuredRoute.route_date || "—"}</p>
+                <p className="mt-2 text-sm text-emerald-100">
+                  {featuredSummary.unfinishedStops === null
+                    ? tr("Stop count unverified", "عدد المواقع غير مؤكد")
+                    : tr(String(featuredSummary.unfinishedStops) + " unfinished stops", "متبقي " + featuredSummary.unfinishedStops + " مواقع")}
+                </p>
+              </div>
+              <Link href={`/operator/routes/${featuredRoute.id}`}
+                className="flex min-h-12 w-full shrink-0 items-center justify-center rounded-xl bg-amber-400 px-5 py-3 text-center text-sm font-bold text-slate-950 hover:bg-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-100 sm:w-auto">
+                {tr("Open route", "فتح الجولة")}
+              </Link>
+            </div>
+            <p className="px-4 py-3 text-xs leading-5 text-slate-600">
+              {tr("Existing assignments and pickup safeguards remain unchanged.", "التكليفات الحالية وضوابط استلام المخزون لم تتغير.")}
+            </p>
+          </section>
+        ) : null}
 
         <SectionCard>
           <div className="p-4">
