@@ -24,6 +24,7 @@ import {
   formatFinanceMoney,
 } from "@/lib/finance-balance";
 import { compareOwnerCashCountToLedger } from "@/lib/finance-cash-reconciliation";
+import { verifyFinanceOpeningEvidence } from "@/lib/finance-opening-evidence";
 import {
   applyVisibleFinanceLedgerFilter,
   FINANCE_TRANSACTIONS_TABLE,
@@ -660,13 +661,29 @@ export default async function GrowthDecisionsPage({
   const reliableAverageMachineProfitAfterRent = reliableProfitCoverage && unverifiedMachineCount === 0
     ? averageMachineProfitAfterRent
     : null;
-  const financeBalances = computeFinanceBalancesFromCutoff({
+  // The opening ledger records can be edited via Finance settings.
+  // A stale hard-coded baseline must never masquerade as cash reconciliation.
+  const financeSettingsResult = await supabase.from("finance_settings")
+    .select("reconciliation_cutoff_date,opening_balance_date")
+    .eq("id", "default").maybeSingle();
+  const financeCutoff = financeSettingsResult.data?.reconciliation_cutoff_date
+    ?? financeSettingsResult.data?.opening_balance_date ?? null;
+  const financeOpeningRows = financeCutoff ? await supabase.from("finance_opening_balances")
+    .select("account_id,balance_date,opening_balance")
+    .eq("balance_date", financeCutoff) : null;
+  const financeOpening = verifyFinanceOpeningEvidence(
+    financeSettingsResult.error ? null : financeSettingsResult.data,
+    financeOpeningRows?.error ? null : financeOpeningRows?.data ?? null,
+  );
+  const financeBalances = financeOpening.verified ? computeFinanceBalancesFromCutoff({
     rows: ledgerRows,
-  });
+    openingBalances: financeOpening.openingBalances,
+    cutoffDate: financeOpening.cutoffDate,
+  }) : null;
   const unpostedInvestorPayments = (paymentsResult.data ?? [])
     .filter((row) => row.finance_posting_status !== "posted")
     .reduce((sum, row) => sum + numeric(row.amount_lyd), 0);
-  const unverifiedLedgerCash = money(financeBalances.snacky_lyd);
+  const unverifiedLedgerCash = financeBalances ? money(financeBalances.snacky_lyd) : null;
   const tripoliToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
@@ -686,11 +703,13 @@ export default async function GrowthDecisionsPage({
   const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
   // Compare the exact same date, not an arbitrary later ledger total.
   const countedAsOf = String(latestLiquidity?.as_of_date ?? "");
-  const cashToLedger = liquidity ? compareOwnerCashCountToLedger({
+  const cashToLedger = liquidity && financeOpening.verified ? compareOwnerCashCountToLedger({
     rows: ledgerRows,
     asOfDate: countedAsOf,
     directlyAccessibleLyd: liquidity.directlyAccessible,
     custodyLyd: liquidity.physicallyHeldElsewhere,
+    openingBalances: financeOpening.openingBalances,
+    cutoffDate: financeOpening.cutoffDate,
   }) : null;
   const differenceVsControlledCash = cashToLedger?.verified
     ? cashToLedger.differenceFromCashAndBankLyd : null;
@@ -786,7 +805,7 @@ export default async function GrowthDecisionsPage({
           </p> : <p className="mt-1">{ar
             ? "لا يوجد جرد حديث مؤكد للنقد والمصرف والديون. توصيات شراء الأجهزة معلقة إلى حين توثيق السيولة."
             : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
-          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
+          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {unverifiedLedgerCash === null ? (ar ? "غير مؤكد" : "Unverified") : formatFinanceMoney(unverifiedLedgerCash)}.
             {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
             {differenceVsControlledCash !== null && differenceVsAllCustody !== null ? (ar
               ? ` المطابقة بتاريخ الجرد ${countedAsOf}: الفرق عن النقد والمصرف ${formatFinanceMoney(differenceVsControlledCash)}؛ والفرق عن النقد والمصرف والأموال لدى الغير ${formatFinanceMoney(differenceVsAllCustody)}.`
