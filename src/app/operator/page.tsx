@@ -5,10 +5,10 @@ import { NotificationCenter } from "@/components/NotificationCenter";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, canManageOperations, hasRole } from "@/lib/authz";
 import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
-import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
+import { type OperatorRoutePreviewRow } from "@/lib/operator-route-types";
 import { prioritizeAssignedOperatorRoutes, routeQueueItem } from "@/lib/operator-route-list-focus";
 import { getServerI18n } from "@/lib/i18n/server";
-import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
+import { isOperatorVisibleRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -127,18 +127,18 @@ export default async function OperatorPage() {
 
         <SectionCard>
           <div className="p-4">
-            <h2 className="text-base font-semibold text-slate-900">Route snapshot</h2>
+            <h2 className="text-base font-semibold text-slate-900">{tr("Route snapshot", "ملخص الجولات")}</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Open assigned</div>
+                <div className="text-xs font-semibold text-slate-500">{tr("Open assigned", "المسندة المفتوحة")}</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-900">{activeAssignedRoutes.length}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Available</div>
+                <div className="text-xs font-semibold text-slate-500">{tr("Available", "المتاحة")}</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-900">{availableRoutes.length}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Completed</div>
+                <div className="text-xs font-semibold text-slate-500">{tr("Completed", "المكتملة")}</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-900">{completedAssignedRoutes.length}</div>
               </div>
             </div>
@@ -150,22 +150,37 @@ export default async function OperatorPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {routes.map((route) => {
-              const completedStops = route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) => isRouteStopDoneStatus(stop.status)).length ?? 0;
-              const totalStops = route.route_stops?.length ?? 0;
+              const item = routeQueueItem(route, todayTripoli, true);
               return (
                 <Link key={route.id} href={`/operator/routes/${route.id}`} className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:shadow-md">
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="font-semibold text-slate-900">{route.route_date}</div>
-                      <div className="mt-1 text-sm text-slate-500">{completedStops}/{totalStops} stops completed or skipped</div>
+                      <div className="mt-1 text-sm text-slate-500">{item.doneStops === null
+                            ? tr("Stop progress unavailable", "تقدم المواقع غير متاح")
+                            : item.totalStops === 0
+                              ? tr("No stops configured", "لا توجد مواقع مسجلة")
+                              : tr(String(item.doneStops) + "/" + item.totalStops + " completed or skipped",
+                                item.doneStops + "/" + item.totalStops + " مكتمل أو متخطى")}</div>
                     </div>
                     <div className="shrink-0">
                       <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
                     </div>
                   </div>
-                  <div className="h-2 rounded-full bg-slate-200">
-                    <div className="h-2 rounded-full bg-emerald-500" style={{ width: totalStops ? `${Math.round((completedStops / totalStops) * 100)}%` : "0%" }} />
-                  </div>
+                  {item.progressPercent !== null ? (
+                    <div role="progressbar" aria-valuenow={item.doneStops ?? 0}
+                      aria-valuemin={0} aria-valuemax={item.totalStops ?? 1}
+                      aria-label={tr("Completed or skipped stops", "المواقع المكتملة أو المتخطاة")}
+                      className="h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div className="h-2 rounded-full bg-emerald-500"
+                        style={{ width: item.progressPercent + "%" }} />
+                    </div>
+                  ) : null}
+                  {item.unfinishedStops !== null && item.totalStops !== null && item.totalStops > 0 ? (
+                    <p className="mt-2 text-sm font-semibold text-emerald-800">
+                      {tr(String(item.unfinishedStops) + " unfinished stops", "متبقي " + item.unfinishedStops + " مواقع")}
+                    </p>
+                  ) : null}
                 </Link>
               );
             })}
@@ -177,15 +192,14 @@ export default async function OperatorPage() {
             <div className="p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">Recent completed routes</h2>
+                  <h2 className="text-base font-semibold text-slate-900">{tr("Recent completed routes", "الجولات المكتملة مؤخراً")}</h2>
                   <p className="mt-1 text-sm text-slate-500">Completed routes stay visible here for quick history and follow-up.</p>
                 </div>
                 <SecondaryButton href="/operator/routes">View all routes</SecondaryButton>
               </div>
               <div className="mt-4 space-y-3">
               {completedAssignedRoutes.map((route) => {
-                const completedStops = route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) => isRouteStopDoneStatus(stop.status)).length ?? 0;
-                const totalStops = route.route_stops?.length ?? 0;
+                const item = routeQueueItem(route, todayTripoli, true);
                 return (
                   <Link
                     key={route.id}
@@ -195,7 +209,12 @@ export default async function OperatorPage() {
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <div className="font-semibold text-slate-900">{route.route_date}</div>
-                          <div className="mt-1 text-sm text-slate-500">{completedStops}/{totalStops} stops completed or skipped</div>
+                          <div className="mt-1 text-sm text-slate-500">{item.doneStops === null
+                            ? tr("Stop progress unavailable", "تقدم المواقع غير متاح")
+                            : item.totalStops === 0
+                              ? tr("No stops configured", "لا توجد مواقع مسجلة")
+                              : tr(String(item.doneStops) + "/" + item.totalStops + " completed or skipped",
+                                item.doneStops + "/" + item.totalStops + " مكتمل أو متخطى")}</div>
                         </div>
                         <div className="shrink-0">
                           <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
@@ -211,7 +230,7 @@ export default async function OperatorPage() {
 
         <SectionCard>
           <div className="p-4">
-            <h2 className="text-base font-semibold text-slate-900">Route workflow</h2>
+            <h2 className="text-base font-semibold text-slate-900">{tr("Route workflow", "خطوات الجولة")}</h2>
             <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-5">
               {["Pick stock", "Visit stops", "Fill machines", "Record cash", "Return leftovers"].map((step) => (
                 <div key={step} className="rounded-lg border border-slate-200 bg-white p-3 font-medium text-slate-800">
