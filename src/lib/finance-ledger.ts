@@ -125,7 +125,7 @@ export async function loadCompleteFinanceLedgerRows({
         readError = result.error;
         break;
       }
-      if (!Number.isSafeInteger(result.count) || Number(result.count) < 0) {
+      if (typeof result.count !== "number" || !Number.isSafeInteger(result.count) || result.count < 0) {
         readError = new Error("Finance ledger exact row count unavailable; refusing a partial balance.");
         break;
       }
