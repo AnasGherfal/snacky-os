@@ -591,7 +591,7 @@ export default async function GrowthDecisionsPage({
       hasVmsMachineMatch,
       rentVerified,
       profitAfterRent: sourceReady
-        ? money(vmsGrossProfit + manualGrossProfit - rentValue)
+        ? money(vmsGrossProfit + manualGrossProfit - (rentValue ?? 0))
         : null,
     };
   });
