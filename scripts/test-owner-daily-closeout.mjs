@@ -110,6 +110,10 @@ test("read-only management action center uses precise cash counting, owner guard
  const paging=readFileSync("src/lib/owner-closeout-pagination.ts","utf8");
  assert.ok(page.includes('hasAnyRole(profile,["owner","admin"])'));
  assert.ok(page.includes("readOwnerDueRouteCloseout(db,tripoliDate)"));
+ assert.ok(page.includes('if(workspaceResult.error||!workspaceResult.data'));
+ assert.ok(page.includes("openRouteStockDifferences={null}"));
+ assert.ok(page.includes("Data Health cleanup workspace could not be verified"));
+
  assert.ok(page.includes("<OwnerDailyCloseoutActionCenter"));
  assert.ok(page.includes('allCashWithoutCountResult'));
  assert.ok(page.includes('cashReconciliationReviewResult'));
