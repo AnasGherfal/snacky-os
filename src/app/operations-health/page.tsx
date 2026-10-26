@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
+import { OwnerDailyCloseoutActionCenter } from "@/components/OwnerDailyCloseoutActionCenter";
+import { readOwnerDueRouteCloseout } from "@/lib/owner-closeout-source";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -39,12 +41,13 @@ export default async function OperationsHealthPage() {
     todayCashResult,todayCashUncountedResult,todayRoutesResult,
     workspaceResult,machinesResult,locationsResult,currentCashResult,
     routeDiscrepanciesResult,cashSourceGapsResult,
+    allCashWithoutCountResult,cashReconciliationReviewResult,dueRouteCloseoutResult,
   ] = await Promise.all([
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart)
-      .in("custody_status",["removed","in_storage"]),
+      .is("counted_at",null),
     db.from("routes").select("id",{count:"exact",head:true})
       .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
       .not("status","in", "(cancelled,canceled,voided)"),
@@ -54,10 +57,19 @@ export default async function OperationsHealthPage() {
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
     db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).not("collected_at","is",null).is("counted_at",null),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).in("reconciliation_status",["pending","variance_review"]),
+    readOwnerDueRouteCloseout(db,tripoliDate),
   ]);
   const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
   const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
   const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+  const allCashWithoutCount = !allCashWithoutCountResult.error && typeof allCashWithoutCountResult.count === "number"
+    ? allCashWithoutCountResult.count : null;
+  const cashReconciliationReviewCount = !cashReconciliationReviewResult.error && typeof cashReconciliationReviewResult.count === "number"
+    ? cashReconciliationReviewResult.count : null;
 
 
 
@@ -115,10 +127,22 @@ export default async function OperationsHealthPage() {
     || openRouteDiscrepancyCount === null || cashSourceGapCount === null
     || todayCashCount === null || todayCashUncounted === null || todayRouteCount === null
     || negativeInventoryCount === null || safeRefillCancellationCount === null
-    || recentVmsAttentionCount === null;
+    || recentVmsAttentionCount === null
+    || allCashWithoutCount === null || cashReconciliationReviewCount === null
+    || !dueRouteCloseoutResult.data;
 
   return <div className="space-y-6">
     <PageHeader title={tr("Data Health", "صحة البيانات")} subtitle={tr("Fix operational exceptions safely. Cleanup preserves audit history.", "راجع الحالات التشغيلية دون فقدان سجل المراجعة أو إجراء تعديلات تلقائية.")} action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{tr("Machine setup", "إعداد الأجهزة")}</SecondaryButton><SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton></div>}/>
+
+    <OwnerDailyCloseoutActionCenter
+      locale={locale}
+      date={tripoliDate}
+      routes={dueRouteCloseoutResult.data}
+      todayCashNotCounted={todayCashUncounted}
+      allCashNotCounted={allCashWithoutCount}
+      pendingCashReviews={cashReconciliationReviewCount}
+      openRouteStockDifferences={openRouteDiscrepancyCount}
+    />
 
     <section aria-label={tr("Daily closeout", "الإغلاق اليومي")} className="surface-card space-y-3 border-t-4 border-t-emerald-700">
       <div className="flex flex-wrap items-center justify-between gap-2">
