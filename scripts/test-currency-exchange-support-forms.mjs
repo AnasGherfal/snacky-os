@@ -49,7 +49,7 @@ test('every balance consumer is explicitly audited for native FX receipt fields'
   for(const file of files('src')){
     const text=fs.readFileSync(file,'utf8');
     if (/(computeFinanceBalances(?:FromCutoff)?|transactionImpacts)\s*\(/.test(text) && !file.endsWith('finance-balance.ts')) {
-      const loader=text.includes('loadFinanceLedgerRows');
+      const loader=text.includes('loadFinanceLedgerRows') || text.includes('loadCompleteFinanceLedgerRows');
       console.log('BALANCE_READ_MODEL',file,loader?'canonical ledger loader':text.match(/\.select\([\s\S]*?\)/g)?.join(' | ').slice(0,7000));
       if(!loader) assert.ok(text.includes('transfer_destination_amount') || text.includes('.select("*")'),`Load the received currency amount in ${file}`);
     }
