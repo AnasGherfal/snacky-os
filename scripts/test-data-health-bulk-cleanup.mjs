@@ -10,8 +10,9 @@ const migration=fs.readFileSync('supabase/migrations/20261002211500_data_health_
 test('zero exception cards are hidden rather than rendered as 0',()=>{
  assert.match(page,/const activeCards=cards\.filter\(\(\[,value\]\)=>value>0\)/);
  assert.match(page,/No active data-health exceptions/);
- assert.match(page,/currentCashCount>0/);
- assert.match(page,/vms_recent_attention.*>0/);
+ assert.match(page,/\(currentCashCount !== null && currentCashCount > 0\)/);
+ assert.match(page,/recentVmsAttentionCount = verifiedCount\(counts\.vms_recent_attention\)/);
+ assert.match(page,/recentVmsAttentionCount !== null/);
 });
 
 test('bulk stale-refill cleanup repeats the exact safety filters',()=>{

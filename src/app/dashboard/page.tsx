@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { DashboardPriorityFocus } from "@/components/DashboardPriorityFocus";
+import { splitDashboardActions } from "@/lib/dashboard-action-priority";
 import { KpiSection } from "@/components/KpiDashboard";
 import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { StatCard } from "@/components/StatCard";
@@ -921,7 +923,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: localize("Open inventory review", "فتح مراجعة المخزون"),
     });
   }
-  if (!activeDetailedCount) {
+  if (!errors.vmsBatches && !activeDetailedCount) {
     actionItems.push({
       key: "missing-detailed-sales",
       title: t("Import a detailed VMS sales file"),
@@ -930,7 +932,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: t("Open VMS import"),
     });
   }
-  if (!activeStockCount) {
+  if (!errors.vmsBatches && !activeStockCount) {
     actionItems.push({
       key: "missing-stock-snapshot",
       title: t("Import a stock snapshot"),
@@ -1024,6 +1026,8 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     });
   }
 
+  const { priority: priorityActions, remaining: remainingActions } = splitDashboardActions(actionItems);
+
   const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
 
@@ -1038,6 +1042,13 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
             <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
           </div>
         )}
+      />
+
+      <DashboardPriorityFocus
+        actions={priorityActions}
+        remainingCount={remainingActions.length}
+        partialSources={partialSections.length > 0}
+        locale={locale}
       />
 
       <div className="mb-6">
@@ -1198,25 +1209,28 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         </div>
 
         <div className="space-y-4">
-          <KpiSection title={t("What should I do next?")} subtitle={t("A short operating queue based on the current dashboard signals.")}>
-            {!actionItems.length ? (
-              <SectionEmpty title={t("No urgent queue")} body={t("The highest-priority queues are clear. Review routes or restock priority when you want the next task.")} />
-            ) : (
-              <div className="space-y-3">
-                {actionItems.map((item) => (
-                  <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+          {remainingActions.length > 0 ? (
+            <div id="dashboard-more-actions" className="scroll-mt-6">
+              <KpiSection
+                title={localize("More actions", "مهام أخرى")}
+                subtitle={localize("Other operating items, without repeating the top priorities.", "مهام تشغيلية إضافية بدون تكرار الأولويات المعروضة بالأعلى.")}
+              >
+                <div className="space-y-3">
+                  {remainingActions.map((item) => (
+                    <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+                        </div>
+                        <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
                       </div>
-                      <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </KpiSection>
+                  ))}
+                </div>
+              </KpiSection>
+            </div>
+          ) : null}
 
           <KpiSection title={t("System health summary")} subtitle={t("Counts that usually send teams into repair mode.")}>
             {errors.financeHealth || errors.routes || errors.missingCost || errors.vmsBatches ? (
