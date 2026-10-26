@@ -923,7 +923,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: localize("Open inventory review", "فتح مراجعة المخزون"),
     });
   }
-  if (!activeDetailedCount) {
+  if (!errors.vmsBatches && !activeDetailedCount) {
     actionItems.push({
       key: "missing-detailed-sales",
       title: t("Import a detailed VMS sales file"),
@@ -932,7 +932,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: t("Open VMS import"),
     });
   }
-  if (!activeStockCount) {
+  if (!errors.vmsBatches && !activeStockCount) {
     actionItems.push({
       key: "missing-stock-snapshot",
       title: t("Import a stock snapshot"),
