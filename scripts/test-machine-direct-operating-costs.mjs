@@ -37,3 +37,14 @@ test("existing growth page shows attribution separately, never guesses route all
  assert.ok(page.includes("Unrecorded or unattributed costs are unknown"));
  assert.ok(page.includes('href="/finance/expenses"'));
 });
+
+test("completed routes do not invent machine transport cost allocations",()=>{
+ assert.ok(page.includes('const completedRoutesResult = await supabase.from("routes")'));
+ assert.ok(page.includes('.eq("status", "completed")'));
+ assert.ok(page.includes('.gte("route_date", latestStart)'));
+ assert.ok(page.includes('.lte("route_date", latestEnd)'));
+ assert.ok(page.includes('linkedRouteExpenseCount'));
+ assert.ok(page.includes('Route-cost allocation readiness'));
+ assert.ok(page.includes('Per-machine transport cost cannot be reliably allocated'));
+ assert.ok(page.includes('Shared route costs must not be divided equally by assumption'));
+});
