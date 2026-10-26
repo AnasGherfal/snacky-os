@@ -17,6 +17,7 @@ import {
 } from "@/lib/authz";
 import { logActivity } from "@/lib/activity-log";
 import { removeCashEvidence, uploadCashEvidence, type CashEvidenceUpload } from "@/lib/cash-evidence";
+import { verifiedCashExpectation } from "@/lib/cash-custody";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -515,6 +516,23 @@ export async function resolveCashVariance(formData: FormData) {
   const resolution = clean(formData.get("resolution"));
   const reason = clean(formData.get("reason"));
   if (!resolution || !reason) fail(path, "Resolution category and detailed evidence-based reason are required.");
+
+  // A legacy zero placeholder is not a verified VMS expectation. This
+  // application guard protects ordinary owner submissions; database RPC
+  // hardening should be reviewed independently before production release.
+  const { data: expectationEvidence, error: evidenceError } = await supabase
+    .from("cash_collections")
+    .select("vms_expected_cash, expected_source, expected_calculated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (evidenceError || !expectationEvidence) {
+    console.error("[cash] Cannot verify source before variance resolution", evidenceError);
+    fail(path, "Cash expected-source evidence could not be verified. No resolution was recorded.");
+  }
+  if (verifiedCashExpectation(expectationEvidence) === null) {
+    fail(path, "Cash expected-source evidence is missing. Review the historical record in Data Health before approving any shortage.");
+  }
+
   const { error } = await supabase.rpc("resolve_cash_variance", {
     p_collection_id: id,
     p_resolution: resolution,

@@ -78,6 +78,21 @@ export function formatProductQuantity(
   return `${base} (${value.totalUnits.toLocaleString("en-US")} total)`;
 }
 
+/**
+ * Display a signed ledger variance without converting a deficit into zero.
+ * The standard quantity formatter intentionally normalizes ordinary picked
+ * quantities to nonnegative units; inventory audits need the actual sign.
+ */
+export function formatSignedProductQuantity(
+  quantity: number,
+  packaging: ProductPackaging = {},
+  options: { includeTotal?: boolean; compact?: boolean } = {},
+): string {
+  if (!Number.isSafeInteger(quantity)) throw new Error("Invalid signed inventory quantity");
+  const magnitude = formatProductQuantity(Math.abs(quantity), packaging, options);
+  return quantity < 0 ? `−${magnitude}` : magnitude;
+}
+
 export function roundUnitsUpToCase(quantity: unknown, caseQuantity: unknown) {
   const units = wholeNumber(quantity);
   const perCase = normalizeCaseQuantity(caseQuantity);

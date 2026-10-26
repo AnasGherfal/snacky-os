@@ -1,21 +1,21 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { OperatorBagStockView } from "@/app/inventory/OperatorBagStockView";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { getServerI18n } from "@/lib/i18n/server";
-import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
-import { lyd } from "@/lib/format";
-import { formatProductQuantity } from "@/lib/product-quantity";
+import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { type RestockPriorityItem } from "@/lib/restock-priority";
-import { loadRestockPriorityData } from "@/lib/restock-priority-data";
+import { loadPhysicalStorageData } from "@/lib/storage-inventory-data";
+import { parseRouteReservationUnits, physicalStockStatus } from "@/lib/storage-inventory-model";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "critical" | "low" | "reserved" | "fast";
+type InventoryFilter = "stocked" | "out" | "reserved" | "review";
 
 type InventoryQueryIssue = {
   key: string;
@@ -46,96 +46,37 @@ type InventoryRow = {
   category: string | null;
   brand: string | null;
   caseQuantity: number;
+  active: boolean;
+  unmapped: boolean;
   currentQty: number;
-  reservedQty: number;
-  availableQty: number;
+  reservedQty: number | null;
+  availableQty: number | null;
   reservations: InventoryRouteReservation[];
-  suggestedBuyQty: number;
-  routeNeedQty: number;
-  salesVelocity: number;
-  isFastSeller: boolean;
-  restockStatus: RestockPriorityItem["status"];
-  restockSection: RestockPriorityItem["section"];
-  lastPurchaseCost: number | null;
-  reasons: string[];
   status: string;
 };
 
-const inventoryFilterNamesAr: Record<InventoryFilter, string> = { all: "كل المنتجات", out: "نافد", critical: "حرج", low: "منخفض", reserved: "محجوز", fast: "الأكثر مبيعاً" };
+const inventoryFilterNamesAr: Record<InventoryFilter, string> = {
+  stocked: "موجود في المخزن", out: "نافد", reserved: "محجوز",
+  review: "تحتاج متابعة",
+};
 
 const inventoryFilters: { key: InventoryFilter; label: string }[] = [
-  { key: "all", label: "All products" },
+  { key: "stocked", label: "In Storage" },
   { key: "out", label: "Out of stock" },
-  { key: "critical", label: "Critical" },
-  { key: "low", label: "Low" },
   { key: "reserved", label: "Reserved for routes" },
-  { key: "fast", label: "Fast sellers" },
+  { key: "review", label: "Needs attention" },
 ];
-
-function inventoryStatus(currentQty: number, reservedQty: number, availableQty: number, isCritical: boolean) {
-  if (currentQty <= 0) return "out_of_stock";
-  if (availableQty <= 0 && reservedQty > 0) return "reserved";
-  if (isCritical) return "critical";
-  if (availableQty <= 10) return "low_stock";
-  return "available";
-}
-
-function formatEntity(type: string | null | undefined, name: string | null | undefined) {
-  return name ? `${type}: ${name}` : type ?? "-";
-}
-
-function supabaseErrorPayload(error: any) {
-  return {
-    code: error?.code ?? null,
-    message: error?.message ?? String(error ?? "Unknown Supabase error"),
-    details: error?.details ?? null,
-    hint: error?.hint ?? null,
-  };
-}
-
-function logInventoryQueryError({
-  key,
-  label,
-  table,
-  error,
-  profile,
-  params,
-}: {
-  key: string;
-  label: string;
-  table: string;
-  error: any;
-  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
-  params: Record<string, unknown>;
-}) {
-  const errorPayload = supabaseErrorPayload(error);
-  console.error(`[inventory] ${label}`, {
-    data_source: key,
-    table_or_view: table,
-    supabase_error: errorPayload,
-    current_user_id: profile?.id ?? null,
-    user_roles: profile?.roles ?? [],
-    organization_id: null,
-    query_parameters: params,
-  });
-  return {
-    key,
-    label,
-    table,
-    message: `${label}: ${errorPayload.message}`,
-  };
-}
 
 function inventoryFilterHref(filter: InventoryFilter, q: string) {
   const params = new URLSearchParams();
-  if (filter !== "all") params.set("filter", filter);
+  if (filter !== "stocked") params.set("filter", filter);
   if (q.trim()) params.set("q", q.trim());
   const query = params.toString();
   return query ? `/inventory?${query}` : "/inventory";
 }
 
 function packagedQuantity(quantity: unknown, row: { productName?: string | null; product_name?: string | null; category?: string | null; caseQuantity?: number | null; case_quantity?: number | null }) {
-  return formatProductQuantity(quantity, {
+  return formatSignedProductQuantity(Number(quantity), {
     caseQuantity: row.caseQuantity ?? row.case_quantity ?? 1,
     productName: row.productName ?? row.product_name ?? null,
     category: row.category ?? null,
@@ -152,11 +93,10 @@ function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, quer
   return rows.filter((row) => {
     const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
-    if (filter === "out") return row.currentQty <= 0;
-    if (filter === "critical") return row.restockSection === "critical" || row.status === "critical";
-    if (filter === "low") return row.status === "low_stock" || row.restockStatus === "low";
-    if (filter === "reserved") return row.reservedQty > 0;
-    if (filter === "fast") return row.isFastSeller;
+    if (filter === "stocked") return row.currentQty !== 0;
+    if (filter === "out") return row.status === "out_of_stock";
+    if (filter === "reserved") return row.reservedQty !== null && row.reservedQty > 0;
+    if (filter === "review") return row.status === "review" || row.status === "unverified" || row.status === "low_stock";
     return true;
   });
 }
@@ -168,7 +108,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const { page, pageSize } = getPagination(params);
   const q = String(params.q ?? "");
   const rawFilter = String(params.filter ?? "");
-  const filter = inventoryFilters.some((item) => item.key === rawFilter) ? (rawFilter as InventoryFilter) : "all";
+  const filter = inventoryFilters.some((item) => item.key === rawFilter) ? (rawFilter as InventoryFilter) : "stocked";
+  const operatorBagView = String(params.view ?? "") === "operator-bags";
   const profile = await getCurrentProfile();
   const userContext = profile
     ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
@@ -192,208 +133,146 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   // not evaluate the same profile policy once per movement row.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
 
-  const canSeeCost = canViewFinancials(userContext);
-  const restockResult = await loadRestockPriorityData(inventoryReadClient);
-  if (!restockResult.storageLoaded) {
+  // Operator bag custody is a separate on-demand read, never part of routine
+  // Storage loading. It remains available if the warehouse balance view fails.
+  if (operatorBagView) {
+    return <OperatorBagStockView
+      client={inventoryReadClient} locale={locale}
+      q={q} page={page} pageSize={pageSize} searchParams={params}
+      canSeeMovementHistory={canAccessPath(userContext, "/inventory/movements")}
+      canReviewHealth={canAccessPath(userContext, "/operations-health")}
+    />;
+  }
+
+  const storageResult = await loadPhysicalStorageData(inventoryReadClient);
+  if (!storageResult.ok) {
+    console.error("[inventory] Recorded Storage balance could not be verified", { error: storageResult.error });
     return (
       <ErrorState
-        title="Storage inventory could not be verified"
-        body="Snacky OS did not receive an authoritative ledger balance. No products have been changed and no missing result is being shown as zero. Retry to load the real storage quantities."
-        action={<SecondaryButton href="/inventory">Retry</SecondaryButton>}
+        title={tr("Storage inventory could not be verified", "تعذر التحقق من مخزون المخزن")}
+        body={tr(
+          "Recorded Storage balances could not be verified from the ledger. No quantities have been changed or treated as zero. Retry or check Data Health.",
+          "تعذر التحقق من رصيد المخزن المسجل بالنظام. لم تتغير أي كميات ولم نعتبر البيانات المفقودة صفراً. أعد المحاولة أو راجع سلامة البيانات."
+        )}
+        action={<SecondaryButton href="/inventory">{tr("Retry", "إعادة المحاولة")}</SecondaryButton>}
       />
     );
   }
-  const [
-    { data: operatorBagRowsData, error: operatorBagError },
-    { data: movementsData, error: movementsError },
-    { data: packagingRowsData, error: packagingError },
-    { data: routeReservationsData, error: routeReservationsError },
-  ] = await Promise.all([
-    inventoryReadClient
-      .from("current_inventory_by_location")
-      .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
-      .eq("location_type", "operator_bag")
-      .order("location_name")
-      .order("product_name")
-      .limit(2000),
-    inventoryReadClient
-      .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
-      .order("created_at", { ascending: false })
-      .limit(250),
-    inventoryReadClient
-      .from("products")
-      .select("id, name, category, case_quantity")
-      .eq("active", true)
-      .order("name")
-      .limit(5000),
-    inventoryReadClient
-      .from("route_stock_lines")
-      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
-      .limit(10000),
-  ]);
+
+  const {
+    data: routeReservationsData,
+    error: routeReservationsError,
+    count: routeReservationsCount,
+  } = await inventoryReadClient.from("route_stock_lines")
+    .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
+    // Completed or cancelled routes are not reservations. The definitive
+    // legacy/status filter below remains in isRouteReservationStatus.
+    .neq("routes.status", "completed")
+    .neq("routes.status", "cancelled")
+    .limit(10001);
+  let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
+    && routeReservationsCount === (routeReservationsData?.length ?? 0)
+    && (routeReservationsData?.length ?? 0) < 10001;
 
   const queryIssues: InventoryQueryIssue[] = [
-    ...Object.entries(restockResult.errors).map(([key, message]) => ({
-      key: `restock-${key}`,
-      label: "Restock signal unavailable",
-      table: key,
-      message: `${key}: ${message}`,
-    })),
-    operatorBagError
-      ? logInventoryQueryError({
-          key: "ledger_inventory",
-          label: "Could not load operator bag stock",
-          table: "current_inventory_by_location",
-          error: operatorBagError,
-          profile,
-          params: { location_type: "operator_bag", order: ["location_name", "product_name"], limit: 2000 },
-        })
-      : null,
-    routeReservationsError
-      ? logInventoryQueryError({
+    !reservationsKnown
+      ? {
           key: "route_reservations",
-          label: "Could not load route reservation details",
-          table: "route_stock_lines + routes",
-          error: routeReservationsError,
-          profile,
-          params: { active_status_rule: "isRouteReservationStatus", limit: 10000 },
-        })
+          label: "Route reservations unavailable",
+          table: "route_stock_lines",
+          message: "Route reservations could not be verified. Reserved and Available quantities are hidden; the recorded Storage balance remains visible.",
+        }
       : null,
-    movementsError
-      ? logInventoryQueryError({
-          key: "inventory_movements",
-          label: "Could not load inventory movements",
-          table: "inventory_movements",
-          error: movementsError,
-          profile,
-          params: { order: "created_at desc", limit: 250 },
-        })
-      : null,
-    packagingError
-      ? logInventoryQueryError({
-          key: "product_packaging",
-          label: "Could not load product box quantities",
-          table: "products",
-          error: packagingError,
-          profile,
-          params: { select: "id,name,category,case_quantity", limit: 5000 },
-        })
+    !storageResult.minimumThresholdsVerified
+      ? {
+          key: "minimum_thresholds",
+          label: "Minimum stock thresholds unavailable",
+          table: "products.min_storage_qty",
+          message: "Minimum stock thresholds are unavailable; threshold labels are disabled but recorded stock remains visible.",
+        }
       : null,
   ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
 
-  const priorityByProductId = new Map(restockResult.items.map((item) => [item.productId, item]));
-  const packagingByProductId = new Map((packagingRowsData ?? []).map((row: any) => [String(row.id), {
-    productName: row.name ?? null,
-    category: row.category ?? null,
-    caseQuantity: Math.max(1, Number(row.case_quantity ?? 1)),
-  }]));
   const reservationsByProductId = new Map<string, InventoryRouteReservation[]>();
   ((routeReservationsData ?? []) as RouteReservationSourceRow[]).forEach((row) => {
     const route = Array.isArray(row.routes) ? row.routes[0] : row.routes;
     const routeId = String(route?.id ?? row.route_id ?? "").trim();
     const productId = String(row.product_id ?? "").trim();
     const status = String(route?.status ?? "").trim();
-    const remainingQty = Math.max(0, Math.floor(Number(row.planned_qty ?? 0)) - Math.floor(Number(row.picked_qty ?? 0)));
-    if (!routeId || !productId || remainingQty <= 0 || !isRouteReservationStatus(status)) return;
+    // Missing route identities/statuses and malformed quantities are
+    // incomplete evidence, not proof that the stock is unreserved.
+    if (!routeId || !productId || !status) {
+      reservationsKnown = false;
+      return;
+    }
+    if (!isRouteReservationStatus(status)) return;
+    const planned = parseRouteReservationUnits(row.planned_qty);
+    const picked = parseRouteReservationUnits(row.picked_qty, true);
+    if (planned === null || picked === null || !Number.isSafeInteger(planned - picked)) {
+      reservationsKnown = false;
+      return;
+    }
+    const remainingQty = Math.max(0, planned - picked);
+    if (remainingQty <= 0) return;
     reservationsByProductId.set(productId, [
       ...(reservationsByProductId.get(productId) ?? []),
       { routeId, routeDate: route?.route_date ?? null, status, remainingQty },
     ]);
   });
+  if (!reservationsKnown && !queryIssues.some((issue) => issue.key === "route_reservations")) {
+    queryIssues.push({ key: "route_reservations", label: "Reservation data unverified", table: "route_stock_lines", message: "Reservation quantities are incomplete. Available stock is hidden until verified." });
+  }
   reservationsByProductId.forEach((reservations) => reservations.sort((left, right) =>
     String(left.routeDate ?? "").localeCompare(String(right.routeDate ?? "")) || left.routeId.localeCompare(right.routeId)
   ));
 
-  const allInventoryRows = restockResult.items
+  const allInventoryRows = storageResult.items
     .map<InventoryRow>((item) => {
-      const currentQty = Math.max(0, Number(item.storageQty ?? 0));
+      const currentQty = item.currentQty; // signed verified ledger quantity; never clamp a negative balance
       const reservations = reservationsByProductId.get(item.productId) ?? [];
-      const reservedQty = routeReservationsError
-        ? Math.max(0, Number(item.activeRouteNeedQty ?? 0))
-        : reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0);
-      const availableQty = Math.max(0, currentQty - reservedQty);
-      const isCritical = item.section === "critical" || item.status === "critical";
+      const reservedQty = reservationsKnown
+        ? reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0)
+        : null;
+      const availableQty = reservedQty === null ? null : Math.max(0, currentQty - reservedQty);
       return {
         productId: item.productId,
-        productName: item.name,
+        productName: item.productName,
         sku: item.sku,
         category: item.category,
         brand: item.brand,
-        caseQuantity: packagingByProductId.get(item.productId)?.caseQuantity ?? 1,
+        caseQuantity: item.caseQuantity,
+        active: item.active,
+        unmapped: item.unmapped,
         currentQty,
         reservedQty,
         availableQty,
         reservations,
-        suggestedBuyQty: Math.max(0, Number(item.suggestedBuyQty ?? 0)),
-        routeNeedQty: Math.max(0, Number(item.activeRouteNeedQty ?? 0)),
-        salesVelocity: Math.max(0, Number(item.salesVelocity ?? 0)),
-        isFastSeller: Boolean(item.isFastSeller),
-        restockStatus: item.status,
-        restockSection: item.section,
-        lastPurchaseCost: item.lastPurchaseCost,
-        reasons: item.reasons.slice(0, 3),
-        status: inventoryStatus(currentQty, reservedQty, availableQty, isCritical),
+        status: physicalStockStatus(currentQty, reservedQty, item.minStorageQty, item.unmapped || !item.active),
       };
     })
-    .sort((a, b) => a.productName.localeCompare(b.productName));
+    .sort((left, right) => {
+      const rank: Record<string, number> = { review: 0, unverified: 1, out_of_stock: 2, low_stock: 3, reserved: 4, available: 5 };
+      return (rank[left.status] ?? 6) - (rank[right.status] ?? 6) || left.productName.localeCompare(right.productName);
+    });
 
   const filteredInventoryRows = filterInventoryRows(allInventoryRows, filter, q);
   const totalInventoryPages = Math.max(1, Math.ceil(filteredInventoryRows.length / pageSize));
   const visibleInventoryPage = Math.min(page, totalInventoryPages);
   const inventoryRows = filteredInventoryRows.slice((visibleInventoryPage - 1) * pageSize, visibleInventoryPage * pageSize);
 
-  const filterCounts = {
-    all: allInventoryRows.length,
-    out: allInventoryRows.filter((row) => row.currentQty <= 0).length,
-    critical: allInventoryRows.filter((row) => row.restockSection === "critical" || row.status === "critical").length,
-    low: allInventoryRows.filter((row) => row.status === "low_stock" || row.restockStatus === "low").length,
-    reserved: allInventoryRows.filter((row) => row.reservedQty > 0).length,
-    fast: allInventoryRows.filter((row) => row.isFastSeller).length,
+  const filterCounts: Record<InventoryFilter, number> = {
+    stocked: allInventoryRows.filter((row) => row.currentQty !== 0).length,
+    out: allInventoryRows.filter((row) => row.status === "out_of_stock").length,
+    reserved: allInventoryRows.filter((row) => row.reservedQty !== null && row.reservedQty > 0).length,
+    review: allInventoryRows.filter((row) => row.status === "review" || row.status === "unverified" || row.status === "low_stock").length,
   };
 
-  const operatorBagRows = (operatorBagRowsData ?? [])
-    .filter((row: any) => row.location_type === "operator_bag" && Number(row.quantity_on_hand ?? 0) > 0)
-    .map((row: any) => {
-      const product = priorityByProductId.get(String(row.product_id ?? ""));
-      return {
-        ...row,
-        product_name: row.product_name ?? product?.name ?? "Unknown product",
-        sku: product?.sku ?? null,
-        category: product?.category ?? packagingByProductId.get(String(row.product_id ?? ""))?.category ?? null,
-        case_quantity: packagingByProductId.get(String(row.product_id ?? ""))?.caseQuantity ?? 1,
-        isFastSeller: Boolean(product?.isFastSeller),
-      };
-    })
-    .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
-  const filteredOperatorBagRows = operatorBagRows.filter((row: any) => matchesText([row.product_name, row.location_name, row.sku], q));
-
-  const movements = (movementsData ?? []).map((movement: any) => ({
-    ...movement,
-    product_name: movement.product?.name ?? priorityByProductId.get(String(movement.product_id ?? ""))?.name ?? "Unknown product",
-    category: priorityByProductId.get(String(movement.product_id ?? ""))?.category ?? packagingByProductId.get(String(movement.product_id ?? ""))?.category ?? null,
-    case_quantity: packagingByProductId.get(String(movement.product_id ?? ""))?.caseQuantity ?? 1,
-    from_label: formatEntity(movement.from_entity_type, movement.from_entity_id),
-    to_label: formatEntity(movement.to_entity_type, movement.to_entity_id),
-  }));
-  const filteredMovements = movements.filter((movement: any) => matchesText([
-    movement.product_name,
-    movement.reason,
-    movement.from_label,
-    movement.to_label,
-    movement.related_route_id,
-  ], q));
-
-  const movementReasonLabelsAr: Record<string, string> = { purchase_received: "استلام مشتريات", storage_to_operator_bag: "سحب من المخزن", operator_bag_to_machine: "تعبئة ماكينة", operator_bag_to_storage: "إرجاع للمخزن", stock_count_adjustment: "تسوية جرد", opening_balance: "رصيد افتتاحي", manual_sale: "بيع يدوي", returned_from_machine: "إرجاع من ماكينة", manual_correction: "تصحيح يدوي", damaged: "تالف", operator_personal_purchase: "شراء شخصي" };
-  const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", critical: "حرج", low_stock: "منخفض", available: "متاح" };
+  const statusLabelsAr: Record<string, string> = { out_of_stock: "نافد", reserved: "محجوز", low_stock: "منخفض", available: "متاح", review: "يحتاج مراجعة", unverified: "غير مؤكد" };
   const inventoryHeaders = [
     tr("Product", "المنتج"),
     tr("In storage", "في المخزن"),
     tr("Reserved in storage", "محجوز للجولات"),
     tr("Available — no route", "متاح بدون حجز"),
-    tr("Suggested buy", "الشراء المقترح"),
-    tr("Velocity", "المبيعات اليومية"),
-    ...(canSeeCost ? [tr("Last cost", "آخر تكلفة")] : []),
     tr("Status", "الحالة"),
   ];
 
@@ -401,11 +280,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     <div dir={direction}>
       <PageHeader
         title={tr("Storage", "المخزون")}
-        subtitle={tr("See what is on the shelves, what is reserved for routes, and what is available to use.", "اعرف الكميات الموجودة في المخزن والمحجوزة للجولات والمتاحة للاستخدام.")}
+        subtitle={tr("Recorded balances from inventory movements—not a physical shelf count.", "الرصيد المسجل من حركات المخزون، وليس جرداً فعلياً للرفوف.")}
         action={
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/restock-priority/purchase-list">{tr("What to buy", "شن نشتري؟")}</PrimaryButton>
-            {isOwnerAdminRole(profile) ? <SecondaryButton href="/inventory/stocktake">{tr("Count storage", "جرد المخزن")}</SecondaryButton> : null}
+            {canAccessPath(userContext, "/inventory/stocktake") ? <SecondaryButton href="/inventory/stocktake">{isOwnerAdminRole(profile) ? tr("Count storage", "جرد المخزن") : tr("My assigned counts", "الجرد المسند لي")}</SecondaryButton> : null}
           </div>
         }
       />
@@ -426,7 +305,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       <section className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <form action="/inventory" className="flex flex-wrap items-center gap-2">
-            {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
+            {filter !== "stocked" ? <input type="hidden" name="filter" value={filter} /> : null}
             <input type="hidden" name="pageSize" value={pageSize} />
             <div className="min-w-0 flex-1"><SearchInput defaultValue={q} placeholder={tr("Search product or SKU...", "ابحث باسم المنتج أو رمزه...")} /></div>
             <button className="btn-secondary" type="submit">{tr("Search", "بحث")}</button>
@@ -457,35 +336,37 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-5 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4" aria-label={tr("Storage summary for selected products", "ملخص مخزون المنتجات المعروضة")}>
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={tr("Storage summary for selected products", "ملخص مخزون المنتجات المعروضة")}>
         <div className="surface-card">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("In storage", "في المخزن")}</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Physical units currently on the storage shelves", "وحدات موجودة فعلياً على رفوف المخزن")}</p>
+          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Calculated from recorded receipts, picks and returns", "محسوب من الاستلام والسحب والإرجاع المسجل")}</p>
         </div>
         <div className="surface-card border-amber-200 bg-amber-50">
           <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{tr("Reserved in storage", "محجوز للجولات")}</div>
-          <div className="mt-2 text-2xl font-semibold text-amber-950">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
-          <p className="mt-1 hidden text-sm text-amber-800 sm:block">{tr("Still in storage, but attached to active routes", "موجودة في المخزن ومخصصة لجولات")}</p>
+          <div className="mt-2 text-2xl font-semibold text-amber-950">{reservationsKnown ? filteredInventoryRows.reduce((sum, row) => sum + (row.reservedQty ?? 0), 0) : tr("Unavailable", "غير متاح")}</div>
+          <p className="mt-1 hidden text-sm text-amber-800 sm:block">{tr("Recorded units reserved for active routes", "كميات مسجلة ومحجوزة للجولات النشطة")}</p>
         </div>
         <div className="surface-card border-emerald-200 bg-emerald-50">
           <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr("Available — no route", "متاح بدون حجز")}</div>
-          <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
-          <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Free units that can be assigned to a new route", "وحدات يمكن تخصيصها لجولة جديدة")}</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("Products with reservations", "منتجات محجوزة")}</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
-          <p className="mt-1 hidden text-sm text-slate-500 sm:block">{tr("Use the Reserved filter to review them", "استخدم فلتر المحجوز للمراجعة")}</p>
+          <div className="mt-2 text-2xl font-semibold text-emerald-950">{reservationsKnown ? filteredInventoryRows.reduce((sum, row) => sum + (row.availableQty ?? 0), 0) : tr("Unavailable", "غير متاح")}</div>
+          <p className="mt-1 hidden text-sm text-emerald-800 sm:block">{tr("Unreserved system quantity; check before picking", "الرصيد غير المحجوز بالنظام؛ تحقق منه عند السحب")}</p>
         </div>
       </div>
-      <p className="mb-4 text-xs text-slate-600">{tr("Reserved units are still on the storage shelves. Only Available stock can be assigned to another route.", "الكميات المحجوزة ما زالت موجودة في المخزن، لكن المتاح فقط يمكن تخصيصه لجولة جديدة.")}</p>
+      <p className="mb-4 text-xs text-slate-600">{reservationsKnown
+        ? tr("These balances come from stock movements, not a physical count. Available excludes active route reservations; use Count Storage to verify shelves.", "هذه أرصدة محسوبة من حركات المخزون وليست جرداً فعلياً. المتاح لا يشمل حجوزات الجولات؛ تحقق من الرفوف بجرد المخزن.")
+        : tr("Route reservations are unverified. Recorded Storage is shown, but unreserved stock is hidden until verification.", "تعذر التحقق من حجوزات الجولات. نعرض رصيد المخزن المسجل، لكن الكمية غير المحجوزة مخفية حتى التحقق.")}</p>
+      {filterCounts.review > 0 && filter !== "review" ? (
+        <Link href={inventoryFilterHref("review", q)} className="mb-4 block rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-950">
+          {tr("Stock needs review", "مخزون يحتاج مراجعة")} ({filterCounts.review}) — {tr("Open exceptions", "عرض الحالات")}
+        </Link>
+      ) : null}
 
       {!inventoryRows.length ? (
         <EmptyState
-          title={q || filter !== "all" ? tr("No products match this inventory view", "لا توجد منتجات مطابقة") : tr("No storage inventory yet", "لا توجد بيانات مخزون بعد")}
-          body={q || filter !== "all" ? tr("Try a broader search or switch filters.", "جرّب بحثاً أوسع أو غيّر الفلتر.") : tr("Create inventory movements into storage to populate calculated balances.", "تظهر الكميات بعد تسجيل حركات المخزون الفعلية.")}
-          action={q || filter !== "all" ? <SecondaryButton href="/inventory">{tr("Reset filters", "إعادة تعيين الفلاتر")}</SecondaryButton> : undefined}
+          title={q || filter !== "stocked" ? tr("No products match this inventory view", "لا توجد منتجات مطابقة") : tr("No storage inventory yet", "لا توجد بيانات مخزون بعد")}
+          body={q || filter !== "stocked" ? tr("Try a broader search or switch filters.", "جرّب بحثاً أوسع أو غيّر الفلتر.") : tr("Create inventory movements into storage to populate calculated balances.", "تظهر الكميات بعد تسجيل حركات المخزون الفعلية.")}
+          action={q || filter !== "stocked" ? <SecondaryButton href="/inventory">{tr("Reset filters", "إعادة تعيين الفلاتر")}</SecondaryButton> : undefined}
         />
       ) : (
         <>
@@ -494,24 +375,18 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
               <MobileRecordCard key={row.productId}>
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="break-words text-base font-semibold text-slate-900">{row.productName}</h2>
+                    <h2 className="break-words text-base font-semibold text-slate-900">{row.unmapped ? tr("Unmapped product", "منتج غير مطابق") + " · " + row.productId.slice(0, 8) : row.productName}</h2>
+                    {!row.active && row.currentQty !== 0 ? <p className="mt-1 text-xs font-semibold text-amber-900">{tr("Inactive product still has stock", "منتج غير مفعّل وما زال فيه مخزون")}</p> : null}
                     <p className="mt-1 break-words text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</p>
                   </div>
                   <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
                 </div>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">{tr("Fast seller", "الأكثر مبيعاً")}</span> : null}
-                  {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">{tr("Reserved in storage", "محجوز للجولات")}</span> : null}
-                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr("Buy", "اشترِ")} {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
-                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <MobileField label={tr("In storage", "في المخزن")}>{packagedQuantity(row.currentQty, row)}</MobileField>
-                  <MobileField label={tr("Reserved in storage", "محجوز للجولات")}>{packagedQuantity(row.reservedQty, row)}</MobileField>
-                  <MobileField label={tr("Available — no route", "متاح بدون حجز")}><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
-                  <MobileField label={tr("Suggested buy", "الشراء المقترح")}>{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
-                  <MobileField label={tr("Velocity", "مبيعات/يوم")}>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</MobileField>
+                  <MobileField label={tr("Reserved in storage", "محجوز للجولات")}>{row.reservedQty === null ? tr("Unverified", "غير مؤكد") : packagedQuantity(row.reservedQty, row)}</MobileField>
+                  <MobileField label={tr("Available — no route", "متاح بدون حجز")}><span className="font-semibold text-emerald-800">{row.availableQty === null ? tr("Unverified", "غير مؤكد") : packagedQuantity(row.availableQty, row)}</span></MobileField>
                 </div>
-                {row.reservations.length ? (
+                {reservationsKnown && row.reservations.length ? (
                   <details className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                     <summary className="cursor-pointer text-xs font-semibold text-amber-800">{tr("Route reservations", "حجوزات الجولات")} ({row.reservations.length})</summary>
                     <div className="mt-2 space-y-2">
@@ -525,17 +400,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                     <p className="mt-2 text-xs leading-5 text-amber-800">{tr("Open a route to change or release its reservation.", "افتح الجولة لتغيير الحجز أو إلغائه.")}</p>
                   </details>
                 ) : null}
-                {canSeeCost ? <div className="mt-3"><MobileField label={tr("Last cost", "آخر تكلفة")}>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
-                {row.reasons.length ? (
-                  <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <summary className="cursor-pointer text-xs font-semibold text-slate-600">{tr("Why it matters", "أسباب الأولوية")}</summary>
-                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                      {row.reasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
               </MobileRecordCard>
             ))}
           </MobileCardList>
@@ -543,13 +407,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             {inventoryRows.map((row) => (
               <tr key={row.productId}>
                 <td>
-                  <div className="font-medium text-slate-900">{row.productName}</div>
+                  <div className="font-medium text-slate-900">{row.unmapped ? tr("Unmapped product", "منتج غير مطابق") + " · " + row.productId.slice(0, 8) : row.productName}</div>
+                  {!row.active && row.currentQty !== 0 ? <p className="mt-1 text-xs font-semibold text-amber-900">{tr("Inactive product still has stock", "منتج غير مفعّل وما زال فيه مخزون")}</p> : null}
                   <div className="text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")} - {row.category ?? tr("Uncategorized", "غير مصنّف")}</div>
-                  <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || tr("No extra restock signals", "لا توجد مؤشرات إضافية للشراء")}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
                 <td>
-                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : tr("None", "لا يوجد")}</div>
+                  <div className={row.reservedQty !== null && row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-slate-700"}>{row.reservedQty === null ? tr("Unverified", "غير مؤكد") : row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : tr("None", "لا يوجد")}</div>
                   {row.reservations.length ? (
                     <div className="mt-2 space-y-1">
                       {row.reservations.map((reservation) => (
@@ -561,16 +425,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   ) : null}
                 </td>
                 <td className="font-semibold text-emerald-800">
-                  {packagedQuantity(row.availableQty, row)}
-                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? tr("No route attached", "غير محجوز لجولة") : row.reservedQty > 0 ? tr("All in-storage units reserved", "كل المخزون محجوز") : tr("No stock", "لا يوجد مخزون")}</div>
+                  {row.availableQty === null ? tr("Unverified", "غير مؤكد") : packagedQuantity(row.availableQty, row)}
+                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty === null ? tr("Reservation data unavailable", "حجوزات الجولات غير متاحة") : row.availableQty > 0 ? tr("No route attached", "غير محجوز لجولة") : row.reservedQty !== null && row.reservedQty > 0 ? tr("All in-storage units reserved", "كل المخزون محجوز") : tr("No stock", "لا يوجد مخزون")}</div>
                 </td>
-                <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
-                <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}${tr("/day", "/يوم")}` : "-"}</td>
-                {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
                 <td>
                   <div className="flex flex-col items-start gap-1">
                     <StatusBadge status={row.status} label={locale === "ar" ? statusLabelsAr[row.status] : undefined} />
-                    {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label={tr("Reserved in storage", "محجوز للجولات")} /> : null}
+                    {row.reservedQty !== null && row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label={tr("Reserved in storage", "محجوز للجولات")} /> : null}
                   </div>
                 </td>
               </tr>
@@ -580,100 +441,24 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </>
       )}
 
-      <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>{tr("Operator bag stock", "مخزون حقائب المشغلين")} <span className="text-sm font-normal text-slate-500">({filteredOperatorBagRows.length} {tr("rows", "صف")})</span></span>
-          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
-        </summary>
-        <div className="mt-4">
-        {!filteredOperatorBagRows.length ? (
-          <EmptyState
-            title={q ? tr("No operator bag rows match this search", "لا توجد حقائب مطابقة للبحث") : tr("No operator bag stock", "لا يوجد مخزون في حقائب المشغلين")}
-            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("Operator bag balances appear after route picking and disappear as machines are filled or leftovers are returned.", "تظهر الكميات بعد سحب البضاعة للجولات، وتقل عند التعبئة أو إرجاع المتبقي.")}
-          />
-        ) : (
-          <>
-            <MobileCardList>
-              {filteredOperatorBagRows.map((row: any) => (
-                <MobileRecordCard key={`${row.location_id}-${row.product_id}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="break-words text-base font-semibold text-slate-900">{row.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{row.sku ?? tr("No SKU", "بدون رمز")}</p>
-                    </div>
-                    {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <MobileField label={tr("Operator", "المشغّل")}>{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</MobileField>
-                    <MobileField label={tr("Quantity", "الكمية")}><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
-                  </div>
-                </MobileRecordCard>
-              ))}
-            </MobileCardList>
-            <DataTable className="hidden md:block" headers={[tr("Operator", "المشغّل"), tr("Product", "المنتج"), tr("SKU", "رمز المنتج"), tr("Quantity", "الكمية")]}>
-              {filteredOperatorBagRows.map((row: any) => (
-                <tr key={`${row.location_id}-${row.product_id}`}>
-                  <td className="font-medium text-slate-900">{row.location_name ?? tr("Unknown operator", "مشغّل غير معروف")}</td>
-                  <td>{row.product_name}</td>
-                  <td>{row.sku ?? tr("No SKU", "بدون رمز")}</td>
-                  <td className="font-semibold">{packagedQuantity(row.quantity_on_hand, row)}</td>
-                </tr>
-              ))}
-            </DataTable>
-          </>
-        )}
-        </div>
-      </details>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href="/inventory?view=operator-bags"
+          className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
+        >
+          {tr("Operator bag balances", "رصيد حقائب المشغلين")}
+        </Link>
+        {canAccessPath(userContext, "/inventory/movements") ? (
+          <Link
+            href="/inventory/movements"
+            className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-300"
+          >
+            {tr("View movement history", "عرض سجل حركات المخزون")}
+          </Link>
+        ) : null}
+      </div>
 
-      <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-base font-semibold text-slate-900">
-          <span>{tr("Recent stock movements", "حركات المخزون الأخيرة")} <span className="text-sm font-normal text-slate-500">({filteredMovements.length} {tr("records", "سجل")})</span></span>
-          <span className="text-xs text-slate-500">{tr("Show details ↓", "عرض التفاصيل ↓")}</span>
-        </summary>
-        <div className="mt-4">
-        {!filteredMovements.length ? (
-          <EmptyState
-            title={q ? tr("No movement rows match this search", "لا توجد حركات مطابقة للبحث") : tr("No movements recorded", "لا توجد حركات مسجلة")}
-            body={q ? tr("Try a broader search or clear the search box.", "جرّب بحثاً أوسع أو امسح البحث.") : tr("New purchase receipts, route picks, returns, adjustments, and waste movements will appear here.", "تظهر هنا حركات استلام المشتريات، وسحب الجولات، والإرجاع، والجرد، والتالف.")}
-          />
-        ) : (
-          <>
-            <MobileCardList>
-              {filteredMovements.map((movement: any) => (
-                <MobileRecordCard key={movement.id}>
-                  <div className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="break-words text-base font-semibold text-slate-900">{movement.product_name}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</p>
-                    </div>
-                    <StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <MobileField label={tr("Qty", "كمية")}>{packagedQuantity(movement.quantity, movement)}</MobileField>
-                    <MobileField label={tr("Route", "الجولة")}>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</MobileField>
-                    <MobileField label={tr("From", "من")}>{movement.from_label}</MobileField>
-                    <MobileField label={tr("To", "إلى")}>{movement.to_label}</MobileField>
-                  </div>
-                </MobileRecordCard>
-              ))}
-            </MobileCardList>
-            <DataTable className="hidden md:block" headers={[tr("Created", "التاريخ"), tr("Product", "المنتج"), tr("Qty", "الكمية"), tr("From", "من"), tr("To", "إلى"), tr("Reason", "السبب"), tr("Route", "الجولة")]}>
-              {filteredMovements.map((movement: any) => (
-                <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
-                  <td className="font-medium">{movement.product_name}</td>
-                  <td>{packagedQuantity(movement.quantity, movement)}</td>
-                  <td>{movement.from_label}</td>
-                  <td>{movement.to_label}</td>
-                  <td><StatusBadge status={movement.reason} label={locale === "ar" ? movementReasonLabelsAr[String(movement.reason)] : undefined} /></td>
-                  <td>{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</td>
-                </tr>
-              ))}
-            </DataTable>
-          </>
-        )}
-        </div>
-      </details>
+
     </div>
   );
 }

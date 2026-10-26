@@ -5,6 +5,7 @@ import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
+import { ROUTE_INVENTORY_OPEN_STATUSES } from "@/lib/route-inventory-discrepancies";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +22,30 @@ export default async function OperationsHealthPage() {
   const db=await getAuthenticatedSupabaseServerClient();
   if(!db)return <EmptyState title="Data Health unavailable" body="The signed-in database session is unavailable."/>;
 
-  const [workspaceResult,machinesResult,locationsResult,currentCashResult]=await Promise.all([
+  const tripoliDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const todayStart = `${tripoliDate}T00:00:00+02:00`;
+  const tomorrowStart = new Date(Date.parse(todayStart) + 86400000).toISOString();
+  const [todayCashResult,todayCashUncountedResult,todayRoutesResult] = await Promise.all([
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart)
+      .in("custody_status",["removed","in_storage"]),
+    db.from("routes").select("id",{count:"exact",head:true})
+      .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
+      .not("status","in", "(cancelled,canceled,voided)"),
+  ]);
+  const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
+  const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
+  const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+
+  const [workspaceResult,machinesResult,locationsResult,currentCashResult,routeDiscrepanciesResult,cashSourceGapsResult]=await Promise.all([
     db.rpc("snacky_data_health_workspace_v1"),
     db.from("machines").select("id,machine_code,name,status,location_id,location:locations(id,name,address,distance_from_storage_km)").order("machine_code"),
     db.from("locations").select("id,name,address,status,distance_from_storage_km").eq("status","active").order("name"),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
+    db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
+    db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
   ]);
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
@@ -42,8 +62,14 @@ export default async function OperationsHealthPage() {
   const missingMachineLocation=machines.filter((m:any)=>!m.location_id);
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
   const currentCashCount=currentCashResult.count??0;
+  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
+    ? routeDiscrepanciesResult.count : null;
+  const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
+    ? cashSourceGapsResult.count : null;
 
   const cards=[
+    ...(openRouteDiscrepancyCount !== null ? [["Open route stock differences",openRouteDiscrepancyCount,"/routes/inventory-review"] as const] : []),
+    ...(cashSourceGapCount !== null ? [["Cash missing expected-source verification",cashSourceGapCount,"/cash-collections"] as const] : []),
     ["Machines missing site",missingMachineLocation.length,"/machines/setup"],
     ["Active sites missing distance",missingDistance.length,"/machines/setup"],
     ["Negative stock balances",Number(counts.negative_inventory??0),"#inventory-health"],
@@ -55,6 +81,36 @@ export default async function OperationsHealthPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
+
+    <section aria-label="Daily closeout" className="surface-card space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="text-lg font-semibold">Daily owner closeout · {tripoliDate}</h2>
+        <p className="mt-1 text-sm text-slate-600">Read-only snapshot of today's operations in Tripoli time. Counts are records, not proof that all tasks were completed.</p></div>
+        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Cash action queue</SecondaryButton><SecondaryButton href="/routes/inventory-review">Inventory differences</SecondaryButton></div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {([
+          ["Today's cash removals",todayCashCount,"/cash-collections"],
+          ["Today's cash bags awaiting count",todayCashUncounted,"/cash-collections/action-queue"],
+          ["Today's routes recorded",todayRouteCount,"/routes"],
+        ] as const).map(([label,count,href])=><Link key={label} href={href} className="rounded-lg border border-slate-200 p-4">
+          <div className="text-xs text-slate-600">{label}</div>
+          <div className="mt-2 text-2xl font-semibold">{count === null ? "Unverified" : count}</div>
+          <div className="mt-2 text-xs text-sky-800">Review records →</div>
+        </Link>)}
+      </div>
+      {todayCashCount === null || todayCashUncounted === null || todayRouteCount === null ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.</p>
+      ) : null}
+      <p className="text-xs text-slate-500">Historical exceptions, unpaid supplier purchases, missing sales imports and open route differences remain in the existing review sections below. This snapshot never posts cash, closes routes or changes stock.</p>
+    </section>
+
+    {(openRouteDiscrepancyCount === null || cashSourceGapCount === null) ? (
+      <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        {openRouteDiscrepancyCount === null ? <>Route inventory discrepancy totals could not be verified. They have not been treated as zero. <Link className="underline underline-offset-2" href="/routes/inventory-review">Review route differences</Link>. </> : null}
+        {cashSourceGapCount === null ? <>Cash expected-source coverage could not be verified. Missing data has not been treated as zero. <Link className="underline underline-offset-2" href="/cash-collections">Review cash records</Link>.</> : null}
+      </div>
+    ) : null}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {activeCards.length?activeCards.map(([label,value,href])=><Link key={label} href={href} className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-1 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-sky-800">Open records →</div></Link>):<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No active data-health exceptions.</div>}
@@ -77,7 +133,15 @@ export default async function OperationsHealthPage() {
       {!inventoryHealth.length?<EmptyState title="No open inventory health cases" body="Scan when a negative balance appears; corrected cases stay open until you close them with a note."/>:
       <DataTable headers={["Location","Product","Current qty","Case","Action"]}>{inventoryHealth.slice(0,50).map((row:any,index:number)=><tr key={row.case_id??[row.location_type,row.location_id,row.product_id,index].join("-")}>
         <td><div className="font-medium">{row.location_name??"-"}</div><div className="text-xs text-slate-500">{row.location_type}</div></td>
-        <td>{row.product_name}</td>
+        <td>
+          <div>{row.product_name}</div>
+          {row.location_type==="operator_bag" && row.location_id && row.product_id ? (
+            <Link className="mt-1 inline-block text-xs font-semibold text-emerald-800 underline underline-offset-2"
+              href={`/inventory/movements?product_id=${encodeURIComponent(String(row.product_id))}&bag_id=${encodeURIComponent(String(row.location_id))}`}>
+              Review exact bag movements
+            </Link>
+          ) : null}
+        </td>
         <td className={Number(row.current_quantity??0)<0?"font-semibold text-rose-700":"font-semibold text-emerald-700"}>{row.current_quantity??0}</td>
         <td>{row.case_id?<StatusBadge status={row.ready_to_resolve?"corrected_waiting_close":"open"}/>:<span className="text-xs text-amber-700">Scan cases first</span>}</td>
         <td>{row.ready_to_resolve&&row.case_id?<DataHealthActionButton action="resolve_inventory_case" targetId={row.case_id} label="Close corrected case" defaultReason="Physical and ledger balance verified after correction"/>:row.case_id&&row.location_type==="operator_bag"&&Number(row.current_quantity??0)<0?<OperatorBagReconcileControl caseId={row.case_id} currentQty={Number(row.current_quantity??0)} operatorName={row.location_name??"Operator"} productName={row.product_name??"Product"}/>:<Link className="link-secondary" href="/inventory/reconciliation">Review inventory</Link>}</td>
@@ -96,7 +160,7 @@ export default async function OperationsHealthPage() {
     </section>
 
     <section className="surface-card">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Cash backlog classification</h2><p className="mt-1 text-sm text-slate-500">Classification does not reconcile cash, change amounts, or post Finance. It only separates historical backlog from current controls. Missing expected-source information does not establish a cash shortage.</p></div><div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Current cash actions</SecondaryButton><SecondaryButton href="/cash-collections">All cash</SecondaryButton></div></div>
       {(currentCashCount>0||Number(counts.legacy_cash_unclassified??0)>0||Number(counts.legacy_cash_classified??0)>0)?<div className="mb-4 grid gap-3 sm:grid-cols-3">{currentCashCount>0?<div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="text-xs">Current 3–30 day actions</div><strong className="text-2xl">{currentCashCount}</strong></div>:null}{Number(counts.legacy_cash_unclassified??0)>0?<div className="rounded-xl border p-3"><div className="text-xs">Legacy unclassified</div><strong className="text-2xl">{Number(counts.legacy_cash_unclassified)}</strong></div>:null}{Number(counts.legacy_cash_classified??0)>0?<div className="rounded-xl border bg-slate-50 p-3"><div className="text-xs">Legacy classified</div><strong className="text-2xl">{Number(counts.legacy_cash_classified)}</strong></div>:null}</div>:null}
       {!legacyCash.length?<EmptyState title="No legacy cash backlog" body="Older unresolved cash has been cleared or classified."/>:
       <DataTable headers={["Collected","Custody","Reconciliation","Counted","Expected","Classification","Action"]}>{legacyCash.slice(0,50).map((row:any)=><tr key={row.id}>

@@ -1,5 +1,7 @@
 export type GrowthDecisionInput = {
   cashAvailableLyd: number;
+  shortTermDebtLyd?: number;
+  liquidityVerified?: boolean;
   machineCostLyd: number;
   minimumCashReserveLyd: number;
   restockReserveLyd: number;
@@ -16,6 +18,7 @@ export type GrowthDecisionInput = {
   minimumHistoryMonths: number;
   monthsWithRevenue: number;
   costCoverageComplete: boolean;
+  machineProfitCoverageComplete?: boolean;
   missingCostSalesCount: number;
   missingCostRevenueLyd: number;
 };
@@ -27,6 +30,8 @@ export type GrowthDecisionCode =
   | "fix_existing_first"
   | "build_cash_reserve"
   | "improve_profit_first"
+  | "verify_liquidity"
+  | "verify_machine_profit"
   | "complete_product_costs"
   | "collect_more_history"
   | "do_not_buy_payback";
@@ -70,6 +75,7 @@ function payback(machineCost: number, monthlyProfit: number) {
 function scoreInput(input: GrowthDecisionInput, projectedPaybackMonths: number | null, cashAfterMachinePurchaseLyd: number) {
   let score = 100;
   if (!input.costCoverageComplete) score -= 30;
+  if (input.liquidityVerified === false) score -= 35;
   if (input.costCoverageComplete && input.historyMonthCount < input.minimumHistoryMonths) score -= 25;
   if (input.acceptedLocationCount <= 0) score -= 25;
   if (input.criticalRestockCount > 0) score -= Math.min(20, 5 + input.criticalRestockCount * 2);
@@ -86,7 +92,8 @@ function scoreInput(input: GrowthDecisionInput, projectedPaybackMonths: number |
 
 export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision {
   const cashAfterCommitmentsLyd = money(
-    input.cashAvailableLyd - nonNegative(input.investorDueLyd) - nonNegative(input.restockReserveLyd),
+    input.cashAvailableLyd - nonNegative(input.shortTermDebtLyd ?? 0)
+      - nonNegative(input.investorDueLyd) - nonNegative(input.restockReserveLyd),
   );
   const cashAfterMachinePurchaseLyd = money(cashAfterCommitmentsLyd - nonNegative(input.machineCostLyd));
   const reserveGapLyd = nonNegative(input.minimumCashReserveLyd - cashAfterMachinePurchaseLyd);
@@ -96,6 +103,13 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
   const score = scoreInput(input, projectedPaybackMonths, cashAfterMachinePurchaseLyd);
 
   const priorities: GrowthDecision["priorities"] = [
+    {
+      key: "short_term_debt",
+      label: "Short-term debt repayment reserve",
+      labelAr: "احتياطي سداد الديون القريبة",
+      amountLyd: nonNegative(input.shortTermDebtLyd ?? 0),
+      status: (input.shortTermDebtLyd ?? 0) > 0 ? "required" : "clear",
+    },
     {
       key: "investor_due",
       label: "Investor amount due",
@@ -135,8 +149,8 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
 
   const commonReasons: string[] = [];
   const commonReasonsAr: string[] = [];
-  commonReasons.push(`Cash after investor due and protected restocking reserve: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} LYD.`);
-  commonReasonsAr.push(`النقد بعد مستحق المستثمر واحتياطي المنتجات: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} د.ل.`);
+  commonReasons.push(`Cash after known debt repayments, investor due and protected restocking reserve: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} LYD.`);
+  commonReasonsAr.push(`النقد بعد الديون القريبة ومستحق المستثمر واحتياطي المنتجات: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} د.ل.`);
   if (input.costCoverageComplete && projectedPaybackMonths !== null) {
     commonReasons.push(`Estimated payback from current machine performance: ${projectedPaybackMonths} months.`);
     commonReasonsAr.push(`مدة استرداد التكلفة حسب أداء الأجهزة الحالية: ${projectedPaybackMonths} شهر.`);
@@ -167,6 +181,32 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
     reasonsAr: [...reasonsAr, ...commonReasonsAr],
     priorities,
   });
+
+  if (input.liquidityVerified === false) {
+    return result(
+      "verify_liquidity",
+      "Verify cash and debts before expanding",
+      "تحقق من السيولة والديون قبل التوسع",
+      "The Finance ledger is not a verified count of cash, bank balances and unpaid loans. A recent owner liquidity snapshot is required before buying another machine.",
+      "رصيد دفتر المالية لا يثبت النقد الفعلي أو رصيد المصرف أو الديون غير المسددة. يلزم جرد حديث ومعتمد من المالك قبل شراء جهاز آخر.",
+      ["Record a fresh owner cash/bank count; keep money held by others separate and reserve all outstanding short-term debts."],
+      ["سجّل جرداً حديثاً للنقد والمصرف؛ وافصل الأموال لدى الغير واحجز جميع الديون القصيرة المستحقة."],
+      "low",
+    );
+  }
+
+  if (input.machineProfitCoverageComplete === false) {
+    return result(
+      "verify_machine_profit",
+      "Verify machine profitability before expanding",
+      "تحقق من ربحية الأجهزة قبل التوسع",
+      "Some active machines lack verified sales, costs, rental data or reliable machine mapping. Do not classify them as loss-making or recommend expansion from incomplete evidence.",
+      "بعض الأجهزة النشطة تنقصها مبيعات أو تكاليف أو إيجارات موثقة أو ربط موثوق. لا تصنفها خاسرة ولا توصي بالتوسع قبل استكمال الأدلة.",
+      ["Complete machine-level sales mapping and rent coverage before making a new hardware purchase."],
+      ["أكمل ربط المبيعات والإيجارات لكل جهاز قبل شراء جهاز جديد."],
+      "low",
+    );
+  }
 
   if (!input.costCoverageComplete) {
     return result(

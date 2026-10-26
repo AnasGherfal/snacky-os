@@ -40,3 +40,12 @@ test('public reconciliation RPC stays invoker and privileged logic stays private
  assert.doesNotMatch(migration.slice(start,end),/security definer/i);
  assert.match(migration,/create or replace function data_health_private\.reconcile_operator_bag/i);
 });
+
+test('Data Health offers exact operator bag evidence before owner-only physical count reconciliation',()=>{
+ assert.match(page,/Review exact bag movements/);
+ assert.match(page,/row\.location_type==="operator_bag"/);
+ assert.match(page,/bag_id=\$\{encodeURIComponent\(String\(row\.location_id\)\)\}/);
+ assert.match(page,/product_id=\$\{encodeURIComponent\(String\(row\.product_id\)\)\}/);
+ assert.match(page,/OperatorBagReconcileControl/);
+});
+

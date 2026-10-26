@@ -7,8 +7,10 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
 import { inventoryMovementReasonLabel } from "@/lib/inventory-movement";
+import { combineMovementFilterGroups } from "@/lib/inventory-movement-filter-groups";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { formatSignedProductQuantity } from "@/lib/product-quantity";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,21 @@ const movementReasons = [
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+/** The ledger stores units; retain any negative adjustment instead of showing zero. */
+function movementDisplayQuantity(movement: {
+  quantity: number | string | null;
+  product?: { name?: string | null; category?: string | null; case_quantity?: number | null } | null;
+}): string {
+  if (movement.quantity === null) return "Unverified quantity";
+  const value = Number(movement.quantity);
+  if (!Number.isSafeInteger(value)) return "Unverified quantity";
+  return formatSignedProductQuantity(value, {
+    caseQuantity: movement.product?.case_quantity ?? 1,
+    productName: movement.product?.name ?? null,
+    category: movement.product?.category ?? null,
+  }, { compact: true });
 }
 
 function shortId(value: string | null | undefined) {
@@ -230,6 +247,7 @@ export default async function InventoryMovementsPage({
   searchParams: Promise<{
     q?: string;
     product_id?: string;
+    bag_id?: string;
     reason?: string;
     user_id?: string;
     route_id?: string;
@@ -248,6 +266,11 @@ export default async function InventoryMovementsPage({
   const canCreateCorrections = isOwnerAdminRole(profile);
 
   const params = cleanSearchParams(await searchParams);
+  const bagId = String(params.bag_id ?? "").trim();
+  if (bagId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bagId)) {
+    return <ErrorState title="Invalid operator bag filter" body="The operator bag identifier is invalid. Return to the custody view to select a valid bag."
+      action={<SecondaryButton href="/inventory?view=operator-bags">Operator bags</SecondaryButton>} />;
+  }
   const { page, pageSize, from, to } = getPagination(params);
   const supabase = await getAuthenticatedSupabaseServerClient();
 
@@ -288,23 +311,34 @@ export default async function InventoryMovementsPage({
     const matchingProductIds = await matchingProductIdsPromise;
     let movementQuery = supabase
       .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name, case_quantity, category), created_by_member:team_members(id, full_name)", { count: "exact" })
       .order("created_at", { ascending: false });
 
     if (params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
+    const alternativeGroups: string[][] = [];
+    if (bagId) alternativeGroups.push([
+      `and(from_entity_type.eq.operator_bag,from_entity_id.eq.${bagId})`,
+      `and(to_entity_type.eq.operator_bag,to_entity_id.eq.${bagId})`,
+    ]);
     if (params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
     if (params.user_id) movementQuery = movementQuery.eq("created_by", params.user_id);
     if (params.route_id) movementQuery = movementQuery.eq("related_route_id", params.route_id);
     if (params.purchase_id) movementQuery = movementQuery.eq("related_purchase_id", params.purchase_id);
-    if (params.machine_id) movementQuery = movementQuery.or(`related_machine_id.eq.${params.machine_id},to_entity_id.eq.${params.machine_id},from_entity_id.eq.${params.machine_id}`);
+    if (params.machine_id) alternativeGroups.push([
+      `related_machine_id.eq.${params.machine_id}`,
+      `to_entity_id.eq.${params.machine_id}`,
+      `from_entity_id.eq.${params.machine_id}`,
+    ]);
     if (params.date_from) movementQuery = movementQuery.gte("created_at", `${params.date_from}T00:00:00`);
     if (params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
     if (search) {
       const pattern = supabaseLikePattern(search.replaceAll(",", " "));
       const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`, `movement_type.ilike.${pattern}`];
       if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
-      movementQuery = movementQuery.or(clauses.join(","));
+      alternativeGroups.push(clauses);
     }
+    const groupedLogic = combineMovementFilterGroups(alternativeGroups);
+    if (groupedLogic) movementQuery = movementQuery.or(groupedLogic);
     return movementQuery.range(from, to);
   })();
 
@@ -358,16 +392,25 @@ export default async function InventoryMovementsPage({
     <>
       <PageHeader
         title="Inventory Movement Log"
-        subtitle="Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."
+        subtitle={bagId
+          ? "Movement history for the selected operator bag. Includes only receipts, withdrawals, machine fills and returns tied to this bag."
+          : "Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."}
         action={canCreateCorrections ? <PrimaryButton href="/inventory/movements/new">New storage adjustment</PrimaryButton> : undefined}
       />
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
       {params.corrected ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Correction created for movement {params.corrected}.</div> : null}
 
+      {bagId ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
+          <span>Filtered to one operator bag · {bagId.slice(0, 8)}</span>
+          <SecondaryButton href="/inventory?view=operator-bags">Back to operator bags</SecondaryButton>
+        </div>
+      ) : null}
       <section className="surface-card mb-6 space-y-4">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
           <input type="hidden" name="pageSize" value={pageSize} />
+          {bagId ? <input type="hidden" name="bag_id" value={bagId} /> : null}
           <input name="q" defaultValue={params.q ?? ""} placeholder="Search product name, SKU, notes..." className="field-input md:col-span-2" />
           <select name="product_id" defaultValue={params.product_id ?? ""} className="field-input">
             <option value="">All products</option>
@@ -425,7 +468,7 @@ export default async function InventoryMovementsPage({
                   </div>
                   <div className="rounded-lg bg-slate-100 px-3 py-2 text-center">
                     <div className="text-xs text-slate-500">Qty</div>
-                    <div className="text-lg font-semibold text-slate-900">{movement.quantity}</div>
+                    <div className="text-base font-semibold text-slate-900">{movementDisplayQuantity(movement)}</div>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3">
@@ -478,7 +521,7 @@ export default async function InventoryMovementsPage({
                     )}
                   </td>
                   <td>{movement.product?.sku ?? "-"}</td>
-                  <td className="font-semibold">{movement.quantity}</td>
+                  <td className="font-semibold">{movementDisplayQuantity(movement)}</td>
                   <td><StatusBadge status={entityTypeLabel(movement.from_entity_type)} /></td>
                   <td>{entityLabel(movement.from_entity_type, movement.from_entity_id, labelMaps)}</td>
                   <td><StatusBadge status={entityTypeLabel(movement.to_entity_type)} /></td>

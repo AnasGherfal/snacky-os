@@ -1,7 +1,6 @@
 import {
   monthlyTransactionBusinessDate,
   monthlyTransactionDate,
-  monthlyTransactionPaymentAmount,
   monthlyTransactionPaymentMethod,
   monthlyTransactionPaymentTime,
   monthlyTransactionNumber,
@@ -107,20 +106,33 @@ function hasAny(value: unknown, needles: string[]) {
 }
 
 function transactionStatus(row: XyLiveSalesRawRow, canonical: Record<string, string>) {
-  const rawStatus = [
-    first(row, aliases.status),
-    first(row, aliases.refundStatus),
-  ].filter(Boolean).join(" ");
+  // Inspect ALL status fields, not just the first alias. A successful payment
+  // can coexist with a failed dispense in another XY field.
+  const values = flattened(row);
+  const rawStatus = [...aliases.status, ...aliases.refundStatus]
+    .map((alias) => values.get(normalizeKey(alias)))
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join(" ");
   const refundAmount = monthlyTransactionRefundAmount(canonical);
   const refundTime = monthlyTransactionRefundTime(canonical);
-  const paymentAmount = monthlyTransactionPaymentAmount(canonical);
+  // Do not derive a paid amount from list price, discount or quantity. Those
+  // are not evidence of money received from the buyer.
+  const paidAmount = monthlyTransactionNumber(canonical.payment_amount);
+  const timestamp = monthlyTransactionPaymentTime(canonical) ?? monthlyTransactionDate(canonical.delivery_time);
 
   if (refundAmount > 0 || refundTime || hasAny(rawStatus, ["refund", "refunded", "reversal", "chargeback", "退款"])) return "refunded" as const;
   if (hasAny(rawStatus, ["payment failed", "declined", "rejected", "unpaid", "支付失败", "付款失败"])) return "failed_payment" as const;
   if (hasAny(rawStatus, ["vend fail", "failed vend", "dispensing fail", "dispense fail", "not dispensed", "delivery fail", "machine error", "出货失败", "掉货失败"])) return "failed_vend" as const;
-  if (hasAny(rawStatus, ["success", "successful", "completed", "complete", "shipped", "delivered", "交易成功", "支付成功", "出货成功", "成功"])) return "successful_sale" as const;
-  if (paymentAmount !== null && paymentAmount > 0) return "successful_sale" as const;
   if (hasAny(rawStatus, ["fail", "failed", "error", "cancel", "timeout", "失败", "取消", "超时"])) return "failed_vend" as const;
+  if (hasAny(rawStatus, ["success", "successful", "completed", "complete", "shipped", "delivered", "交易成功", "支付成功", "出货成功", "成功"])) {
+    // Require a numeric, nonnegative explicit paid amount and transaction
+    // timestamp before a sale can contribute to cash expectation totals.
+    if (paidAmount === null || !Number.isFinite(paidAmount) || paidAmount < 0 || !timestamp) return "needs_review" as const;
+    return "successful_sale" as const;
+  }
+  // Payment amount alone is not proof of successful product delivery.
   return "needs_review" as const;
 }
 
@@ -139,6 +151,9 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     cargo_lane_number: first(row, aliases.cargoLane),
     sales_price: first(row, aliases.salesPrice),
     mode_of_payment: first(row, aliases.paymentMethod),
+    // Cash-reconciliation SQL reads normalized_row.payment_method.
+    // Keep the original export field and its canonical SQL alias consistent.
+    payment_method: first(row, aliases.paymentMethod),
     purchaser: first(row, aliases.purchaser),
     payment_amount: first(row, aliases.paymentAmount),
     refund_amount: first(row, aliases.refundAmount),
@@ -171,7 +186,7 @@ export function normalizeXyLiveSalesRow(row: XyLiveSalesRawRow): NormalizedXyLiv
     discountedPrice: monthlyTransactionNumber(canonicalRow.discount_price),
     paymentMethod: monthlyTransactionPaymentMethod(canonicalRow),
     purchaser: canonicalRow.purchaser,
-    paymentAmount: monthlyTransactionPaymentAmount(canonicalRow),
+    paymentAmount: monthlyTransactionNumber(canonicalRow.payment_amount),
     paymentTime: monthlyTransactionPaymentTime(canonicalRow),
     deliveryTime: monthlyTransactionDate(canonicalRow.delivery_time),
     shippingStatus: canonicalRow.shipping_status,

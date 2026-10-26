@@ -28,7 +28,8 @@ import {
   resolveCashVariance,
   voidCashCollection,
 } from "@/lib/cash-actions";
-import { cashCustodyStatusLabel, getCashCustodyAlerts, missingCashAmount } from "@/lib/cash-custody";
+import { cashCustodyStatusLabel, getCashCustodyAlerts, verifiedCashExpectation, verifiedMissingCashAmount } from "@/lib/cash-custody";
+import { diagnoseCashMachineExpectation } from "@/lib/cash-expectation-diagnostics";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buckets";
@@ -206,14 +207,15 @@ export default async function CashCollectionDetailPage({
   const row: any = collection;
   const machines = (row.machine_links ?? []) as any[];
   const summary = machineSummary(machines);
-  const variance = row.variance === null || row.variance === undefined ? null : Number(row.variance);
-  const shortage = missingCashAmount(row.actual_cash_collected, row.vms_expected_cash);
+  const verifiedExpectedCash = verifiedCashExpectation(row);
+  const variance = verifiedExpectedCash === null || row.variance === null || row.variance === undefined ? null : Number(row.variance);
+  const shortage = verifiedMissingCashAmount(row);
   const alerts = getCashCustodyAlerts(row);
   const isOwnCollection = row.operator_id === profile.team_member_id;
   const mayReceive = canReceive && (!isOwnCollection || isOwnerOrAdmin);
   const status = String(row.custody_status ?? "removed");
   const manualRepairCash = Number(row.manual_repair_cash_lyd ?? 0);
-  const xyExpected = row.vms_expected_cash == null ? null : Number(row.vms_expected_cash) - manualRepairCash;
+  const xyExpected = verifiedExpectedCash === null ? null : verifiedExpectedCash - manualRepairCash;
   const hasRecordedMachineAmounts = machines.length > 0 && machines.every((entry) => {
     const amount = entry.removed_amount_lyd;
     return amount !== null && amount !== undefined && Number.isFinite(Number(amount)) && Number(amount) >= 0;
@@ -237,11 +239,20 @@ export default async function CashCollectionDetailPage({
       <SectionCard><CustodyStages status={status} /></SectionCard>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SectionCard><div className="text-sm text-slate-500">{tr("Combined expected cash — XY + manual", "النقد المتوقع — XY والبيع اليدوي")}</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.vms_expected_cash)}</div><div className="mt-1 text-xs text-slate-500">{row.expected_source?.replaceAll("_", " ") ?? "Not calculated"}</div>{row.expected_calculated_at ? <dl className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs"><div className="flex justify-between gap-2"><dt>{tr("XY cash", "نقد XY")}</dt><dd>{money(xyExpected)}</dd></div><div className="flex justify-between gap-2"><dt>{tr("Repair cash left in machines", "نقد الإصلاحات داخل الماكينات")}</dt><dd>{money(manualRepairCash)}</dd></div></dl> : null}</SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">{tr("Combined expected cash — XY + manual", "النقد المتوقع — XY والبيع اليدوي")}</div><div className="mt-2 text-2xl font-semibold text-slate-900">{verifiedExpectedCash === null ? tr("Not verified", "غير موثق") : money(verifiedExpectedCash)}</div><div className="mt-1 text-xs text-slate-500">{verifiedExpectedCash === null ? tr("Missing a dated source for the expected amount; not a verified shortage.", "مصدر المبلغ المتوقع غير موثق بتاريخ، ولا يُعد عجزاً مؤكداً.") : row.expected_source?.replaceAll("_", " ")}</div>{row.expected_calculated_at ? <dl className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs"><div className="flex justify-between gap-2"><dt>{tr("XY cash", "نقد XY")}</dt><dd>{money(xyExpected)}</dd></div><div className="flex justify-between gap-2"><dt>{tr("Repair cash left in machines", "نقد الإصلاحات داخل الماكينات")}</dt><dd>{money(manualRepairCash)}</dd></div></dl> : null}</SectionCard>
         <SectionCard><div className="text-sm text-slate-500">Combined physical count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.actual_cash_collected)}</div><div className="mt-1 text-xs text-slate-500">One total, never a made-up machine split</div></SectionCard>
-        <SectionCard><div className="text-sm text-slate-500">Missing cash</div><div className={`mt-2 text-2xl font-semibold ${shortage && shortage > 0 ? "text-rose-700" : "text-slate-900"}`}>{money(shortage)}</div><div className="mt-1 text-xs text-slate-500">{variance !== null && variance > 0 ? `Overage ${money(variance)}` : "Expected minus counted"}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Missing cash</div><div className={`mt-2 text-2xl font-semibold ${shortage && shortage > 0 ? "text-rose-700" : "text-slate-900"}`}>{shortage === null ? tr("Not verified", "غير موثق") : money(shortage)}</div><div className="mt-1 text-xs text-slate-500">{verifiedExpectedCash === null ? tr("Verify the expected-cash source before assessing differences.", "يلزم توثيق مصدر النقد المتوقع قبل حساب الفروقات.") : variance !== null && variance > 0 ? `Overage ${money(variance)}` : "Expected minus counted"}</div></SectionCard>
         <SectionCard><div className="text-sm text-slate-500">Custody status</div><div className="mt-3"><StatusBadge status={status} label={cashCustodyStatusLabel(status)} /></div><div className="mt-2 text-xs text-slate-500">Reconciliation: {String(row.reconciliation_status ?? "pending").replaceAll("_", " ")}</div></SectionCard>
       </div>
+      {status === "counted" && verifiedExpectedCash === null ? (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" dir={locale === "ar" ? "rtl" : "ltr"}>
+          <strong>{tr("Cash comparison needs source evidence", "مقارنة النقد تحتاج توثيق المصدر")}</strong>
+          <p className="mt-1">{tr(
+            "The physical count is saved. Use the machine diagnostics below to identify whether the VMS calculation has not run, lacks a previous full-removal baseline, or has no matching raw sales. Do not invent a period, sales amount, or split by machine.",
+            "العد الفعلي محفوظ. راجع تشخيص الأجهزة أدناه لمعرفة هل لم يبدأ حساب VMS أو تنقص نقطة بداية السحب السابق أو لا توجد مبيعات خام مطابقة. لا تفترض فترة أو مبلغاً أو توزيعاً على الأجهزة.",
+          )}</p>
+        </div>
+      ) : null}
       {manualRepairCash > 0 ? <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" dir={locale === "ar" ? "rtl" : "ltr"}>{tr("Manual repair-sale cash was already left in these machines. It is included only for these removal intervals when the combined expectation is ready. Collecting this money is not another sale or an operator cash debt.", "نقد البيع اليدوي أثناء الإصلاح متروك مسبقاً داخل هذه الماكينات. يُحتسب لفترات الجمع هذه فقط عند اكتمال حساب المتوقع. جمعه ليس بيعاً جديداً ولا ديناً على المشغّل.")}</p> : null}
 
       <div className="grid gap-6 xl:grid-cols-[1fr_430px]">
@@ -271,7 +282,12 @@ export default async function CashCollectionDetailPage({
             <h2 className="text-lg font-semibold">Machines included—diagnostics only</h2>
             <p className="mt-1 text-sm text-slate-500">{tr("Machine intervals establish the XY and manual cash sources. Snacky compares only their combined expected total with the one physical bag count.", "تحدد فترات الماكينات نقد XY والبيع اليدوي. يقارن سناكي إجمالي المتوقع فقط مع العد الفعلي للكيس.")}</p>
             <div className="mt-4 space-y-3">
-              {machines.map((entry, index) => <div key={entry.machine_id ?? index} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div><StatusBadge status={entry.expectation_status} /></div><div className="mt-3 text-xs text-slate-600">VMS interval: {formatDate(entry.interval_start_at)} → {formatDate(entry.interval_end_at)} · {entry.vms_sales_count ?? "—"} deduplicated sales</div>{Number(entry.manual_repair_cash_lyd ?? 0)>0 ? <p className="mt-2 text-xs font-semibold text-emerald-900">{tr("Repair cash in this interval", "نقد الإصلاحات في هذه الفترة")}: {money(entry.manual_repair_cash_lyd)}</p> : null}</div>)}
+              {machines.map((entry, index) => { const diagnosis = diagnoseCashMachineExpectation(entry, locale); return <div key={entry.machine_id ?? index} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div><StatusBadge status={entry.expectation_status} /></div><div className="mt-3 text-xs text-slate-600">VMS interval: {formatDate(entry.interval_start_at)} → {formatDate(entry.interval_end_at)} · {entry.vms_sales_count ?? "—"} deduplicated sales</div>{Number(entry.manual_repair_cash_lyd ?? 0)>0 ? <p className="mt-2 text-xs font-semibold text-emerald-900">{tr("Repair cash in this interval", "نقد الإصلاحات في هذه الفترة")}: {money(entry.manual_repair_cash_lyd)}</p> : null}
+                <div className={`mt-3 rounded-lg border p-3 text-xs ${diagnosis.needsAttention ? "border-amber-200 bg-amber-50 text-amber-950" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                  <div className="font-semibold">{diagnosis.heading}</div>
+                  <p className="mt-1">{diagnosis.nextStep}</p>
+                </div>
+              </div>; })}
             </div>
           </SectionCard>
 
@@ -292,7 +308,8 @@ export default async function CashCollectionDetailPage({
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
           {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">{recordedMachineTotal !== null ? "Confirm the stored cash" : "Count the stored bag"}</h2><p className="mt-1 text-sm text-slate-500">{recordedMachineTotal !== null ? "The amount for each machine was already recorded at collection. Review the automatic bag total below and confirm it once." : "This older record has no saved per-machine amounts. Enter the physical bag total once."}</p><CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} recordedMachineTotal={recordedMachineTotal} /></SectionCard> : null}
           {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">{tr("Optional follow-up: compare with XY + manual cash", "متابعة اختيارية: مقارنة XY والنقد اليدوي")}</h2><p className="mt-1 text-sm text-slate-500">The cash count is already saved and available in Snacky LYD. This comparison is not required now—you can return and complete it later.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
-          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve && verifiedExpectedCash !== null ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve && verifiedExpectedCash === null ? <SectionCard><h2 className="text-lg font-semibold text-amber-900">{tr("Expected cash is not verified", "النقد المتوقع غير موثق")}</h2><p className="mt-1 text-sm text-amber-900">{tr("This historical variance flag has no dated expected-cash source. It is not proof of missing cash. Review the original XY report and audit the case in Data Health before any owner decision; approving a shortage here is disabled.", "هذا الفرق التاريخي بدون مصدر موثق وتاريخ لحساب النقد المتوقع، ولا يثبت وجود عجز نقدي. راجع تقرير XY الأصلي وحالة السجل في سلامة البيانات قبل الاعتماد. تم تعطيل الموافقة على العجز هنا.")}</p><div className="mt-3"><SecondaryButton href="/operations-health">{tr("Review in Data Health", "المراجعة في سلامة البيانات")}</SecondaryButton></div></SectionCard> : null}
           {["reconciled", "banked"].includes(status) ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Counted & reconciled</h2><p className="mt-2 text-sm text-slate-600">This cash is already included in the Snacky LYD balance and is available to spend. No extra cash step is required.</p></SectionCard> : null}
           {status === "voided" ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Voided record</h2><p className="mt-2 text-sm text-slate-600">This record remains visible for audit and cannot be edited or reused.</p></SectionCard> : null}
         </div>

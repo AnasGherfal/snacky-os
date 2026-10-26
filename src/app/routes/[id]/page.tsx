@@ -679,6 +679,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>
+              {isOwnerAdminRole(profile) && routeRow.status === "completed" ? <SecondaryButton href={`/finance/transactions/new?route=${id}`}>{tr(locale, "Record route expense", "تسجيل مصروف للجولة")}</SecondaryButton> : null}
               {canReviewRouteInventory ? (
                 <SecondaryButton href={`/routes/inventory-review?route=${id}`}>
                   {tr(locale, "Inventory review", "مراجعة المخزون")}{openRouteDiscrepancyCount ? ` (${openRouteDiscrepancyCount})` : ""}

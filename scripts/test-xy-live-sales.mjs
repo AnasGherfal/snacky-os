@@ -10,6 +10,7 @@ import {
   renderXyLiveSalesRequestTemplate,
 } from "../src/lib/xy-live-sales.ts";
 import { createVmsOrderDetailsDuplicateHash } from "../src/lib/vms-order-details.ts";
+import { isEligibleCashSourceBatch } from "../src/lib/vms-cash-source.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const syncSource = fs.readFileSync(path.join(repoRoot, "src/lib/xy-live-sales-sync.ts"), "utf8");
@@ -100,9 +101,29 @@ test("verified XY Trade details fields normalize without guessed aliases", () =>
   assert.equal(normalized.salesPrice, 5);
   assert.equal(normalized.paymentAmount, 5);
   assert.equal(normalized.paymentMethod, "cash");
+  assert.equal(normalized.canonicalRow.payment_method, "Cash", "SQL cash reconciliation reads payment_method");
+  assert.equal(normalized.canonicalRow.mode_of_payment, "Cash");
   assert.equal(normalized.thirdPartyTransactionNumber, "TXN-9001");
   assert.equal(normalized.transactionStatus, "successful_sale");
   assert.equal(normalized.businessDate, "2026-10-04");
+});
+
+test("XY live sales preserve explicit payment-method mapping without inventing cash", () => {
+  const cash = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", showzffs: "Cash", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  const card = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", showzffs: "Card", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  const missing = normalizeXyLiveSalesRow({
+    jqbh: "M-1", spmc: "Water", bzfje: "5",
+    jysj: "2026-10-25 10:00:00", showchzt: "Dispensing success",
+  });
+  assert.equal(cash.canonicalRow.payment_method, "Cash");
+  assert.equal(card.canonicalRow.payment_method, "Card");
+  assert.equal(missing.canonicalRow.payment_method, "", "no payment method must be invented");
 });
 
 test("verified XY live-sales defaults use Trade details and no longer require endpoint templates", () => {
@@ -146,6 +167,46 @@ test("refund and vend failures are not counted as successful sales", () => {
   assert.equal(failed.transactionStatus, "failed_vend");
 });
 
+test("XY payment amount is not proof of a completed vend", () => {
+  const base = { jqbh: "M1", spmc: "Water", zfje: "3", zfsj: "2026-10-25 12:00:00" };
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "失败" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "cancelled" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "timeout" }).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...base }).transactionStatus, "needs_review");
+  assert.equal(normalizeXyLiveSalesRow({ ...base, ddzt: "支付成功" }).transactionStatus, "successful_sale");
+});
+
+test("a successful payment cannot conceal a failed dispense from another XY status field", () => {
+  const record = {
+    jqbh: "M1", spmc: "Chips", zfje: "5", zfsj: "2026-10-25 12:00:00",
+    ddzt: "支付成功", showchzt: "Dispensing fail",
+  };
+  assert.equal(normalizeXyLiveSalesRow(record).transactionStatus, "failed_vend");
+  assert.equal(normalizeXyLiveSalesRow({ ...record, showchzt: "Dispensing success", tkzt: "退款" }).transactionStatus, "refunded");
+  assert.equal(normalizeXyLiveSalesRow({ ...record, ddzt: "Payment failed", showchzt: "Dispensing success" }).transactionStatus, "failed_payment");
+});
+
+test("XY paid amount must be explicitly recorded to qualify as a confirmed sale", () => {
+  const record = {
+    jqbh: "M1", spmc: "Water", spdj: "5", jysj: "2026-10-25 12:00:00",
+    showchzt: "Dispensing success",
+  };
+  const missingPayment = normalizeXyLiveSalesRow(record);
+  assert.equal(missingPayment.salesPrice, 5);
+  assert.equal(missingPayment.paymentAmount, null, "list price is not evidence of money received");
+  assert.equal(missingPayment.transactionStatus, "needs_review");
+  const explicitPayment = normalizeXyLiveSalesRow({ ...record, bzfje: "5" });
+  assert.equal(explicitPayment.transactionStatus, "successful_sale");
+  assert.equal(explicitPayment.paymentAmount, 5);
+  const invalidAmount = normalizeXyLiveSalesRow({ ...record, bzfje: "-1" });
+  assert.equal(invalidAmount.transactionStatus, "needs_review");
+  const withoutTimestamp = normalizeXyLiveSalesRow({
+    jqbh: "M1", spmc: "Water", bzfje: "5", dsfjybh: "TXN-1",
+    showchzt: "Dispensing success",
+  });
+  assert.equal(withoutTimestamp.transactionStatus, "needs_review");
+});
+
 test("live API and imported files use the same duplicate hash contract", () => {
   const normalized = normalizeXyLiveSalesRow({
     machine_code: "M1",
@@ -180,6 +241,38 @@ test("request template only renders caller-supplied placeholders into JSON", () 
     pageSize: 200,
     start: "2026-10-03 00:00:00",
   });
+});
+
+test("only active non-deleted imported batch states can supply cash reconciliation", () => {
+  for (const status of ["imported", "imported_with_warnings", "partially_imported"]) {
+    assert.equal(isEligibleCashSourceBatch({ status, deleted_at: null }), true);
+  }
+  for (const status of ["failed", "draft", "deleted", "previewed"]) {
+    assert.equal(isEligibleCashSourceBatch({ status, deleted_at: null }), false);
+  }
+  assert.equal(isEligibleCashSourceBatch({ status: "imported", deleted_at: "2026-07-14T00:00:00Z" }), false);
+  assert.equal(isEligibleCashSourceBatch({ status: "imported" }), false, "unknown deletion marker must not pass");
+  assert.equal(isEligibleCashSourceBatch(null), false);
+  assert.equal(isEligibleCashSourceBatch(undefined), false);
+});
+
+test("live sales importer refuses quarantined duplicate hashes before any upsert", () => {
+  assert.match(syncSource, /async function assertNoQuarantinedSaleHashCollisions\(/);
+  assert.match(syncSource, /\.select\("duplicate_hash, transaction_status, batch:vms_import_batches\(status, deleted_at\)"/);
+  assert.match(syncSource, /\.in\("duplicate_hash", chunk\)/);
+  assert.match(syncSource, /count !== \(data\?\.length \?\? 0\)/);
+  assert.match(syncSource, /!isEligibleCashSourceBatch\(batch\)/);
+  assert.match(syncSource, /Import halted before raw writes/);
+  assert.match(syncSource, /statusByHash\.get\(hash\)/);
+  assert.match(syncSource, /prior !== status/);
+  assert.match(syncSource, /const statusConflicts = \(data \?\? \[\]\)\.filter/);
+  assert.match(syncSource, /refund or failed-vend update needs audited reconciliation/i);
+
+  assert.ok(
+    syncSource.indexOf("await assertNoQuarantinedSaleHashCollisions(supabase, dbRows)") <
+    syncSource.indexOf("await saveRows(supabase, dbRows)"),
+  );
+  assert.match(syncSource, /needsReviewRows === 0 && mappedMachineRows === allRawRows.length/);
 });
 
 test("live sales sync writes the existing canonical VMS transaction pipeline only", () => {

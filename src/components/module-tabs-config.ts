@@ -14,19 +14,14 @@ const cashTabs: ModuleTab[] = [
 ];
 const stockTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
-  { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
+  { label: "What to Buy", href: "/restock-priority/purchase-list", labelAr: "شن نشتري؟", exact: true },
   { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
   { label: "Products", href: "/products", labelAr: "المنتجات" },
-  { label: "Shared Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء المشتركة", group: "Buying", groupAr: "الشراء" },
-  { label: "Purchase List", href: "/restock-priority/purchase-list", labelAr: "قائمة الشراء", group: "Buying", groupAr: "الشراء" },
-  { label: "Physical Stock Count", href: "/inventory/stocktake", labelAr: "الجرد الفعلي", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Monthly Stock Review", href: "/inventory/stock-check", labelAr: "مراجعة مخزون الشهر", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Machine Stock", href: "/inventory/machine-storage", labelAr: "مخزون الماكينات", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Movements", href: "/inventory/movements", labelAr: "حركة المخزون", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Manual Adjustment", href: "/inventory/movements/new", labelAr: "تعديل يدوي", group: "Stock checks", groupAr: "الجرد ومراجعة المخزون" },
-  { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
-  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
-  { label: "Storage Locations", href: "/storage-locations", labelAr: "مواقع التخزين", group: "Setup & planning", groupAr: "التهيئة والتخطيط" },
+  { label: "Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء", group: "Daily work", groupAr: "العمل اليومي" },
+  { label: "Physical Count", href: "/inventory/stocktake", labelAr: "الجرد الفعلي", group: "Stock controls", groupAr: "مراجعة المخزون" },
+  { label: "Movement History", href: "/inventory/movements", labelAr: "سجل حركة المخزون", group: "Stock controls", groupAr: "مراجعة المخزون" },
+  { label: "Stock Investigation", href: "/inventory/reconciliation", labelAr: "التحقيق في الفاقد", group: "Stock controls", groupAr: "مراجعة المخزون" },
+  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون", group: "Setup", groupAr: "الإعداد" },
 ];
 const machinesTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines", labelAr: "الماكينات", exact: true },
@@ -36,17 +31,15 @@ const machinesTabs: ModuleTab[] = [
   { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
 const crmTabs: ModuleTab[] = [
-  { label: "New customer issue", href: "/issues/new", labelAr: "تسجيل بلاغ", exact: true },
   { label: "My Work", href: "/my-work", labelAr: "عملي اليوم", exact: true },
+  { label: "Customer Issues", href: "/issues", labelAr: "بلاغات العملاء" },
   { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
-  { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },
-  { label: "Existing Locations", href: "/relationships", labelAr: "المواقع الحالية", exact: true, group: "Locations & contacts", groupAr: "المواقع وجهات الاتصال" },
-  { label: "Contacts", href: "/contacts", labelAr: "جهات الاتصال", group: "Locations & contacts", groupAr: "المواقع وجهات الاتصال" },
-  { label: "Location Payments", href: "/relationships/obligations", labelAr: "دفعات المواقع", group: "Locations & contacts", groupAr: "المواقع وجهات الاتصال" },
-  { label: "Follow-ups", href: "/follow-ups", labelAr: "المتابعات", group: "Work & follow-up", groupAr: "العمل والمتابعة" },
-  { label: "Management notes", href: "/my-work/notes", labelAr: "ملاحظات الإدارة", exact: true, group: "Work & follow-up", groupAr: "العمل والمتابعة" },
-  { label: "Team Work", href: "/my-work/team", labelAr: "عمل الفريق", group: "Work & follow-up", groupAr: "العمل والمتابعة" },
-  { label: "Search", href: "/my-work/search", labelAr: "البحث", group: "Tools", groupAr: "أدوات" },
+  { label: "Locations", href: "/relationships", labelAr: "المواقع", exact: true },
+  { label: "New Issue", href: "/issues/new", labelAr: "بلاغ جديد", exact: true, group: "Actions", groupAr: "الإجراءات" },
+  { label: "Follow-ups", href: "/follow-ups", labelAr: "المتابعات", group: "Actions", groupAr: "الإجراءات" },
+  { label: "Contacts", href: "/contacts", labelAr: "جهات الاتصال", group: "Records", groupAr: "السجلات" },
+  { label: "Location Payments", href: "/relationships/obligations", labelAr: "دفعات المواقع", group: "Records", groupAr: "السجلات" },
+  { label: "Team Work", href: "/my-work/team", labelAr: "عمل الفريق", group: "Records", groupAr: "السجلات" },
 ];
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
@@ -82,11 +75,8 @@ const reportsTabs: ModuleTab[] = [
   { label: "Overview", href: "/reports", labelAr: "نظرة عامة", exact: true },
   { label: "Sales", href: "/sales", labelAr: "المبيعات" },
   { label: "Cash Reconciliation", href: "/reports/cash-reconciliation", labelAr: "مطابقة النقدية" },
-  { label: "Monthly Operations", href: "/reports/route-performance", labelAr: "التقرير التشغيلي الشهري" },
-  { label: "Product Activity", href: "/reports/route-product-activity", labelAr: "نشاط المنتجات" },
-  { label: "Products", href: "/products-dashboard", labelAr: "المنتجات" },
-  { label: "Machines", href: "/machines-dashboard", labelAr: "الأجهزة" },
-  { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
+  { label: "Monthly Operations", href: "/reports/route-performance", labelAr: "الأداء الشهري" },
+  { label: "Route Product Activity", href: "/reports/route-product-activity", labelAr: "نشاط منتجات الجولات", group: "Operations detail", groupAr: "تفاصيل العمليات" },
 ];
 const companyTabs: ModuleTab[] = [
   { label: "Start Here", labelAr: "ابدأ هنا", href: "/company", exact: true, match: ["/company/start"] },

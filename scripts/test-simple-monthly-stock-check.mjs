@@ -82,7 +82,8 @@ test("simple page exposes only the operational monthly comparison by default", (
   assert.match(page, /Advanced exact reconciliation/);
 });
 
-test("inventory navigation points to the simple Stock Check", () => {
-  assert.match(tabs, /label:\s*"Monthly Stock Review",\s*href:\s*"\/inventory\/stock-check"/);
+test("monthly Stock Check is available for audit but not duplicated in daily navigation", () => {
+  assert.doesNotMatch(tabs, /href:\s*"\/inventory\/stock-check"/);
+  assert.match(page, /This Month Stock Check/);
   assert.doesNotMatch(tabs, /label:\s*"Missing Items",\s*href:\s*"\/inventory\/reconciliation"/);
 });

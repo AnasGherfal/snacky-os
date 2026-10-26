@@ -29,6 +29,8 @@ import {
   loadFinanceLedgerRows,
 } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
+import { calculateLiquidityPosition, isCurrentLiquidityAttestation } from "@/lib/liquidity-position";
+import { summarizeDirectMachineExpenses } from "@/lib/machine-direct-operating-costs";
 import {
   calculateInvestorMonth,
   manualRouteSalesAsProfitRows,
@@ -83,6 +85,7 @@ type MachineRow = {
   name?: string | null;
   rent_amount?: number | string | null;
   status?: string | null;
+  location?: { name?: string | null } | Array<{ name?: string | null }> | null;
 };
 
 const DEFAULT_SETTINGS: SettingsRow = {
@@ -361,6 +364,7 @@ export default async function GrowthDecisionsPage({
     refillResult,
     statementsResult,
     paymentsResult,
+    liquidityResult,
   ] = await Promise.all([
     loadFinanceLedgerRows({
       label: "growth-decisions.finance-ledger",
@@ -385,7 +389,7 @@ export default async function GrowthDecisionsPage({
       .eq("status", "confirmed")
       .gte("sale_time", `${historyStart}T00:00:00.000Z`)
       .lte("sale_time", `${historyEnd}T23:59:59.999Z`),
-    supabase.from("machines").select("id, name, rent_amount, status"),
+    supabase.from("machines").select("id, name, rent_amount, status, location:locations(name)"),
     supabase
       .from("location_pipeline_leads")
       .select("id", { count: "exact", head: true })
@@ -406,6 +410,9 @@ export default async function GrowthDecisionsPage({
     supabase
       .from("investor_payments")
       .select("amount_lyd, finance_posting_status"),
+    supabase.from("owner_liquidity_attestations")
+      .select("as_of_date,cash_on_hand_lyd,bank_lyd,custody_lyd,immediate_debt_lyd,short_term_debt_lyd,created_at")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   if (ledgerResult.error) {
@@ -468,6 +475,22 @@ export default async function GrowthDecisionsPage({
   );
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const ledgerRows = ledgerResult.data;
+  const directOperatingCosts = summarizeDirectMachineExpenses(ledgerRows, latestStart, latestEnd);
+  // Completed routes establish work performed, not transport expense paid.
+  // When there is no route-linked finance evidence, no per-stop allocation is defensible.
+  const completedRoutesResult = await supabase.from("routes")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "completed")
+    .gte("route_date", latestStart)
+    .lte("route_date", latestEnd);
+  const completedRouteCount = !completedRoutesResult.error && typeof completedRoutesResult.count === "number"
+    ? completedRoutesResult.count : null;
+  const linkedRouteExpenseCount = ledgerResult.level !== "legacy"
+    ? ledgerRows.filter((row) => row.related_route_id && row.transaction_date >= latestStart
+      && row.transaction_date <= latestEnd && row.direction === "money_out" && !row.is_void && !row.voided_at
+      && row.currency === "LYD").length
+    : null;
+  const canInspectMachineExpenseLinks = ledgerResult.level !== "legacy";
   const monthly = monthStarts.map((start) => {
     const end = endOfMonth(start);
     const vmsRow = vmsMonthlyByKey.get(start.slice(0, 7));
@@ -579,28 +602,57 @@ export default async function GrowthDecisionsPage({
             : 0)
         );
       }, 0);
+    const hasVmsMachineMatch = Boolean(vmsRow);
+    const rentValue = machine.rent_amount === null || machine.rent_amount === undefined
+      ? null : Number(machine.rent_amount);
+    const rentVerified = rentValue !== null && Number.isFinite(rentValue) && rentValue >= 0;
+    const sourceReady = hasVmsMachineMatch && rentVerified
+      && vmsCoverageComplete && manualCoverageComplete;
     return {
       id: machine.id,
       name: machine.name ?? machine.id,
-      profitAfterRent: money(
-        vmsGrossProfit + manualGrossProfit - numeric(machine.rent_amount),
-      ),
+      site: Array.isArray(machine.location) ? machine.location[0]?.name ?? null : machine.location?.name ?? null,
+      recordedRent: rentVerified ? rentValue : null,
+      directRecordedServiceCost: canInspectMachineExpenseLinks ? directOperatingCosts.machineAmounts.get(machine.id) ?? 0 : null,
+      hasVmsMachineMatch,
+      rentVerified,
+      reviewReason: !hasVmsMachineMatch
+        ? (ar ? "ربط مبيعات الجهاز غير مؤكد" : "No verified machine sales match")
+        : !rentVerified
+          ? (ar ? "الإيجار الشهري غير موثق" : "Monthly rent not verified")
+          : !vmsCoverageComplete
+            ? (ar ? "تغطية مبيعات أو تكاليف VMS غير مكتملة" : "VMS sales or cost coverage incomplete")
+            : !manualCoverageComplete
+              ? (ar ? "بيانات المبيعات اليدوية غير مكتملة" : "Manual sales data incomplete")
+              : null,
+      profitAfterRent: sourceReady
+        ? money(vmsGrossProfit + manualGrossProfit - (rentValue ?? 0))
+        : null,
     };
   });
-  const averageMachineProfitAfterRent = machineProfitRows.length
+  const sitePerformanceRows = [...machineProfitRows].sort((a, b) => {
+    if (a.profitAfterRent === null) return b.profitAfterRent === null ? a.name.localeCompare(b.name) : 1;
+    if (b.profitAfterRent === null) return -1;
+    return b.profitAfterRent - a.profitAfterRent || a.name.localeCompare(b.name);
+  });
+  const verifiedMachineProfitRows = machineProfitRows.filter(
+    (row) => row.profitAfterRent !== null,
+  );
+  const unverifiedMachineCount = machineProfitRows.length - verifiedMachineProfitRows.length;
+  const averageMachineProfitAfterRent = verifiedMachineProfitRows.length
     ? money(
-        machineProfitRows.reduce((sum, row) => sum + row.profitAfterRent, 0) /
-          machineProfitRows.length,
+        verifiedMachineProfitRows.reduce((sum, row) => sum + (row.profitAfterRent ?? 0), 0) /
+          verifiedMachineProfitRows.length,
       )
-    : 0;
-  const weakMachineCount = machineProfitRows.filter(
-    (row) => row.profitAfterRent <= 0,
+    : null;
+  const weakMachineCount = verifiedMachineProfitRows.filter(
+    (row) => (row.profitAfterRent ?? 0) <= 0,
   ).length;
   const reliableProfitCoverage = vmsCoverageComplete && manualCoverageComplete;
   const reliableAverageMonthlyOperatingProfit = reliableProfitCoverage
     ? averageMonthlyOperatingProfit
     : null;
-  const reliableAverageMachineProfitAfterRent = reliableProfitCoverage
+  const reliableAverageMachineProfitAfterRent = reliableProfitCoverage && unverifiedMachineCount === 0
     ? averageMachineProfitAfterRent
     : null;
   const financeBalances = computeFinanceBalancesFromCutoff({
@@ -609,9 +661,25 @@ export default async function GrowthDecisionsPage({
   const unpostedInvestorPayments = (paymentsResult.data ?? [])
     .filter((row) => row.finance_posting_status !== "posted")
     .reduce((sum, row) => sum + numeric(row.amount_lyd), 0);
-  const cashAvailable = money(
-    financeBalances.snacky_lyd - unpostedInvestorPayments,
-  );
+  const unverifiedLedgerCash = money(financeBalances.snacky_lyd);
+  const tripoliToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const latestLiquidity = !liquidityResult.error ? liquidityResult.data : null;
+  const liquidityVerified = Boolean(latestLiquidity
+    && isCurrentLiquidityAttestation(String(latestLiquidity.as_of_date), tripoliToday));
+  const liquidity = liquidityVerified && latestLiquidity ? calculateLiquidityPosition({
+    cashOnHandLyd: Number(latestLiquidity.cash_on_hand_lyd),
+    bankLyd: Number(latestLiquidity.bank_lyd),
+    custodyLyd: Number(latestLiquidity.custody_lyd),
+    immediateDebtLyd: Number(latestLiquidity.immediate_debt_lyd),
+    shortTermDebtLyd: Number(latestLiquidity.short_term_debt_lyd),
+  }) : null;
+  // The Finance ledger is not proof of currently held cash. Custodian funds
+  // remain outside spendable cash and loan proceeds are not added twice.
+  const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
+  const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
+  const reconciliationGap = liquidity ? money(unverifiedLedgerCash - liquidity.directlyAccessible) : null;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -628,7 +696,9 @@ export default async function GrowthDecisionsPage({
   ).length;
 
   const decision = buildGrowthDecision({
-    cashAvailableLyd: cashAvailable,
+    cashAvailableLyd: cashAvailable ?? 0,
+    shortTermDebtLyd: knownShortTermDebt,
+    liquidityVerified,
     machineCostLyd: numeric(settings.machine_cost_lyd),
     minimumCashReserveLyd: numeric(settings.minimum_cash_reserve_lyd),
     restockReserveLyd: numeric(settings.restock_reserve_lyd),
@@ -647,6 +717,7 @@ export default async function GrowthDecisionsPage({
     minimumHistoryMonths: configuredHistoryMonths,
     monthsWithRevenue: monthsWithRevenue.length,
     costCoverageComplete: vmsCoverageComplete,
+    machineProfitCoverageComplete: unverifiedMachineCount === 0 && activeMachines.length > 0,
     missingCostSalesCount,
     missingCostRevenueLyd,
   });
@@ -689,6 +760,25 @@ export default async function GrowthDecisionsPage({
             {notice.text}
           </div>
         ) : null}
+
+        <section className={liquidityVerified ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950" : "rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"}>
+          <strong>{ar ? "السيولة الفعلية قبل التوسع" : "Owner cash and repayment check"}</strong>
+          {liquidity ? <p className="mt-1">{ar ? "النقد والمصرف" : "Cash + bank"}: {formatFinanceMoney(liquidity.directlyAccessible)}.
+            {" "}{ar ? "لدى الغير (غير متاح للصرف)" : "Held by others (not spendable)"}: {formatFinanceMoney(liquidity.physicallyHeldElsewhere)}.
+            {" "}{ar ? "ديون قصيرة مستحقة" : "Outstanding short-term debt"}: {formatFinanceMoney(liquidity.totalDebts)}.
+            {" "}{ar ? "بعد حجز الديون" : "After setting aside debts"}: {formatFinanceMoney(liquidity.afterAllDebts)}.
+          </p> : <p className="mt-1">{ar
+            ? "لا يوجد جرد حديث مؤكد للنقد والمصرف والديون. توصيات شراء الأجهزة معلقة إلى حين توثيق السيولة."
+            : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
+          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
+            {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
+            {reconciliationGap !== null ? (ar
+              ? ` الفرق مع النقد والمصرف المحصيّ: ${formatFinanceMoney(reconciliationGap)} (ليس خسارة مثبتة؛ راجع حركة النقد لدى الغير).`
+              : ` Difference from counted cash + bank: ${formatFinanceMoney(reconciliationGap)} (not proven loss; investigate custody and ledger timing).`) : ""}
+            {unpostedInvestorPayments > 0 ? ` Pending investor payments not posted: ${formatFinanceMoney(unpostedInvestorPayments)}.` : ""}
+          </p>
+          <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
+        </section>
 
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
           <span className="font-semibold text-slate-900">
@@ -807,16 +897,87 @@ export default async function GrowthDecisionsPage({
                   {ar ? "النقد بعد شراء الجهاز" : "Cash after machine purchase"}
                 </div>
                 <div className="mt-1 text-xl font-semibold">
-                  {formatFinanceMoney(decision.cashAfterMachinePurchaseLyd)}
+                  {liquidityVerified ? formatFinanceMoney(decision.cashAfterMachinePurchaseLyd) : (ar ? "غير مؤكد" : "Unverified")}
                 </div>
               </div>
             </div>
           </div>
         </section>
 
+        <section className="surface-card">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">{ar ? "مقارنة ربحية الأجهزة" : "Machine profitability comparison"}</h2>
+              <p className="mt-1 text-sm text-slate-600">{ar
+                ? "ربح إجمالي المبيعات ناقص الإيجار المسجل فقط. لا يشمل مصاريف النقل أو الخدمة أو المصاريف غير الموزعة، ولا يُعتبر صافي ربح نهائياً."
+                : "Sales gross profit less recorded rent only. Excludes unallocated route, service and overhead costs; this is not final net profit."}</p>
+            </div>
+            <Link className="text-sm font-medium underline underline-offset-2" href="/finance/operations">{ar ? "التقرير المالي" : "Finance operations"}</Link>
+          </div>
+          <div className="space-y-2">
+            {sitePerformanceRows.map((machine) => (
+              <div key={machine.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-950">{machine.name}</div>
+                  <p className="mt-1 text-xs text-slate-500">{machine.site ?? (ar ? "الموقع غير مسجل" : "Site not recorded")} · {ar ? "الإيجار المسجل" : "Recorded rent"}: {machine.recordedRent === null ? (ar ? "غير موثق" : "Unverified") : formatFinanceMoney(machine.recordedRent)}</p>
+                  <p className="mt-1 text-xs text-slate-600">{ar ? "مصاريف خدمة مباشرة مسجلة" : "Linked direct service costs"}: {machine.directRecordedServiceCost === null
+                    ? (ar ? "غير متاح" : "Unavailable")
+                    : formatFinanceMoney(machine.directRecordedServiceCost)}
+                  </p>
+                  {machine.reviewReason ? <p className="mt-1 text-xs text-amber-900">{machine.reviewReason}</p> : (
+                    <p className="mt-1 text-xs text-slate-500">{ar ? "بعد الإيجار المسجل، قبل المصاريف المشتركة" : "After recorded rent, before shared overhead"}</p>
+                  )}
+                </div>
+                <strong className={machine.profitAfterRent === null ? "text-amber-900" : machine.profitAfterRent < 0 ? "text-rose-800" : "text-emerald-800"}>
+                  {machine.profitAfterRent === null ? (ar ? "غير مؤكد" : "Unverified") : formatFinanceMoney(machine.profitAfterRent)}
+                </strong>
+              </div>
+            ))}
+            {!machineProfitRows.length ? <p className="text-sm text-slate-600">{ar ? "لا توجد أجهزة نشطة للمقارنة" : "No active machines to compare"}</p> : null}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+          <strong>{ar ? "تغطية مصاريف التشغيل حسب الجهاز" : "Machine operating-cost coverage"}</strong>
+          <p className="mt-1">{ar
+            ? "يُعرض فقط ما سُجل صراحةً للجهاز من تكاليف الصيانة أو النقل والخدمة. لا نوزع مصاريف الجولات المشتركة تلقائياً، ولا نخصم مشتريات المنتجات مرة أخرى من ربح المبيعات."
+            : "Only explicit machine-linked maintenance, transport and service expenses are identified. Shared route costs are not allocated automatically, and product purchases are not deducted again from sales gross profit."}</p>
+          <p className="mt-2">{ar ? "مصاريف جولات مشتركة غير موزعة" : "Unallocated route operating expenses"}: {formatFinanceMoney(directOperatingCosts.unallocatedRouteAmount)} ({directOperatingCosts.unallocatedRouteCount} {ar ? "سجل" : "records"}).
+            {directOperatingCosts.needsMappingCount > 0 ? ` ${directOperatingCosts.needsMappingCount} operating records require evidence review.` : ""}
+            {!canInspectMachineExpenseLinks ? (ar ? " ربط المصاريف بالجهاز غير متاح من نسخة دفتر المالية الحالية." : " Machine expense links could not be read from the current finance schema.") : ""}
+          </p>
+          <div className="mt-3 rounded-lg border border-sky-200 bg-white/80 p-3">
+            <strong>{ar ? "جاهزية توزيع تكلفة الجولات" : "Route-cost allocation readiness"}</strong>
+            <p className="mt-1">{ar ? "الجولات المكتملة خلال الشهر المرجعي" : "Completed routes in the reference month"}: {completedRouteCount === null ? (ar ? "غير مؤكد" : "Unverified") : completedRouteCount}.
+              {" "}{ar ? "قيود مالية مرتبطة بجولات" : "Route-linked finance entries"}: {linkedRouteExpenseCount === null ? (ar ? "غير مؤكد" : "Unverified") : linkedRouteExpenseCount}.
+            </p>
+            <p className="mt-1 text-xs">{linkedRouteExpenseCount === 0 && completedRouteCount !== null && completedRouteCount > 0
+              ? (ar ? "توجد جولات مكتملة دون قيود تكاليف مرتبطة بها. لا يمكن توزيع مصاريف النقل على الأجهزة بصورة موثوقة." : "Routes were completed, but there are no route-linked expense entries for this month. Per-machine transport cost cannot be reliably allocated.")
+              : (ar ? "لا يمكن تقسيم تكاليف الجولات المشتركة بالتساوي افتراضياً؛ يلزم إثبات التكلفة وقاعدة توزيع قابلة للمراجعة." : "Shared route costs must not be divided equally by assumption. Each allocation needs expense evidence and an auditable allocation rule.")}</p>
+          </div>
+          <p className="mt-2 text-xs">{ar
+            ? "الأرقام غير المكتملة ليست صفراً مؤكداً. هذه مقارنة مساهمة أولية وليست ربحاً صافياً أو قراراً آلياً بنقل الجهاز."
+            : "Unrecorded or unattributed costs are unknown, not verified zero. Figures remain provisional contribution, not net profit or an automatic relocation decision."}</p>
+          <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/expenses">{ar ? "مراجعة مصاريف التشغيل" : "Review operating expenses"}</Link>
+        </section>
+
+        {unverifiedMachineCount > 0 ? (
+          <section role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <strong>{ar ? "ربحية بعض الأجهزة غير مؤكدة" : "Machine profitability needs verification"}</strong>
+            <p className="mt-1">{ar
+              ? `${unverifiedMachineCount} من ${machineProfitRows.length} أجهزة نشطة لم تتوفر لها تغطية مبيعات أو تكاليف أو بيانات إيجار يمكن التحقق منها. لن يحتسبها سناكي كأجهزة خاسرة تلقائياً ولن يعطي متوسط ربح مضللاً.`
+              : `${unverifiedMachineCount} of ${machineProfitRows.length} active machines lack verified sales coverage, source mapping or rental data. Snacky will not classify them as loss-making or show a misleading fleet average.`}</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <Link href="/machines" className="font-semibold underline underline-offset-2">{ar ? "راجع الأجهزة ومواقعها" : "Review machines and sites"}</Link>
+              <Link href="/finance/rent" className="font-semibold underline underline-offset-2">{ar ? "راجع الإيجارات" : "Review rent records"}</Link>
+              <Link href="/vms-import" className="font-semibold underline underline-offset-2">{ar ? "راجع مصدر المبيعات" : "Review sales sources"}</Link>
+            </div>
+          </section>
+        ) : null}
+
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            [ar ? "النقد المتاح" : "Available Snacky cash", cashAvailable],
+            [ar ? "النقد والبنك حسب الجرد" : "Counted cash + bank", cashAvailable],
             [
               ar ? "متوسط الربح التشغيلي" : "Average monthly operating profit",
               reliableAverageMonthlyOperatingProfit,

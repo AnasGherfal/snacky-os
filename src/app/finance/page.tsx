@@ -12,7 +12,7 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canViewFinancials, hasAnyRole } from "@/lib/authz";
 import {
   computeFinanceBalancesFromCutoff,
   FINANCE_RECONCILIATION_CUTOFF_DATE,
@@ -383,12 +383,19 @@ export default async function FinancePage({
       <PageHeader
         title="Finance"
         subtitle={`Actual balances from reconciled opening records dated ${cutoffDate} plus Snacky OS transactions after that date.`}
-        action={
-          <PrimaryButton href="/finance/transactions/new">
-            Manual money in/out
-          </PrimaryButton>
-        }
+        action={<div className="flex flex-wrap gap-2">
+          {profile && hasAnyRole(profile, ["owner"]) ? <SecondaryButton href="/finance/liquidity">Owner cash &amp; debts / السيولة</SecondaryButton> : null}
+          <PrimaryButton href="/finance/transactions/new">Manual money in/out</PrimaryButton>
+        </div>}
       />
+
+      {profile && hasAnyRole(profile, ["owner"]) ? (
+        <div role="note" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <strong>Ledger balance is not freely spendable cash.</strong>
+          {" "}Finance transactions do not by themselves prove today's physical cash/bank count, money held by others, or outstanding private loans.
+          Before funding a new vending machine, <Link href="/finance/liquidity" className="font-semibold underline underline-offset-2">verify cash, bank and debts</Link>. Recording an owner snapshot does not post income, loan proceeds or rent.
+        </div>
+      ) : null}
 
       {params.settingsError ? (
         <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">

@@ -4,6 +4,9 @@ import {DataTable,EmptyState,PageHeader,SecondaryButton,StatusBadge} from "@/com
 import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from "@/lib/auth";
 import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
+import {verifiedCashExpectation} from "@/lib/cash-custody";
+import {getXyLiveSalesConfig} from "@/lib/xy-live-sales-sync";
+import {CASH_ELIGIBLE_VMS_BATCH_STATUSES} from "@/lib/vms-cash-source";
 
 export const dynamic="force-dynamic";
 
@@ -17,7 +20,9 @@ function ageDays(value:unknown){
  return Math.max(0,Math.floor((Date.now()-t)/86400000));
 }
 function actionFor(row:any){
- if(row.reconciliation_status==="variance_review")return {key:"variance",label:"Owner variance decision",tone:"rose"};
+ if(row.reconciliation_status==="variance_review")return verifiedCashExpectation(row)===null
+  ? {key:"variance",label:"Verify expected cash before owner decision",tone:"amber"}
+  : {key:"variance",label:"Owner variance decision",tone:"rose"};
  if(row.custody_status==="removed")return {key:"receive",label:"Receive into storage",tone:"amber"};
  if(row.custody_status==="in_storage")return {key:"count",label:"Count stored cash",tone:"amber"};
  if(row.custody_status==="counted"&&row.reconciliation_status==="pending")return {key:"vms",label:"Compare with VMS",tone:"sky"};
@@ -32,8 +37,9 @@ export default async function CashActionQueuePage(){
  if(!db)return <EmptyState title="Cash Action Queue unavailable" body="The signed-in database session is unavailable."/>;
 
  const cutoff=new Date(Date.now()-30*86400000).toISOString();
- const {data,error}=await db.from("cash_collections")
-  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))")
+ const liveSalesConfig=getXyLiveSalesConfig();
+ const {data,error,count}=await db.from("cash_collections")
+  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
   .is("voided_at",null)
   .gte("collected_at",cutoff)
   .or("custody_status.in.(removed,in_storage,counted),reconciliation_status.eq.variance_review")
@@ -45,6 +51,21 @@ export default async function CashActionQueuePage(){
   return <EmptyState title="Cash Action Queue unavailable" body="Snacky OS could not load current cash controls."/>;
  }
 
+ const incompleteRead = count === null || count === undefined || count !== (data??[]).length;
+ // Only checks transaction-level successful sales used by cash reconciliation.
+ // Other VMS/XY dashboards may use different sources and remain unaffected.
+ const [recentPaymentTime, recentDeliveryTime] = await Promise.all([
+  db.from("vms_transactions_raw").select("id, batch:vms_import_batches!inner(id)")
+   .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES]).is("batch.deleted_at",null)
+   .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
+   .gte("payment_time",cutoff).limit(1),
+  db.from("vms_transactions_raw").select("id, batch:vms_import_batches!inner(id)")
+   .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES]).is("batch.deleted_at",null)
+   .eq("transaction_status","successful_sale").not("mapped_machine_id","is",null)
+   .gte("delivery_time",cutoff).limit(1),
+ ]);
+ const rawCashSourceFreshness = recentPaymentTime.error || recentDeliveryTime.error ? "unverified"
+  : (recentPaymentTime.data?.length || recentDeliveryTime.data?.length) ? "recent" : "stale";
  const rows=(data??[]).map((row:any)=>({...row,action:actionFor(row),age_days:ageDays(row.collected_at)}));
  const actionable=rows.filter((row:any)=>["receive","count","vms","variance"].includes(row.action.key));
  const buckets={
@@ -55,7 +76,7 @@ export default async function CashActionQueuePage(){
   overdue:actionable.filter((r:any)=>Number(r.age_days??0)>=3),
  };
  const visibleCards=[
-  ["Owner variance decisions",buckets.variance.length,"#variance"],
+  ["Variance and source reviews",buckets.variance.length,"#variance"],
   ["Waiting for physical count",buckets.count.length,"#count"],
   ["Waiting for storage receipt",buckets.receive.length,"#receive"],
   ["Waiting for VMS comparison",buckets.vms.length,"#vms"],
@@ -65,11 +86,30 @@ export default async function CashActionQueuePage(){
  return <div className="space-y-6">
   <PageHeader title="Cash Action Queue" subtitle="Current cash only. Legacy backlog stays in Data Health and does not pollute today’s operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
 
-  {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">No current cash actions need attention.</div>}
+  {rawCashSourceFreshness === "stale" && buckets.vms.length ? (
+   <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <strong>No recent eligible raw sales for automatic cash reconciliation</strong>
+    <p className="mt-1">No successful mapped raw VMS transaction from an imported, non-deleted batch was found in the last 30 days. Archived/deleted raw rows are not usable cash evidence. This does not mean machines had no sales: live XY and other imports may use different sources. Verify the transaction export, machine mapping, source batch and dates before relying on an automatic expectation. A documented total for the whole bag is the existing fallback.</p>
+    <p className="mt-2 font-medium">{liveSalesConfig.ready
+      ? "XY live-sales settings are present; verify authentication, recent sync results, and transaction completeness."
+      : "XY live-sales is not ready. Review the server-only connection settings before attempting any automatic cash comparison."}</p>
+    <p className="mt-1 text-xs">The rolling live-sales sync is configured for the last {liveSalesConfig.lookbackHours} hours; it does not reconstruct older missing cash periods.</p>
+    <div className="mt-2 flex flex-wrap gap-4">
+      <Link className="underline" href="/admin/vms-api">Open XY Live Sales setup</Link>
+      <Link className="underline" href="/vms-import">Review manual transaction imports</Link>
+    </div>
+   </div>
+  ) : rawCashSourceFreshness === "unverified" && buckets.vms.length ? (
+   <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Transaction-level VMS freshness could not be checked. Do not treat the raw source as confirmed current.</div>
+  ) : null}
+
+  {incompleteRead?<div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some current cash records were not loaded. The cards below describe the loaded rows only; do not treat their counts as complete. Review the full cash custody list.</div>:null}
+
+  {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{incompleteRead?"Loaded cash records contain no current actions, but the full queue is not yet verified.":"No current cash actions need attention."}</div>}
 
   <section className="surface-card" id="all-current">
    <div className="mb-4"><h2 className="text-lg font-semibold">Current actions</h2><p className="mt-1 text-sm text-slate-500">Sorted by oldest first. Open the cash bag to complete the existing custody/count/VMS workflow.</p></div>
-   {!actionable.length?<EmptyState title="Current cash is clear" body="No unresolved cash from the last 30 days requires action."/>:
+   {!actionable.length?<EmptyState title={incompleteRead?"Loaded cash slice has no actions":"Current cash is clear"} body={incompleteRead?"The full queue could not be verified; review the full cash custody list.":"No unresolved cash from the last 30 days requires action."}/>:
    <DataTable headers={["Age","Bag","Collector","Stage","Counted","Expected","Variance","Next action"]}>{actionable.map((row:any)=>{
     const machines=(row.machine_links??[]).map((x:any)=>x.machine?.location?.name??x.machine?.name??x.machine?.machine_code).filter(Boolean);
     return <tr key={row.id} id={row.action.key}>
@@ -78,12 +118,12 @@ export default async function CashActionQueuePage(){
       <td>{row.operator?.full_name??"-"}</td>
       <td><div className="flex flex-wrap gap-1"><StatusBadge status={row.custody_status}/><StatusBadge status={row.reconciliation_status}/></div></td>
       <td>{money(row.actual_cash_collected)}</td>
-      <td>{money(row.vms_expected_cash)}</td>
-      <td className={Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{row.variance===null||row.variance===undefined?"-":money(row.variance)}</td>
+      <td>{verifiedCashExpectation(row)===null?"Unverified":money(verifiedCashExpectation(row))}</td>
+      <td className={verifiedCashExpectation(row)!==null&&Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{verifiedCashExpectation(row)===null?"—":row.variance===null||row.variance===undefined?"—":money(row.variance)}</td>
       <td><div className="space-y-2"><div className="text-sm font-semibold">{row.action.label}</div><Link href={"/cash-collections/"+row.id} className="btn-primary inline-flex px-3 py-2">Open & complete</Link></div></td>
     </tr>})}</DataTable>}
   </section>
 
-  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance decisions come first</strong><p className="mt-1 text-sm text-rose-800">These already have a VMS comparison and need an owner decision. Do not classify them as legacy while they are current.</p></section>:null}
+  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance and source checks</strong><p className="mt-1 text-sm text-rose-800">Check the expected-cash source first. Historical variance flags may lack a dated XY comparison and are not proof of loss. Do not classify current records as legacy without reviewing their evidence.</p></section>:null}
  </div>;
 }

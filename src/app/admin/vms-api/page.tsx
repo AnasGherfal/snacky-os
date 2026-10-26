@@ -9,6 +9,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
 import { getXyLiveSalesConfig, latestXyLiveSalesHealth } from "@/lib/xy-live-sales-sync";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
 import { XY_MACHINE_ACTIVITY_PROFILES } from "@/lib/xy-stock-activity-alert-rules";
 import { saveXyActivitySiteOverridesAction } from "@/lib/xy-stock-activity-actions";
 import {
@@ -96,11 +97,13 @@ function webConnectionStatus(config: ReturnType<typeof getXyWebApiConfig>) {
 function liveSalesConnectionStatus(
   config: ReturnType<typeof getXyLiveSalesConfig>,
   latestSaleAt: string | null,
+  sourceReadVerified: boolean,
 ) {
   if (!config.enabled) return { status: "disabled", label: "Disabled" };
   if (!config.ready) return { status: "needs_configuration", label: "Needs configuration" };
+  if (!sourceReadVerified) return { status: "needs_review", label: "Source read unverified" };
   const timestamp = Date.parse(String(latestSaleAt ?? ""));
-  if (!Number.isFinite(timestamp)) return { status: "needs_review", label: "No live sales yet" };
+  if (!Number.isFinite(timestamp)) return { status: "needs_review", label: "No eligible active sales" };
   const ageMs = Date.now() - timestamp;
   if (ageMs <= 48 * 60 * 60 * 1000) return { status: "completed", label: "Fresh" };
   return { status: "needs_review", label: "Stale" };
@@ -248,8 +251,31 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
     );
   }
 
+  const [eligibleCashRawResult, deletedCashRawResult, quarantinedCashRawResult, orphanCashRawResult] = await Promise.all([
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .in("batch.status", [...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+      .is("batch.deleted_at", null),
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .eq("batch.status", "deleted"),
+    supabase.from("vms_transactions_raw")
+      .select("id, batch:vms_import_batches!inner(id)", { count: "exact", head: true })
+      .in("batch.status", ["draft", "failed", "cancelled", "canceled", "previewed", "disabled"]),
+    supabase.from("vms_transactions_raw")
+      .select("id", { count: "exact", head: true })
+      .is("import_batch_id", null),
+  ]);
+  const eligibleCashRawRows = !eligibleCashRawResult.error && typeof eligibleCashRawResult.count === "number"
+    ? eligibleCashRawResult.count : null;
+  const deletedCashRawRows = !deletedCashRawResult.error && typeof deletedCashRawResult.count === "number"
+    ? deletedCashRawResult.count : null;
+  const quarantinedCashRawRows = !quarantinedCashRawResult.error && typeof quarantinedCashRawResult.count === "number"
+    ? quarantinedCashRawResult.count : null;
+  const orphanCashRawRows = !orphanCashRawResult.error && typeof orphanCashRawResult.count === "number"
+    ? orphanCashRawResult.count : null;
   const liveSalesHealth = await latestXyLiveSalesHealth();
-  const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt);
+  const liveSalesStatus = liveSalesConnectionStatus(liveSalesConfig, liveSalesHealth.latestSaleAt, liveSalesHealth.sourceReadVerified);
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
   const pagedRuns = (pagedRunsResult.data ?? []) as XySyncRunRow[];
   const lastCompleted = runs.find((run) => run.provider === "xy" && !String(run.sync_type ?? "").startsWith("test_") && run.completed_at);
@@ -346,9 +372,10 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           </div>
           <div className="text-sm font-semibold text-slate-900">{formatDate(liveSalesHealth.latestSaleAt)}</div>
           <div className="mt-3 space-y-1 text-xs text-slate-600">
-            <div>Latest sale received</div>
+            <div>Latest eligible transaction from a non-deleted imported VMS batch</div>
             <div>Last sync: {formatDate(liveSalesHealth.latestRunAt)}</div>
             <div>Last inserted: {liveSalesHealth.latestInsertedRows}</div>
+            <div>Source check: {liveSalesHealth.sourceReadVerified ? "Verified read" : "Unavailable — not zero"}</div>
           </div>
         </section>
 
@@ -373,6 +400,52 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <p className="mt-3 text-sm leading-6 text-slate-500">Unmatched VMS products are kept for mapping instead of being dropped.</p>
         </section>
       </div>
+
+      <section className="surface-card mb-6" id="cash-transaction-integrity">
+        <h2 className="text-base font-semibold text-slate-900">Cash transaction-source integrity</h2>
+        <p className="mt-1 text-sm text-slate-600">These are read-only raw transaction counts, not revenue totals. Cash reconciliation can only use rows linked to imported, non-deleted source batches; an imported batch still needs its transaction dates, machine mapping and payment methods checked.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">Raw rows in eligible import batches</div>
+            <strong className="mt-1 block text-2xl">{eligibleCashRawRows === null ? "Unverified" : eligibleCashRawRows.toLocaleString("en-US")}</strong>
+            <div className="mt-1 text-xs text-slate-600">Eligibility alone does not confirm complete sales coverage</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">Raw rows in deleted import batches</div>
+            <strong className="mt-1 block text-2xl">{deletedCashRawRows === null ? "Unverified" : deletedCashRawRows.toLocaleString("en-US")}</strong>
+            <div className="mt-1 text-xs text-slate-600">Retained for audit, excluded from cash calculations</div>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-xs text-amber-900">Raw rows in unfinished or failed batches</div>
+            <strong className="mt-1 block text-2xl">{quarantinedCashRawRows === null ? "Unverified" : quarantinedCashRawRows.toLocaleString("en-US")}</strong>
+            <p className="mt-1 text-xs text-amber-900">Draft, failed, cancelled, previewed or disabled source batches. These cannot be trusted as cash sales.</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="text-xs text-amber-900">Raw rows missing a source batch</div>
+            <strong className="mt-1 block text-2xl">{orphanCashRawRows === null ? "Unverified" : orphanCashRawRows.toLocaleString("en-US")}</strong>
+            <p className="mt-1 text-xs text-amber-900">Rows without import provenance must never be counted as verified sales.</p>
+          </div>
+        </div>
+        {(quarantinedCashRawRows !== null && quarantinedCashRawRows > 0)
+          || (orphanCashRawRows !== null && orphanCashRawRows > 0) ? (
+          <div role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            Some raw transactions are retained in incomplete or unidentified imports. Investigate their batch history and original report before retrying; never reassign hashes or activate incomplete rows automatically.
+          </div>
+        ) : null}
+        {eligibleCashRawRows === 0 && deletedCashRawRows !== null && deletedCashRawRows > 0 ? (
+          <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            No raw transactions currently qualify as a cash source, although deleted imports retain history. Do not reactivate or reassign deleted records automatically; review the original deletion and import evidence first.
+          </div>
+        ) : eligibleCashRawRows === null || deletedCashRawRows === null || quarantinedCashRawRows === null || orphanCashRawRows === null ? (
+          <p role="alert" className="mt-4 text-sm text-amber-900">Transaction batch eligibility could not be verified. Do not interpret missing counts as zero.</p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-4 text-sm">
+          <a href="/vms-import" className="font-medium underline underline-offset-2">Review VMS import history</a>
+          <a href="/cash-collections/action-queue" className="font-medium underline underline-offset-2">Review cash exceptions</a>
+        </div>
+      </section>
 
       <section className="surface-card mb-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -493,12 +566,24 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </div>
       ) : null}
 
-      {liveSalesConfig.enabled && !liveSalesConfig.ready ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-          Live sales sync is enabled but not ready: {liveSalesConfig.missing.join(", ")}.
-          The XY Trade details endpoint/request is already built in. Add a current server-only XY dashboard Authorization token, then enable live sales.
+      {!liveSalesConfig.ready ? (
+        <div role="status" className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          <strong>XY transaction-level live sales is not ready</strong>
+          <p className="mt-1">
+            The verified XY Trade-details integration is already built, but its live-sales setting or server-only authentication is missing.
+            {liveSalesConfig.missing.length ? ` Required configuration: ${liveSalesConfig.missing.join(", ")}.` : ""}
+            Configure the XY web session through approved server environment settings only—never paste tokens into a browser or client-side configuration.
+          </p>
+          <p className="mt-2">Stock synchronization and monthly profit imports do not supply the individual paid transactions needed for a cash-removal interval. A newly configured live sync does not backfill older months automatically. Archived or deleted transaction batches are excluded from cash reconciliation even when their raw rows still exist.</p>
+          <a href="/cash-collections/action-queue" className="mt-2 inline-block font-semibold underline underline-offset-2">Review affected cash reconciliations</a>
         </div>
-      ) : null}
+      ) : (
+        <div role="status" className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">
+          <strong>XY live sales connection configured</strong>
+          <p className="mt-1">Configuration is present, not proof that XY authentication or transaction completeness has been verified. Use the existing Sync Live Sales control, then inspect the returned batch and raw transaction dates.</p>
+          <p className="mt-1">Current rolling request: last {liveSalesConfig.lookbackHours} hours, up to {liveSalesConfig.maxPages} pages × {liveSalesConfig.pageSize} rows. Older gaps require a separately verified historical export/backfill; this rolling sync does not reconstruct them. Deleted import batches remain excluded until their provenance and original deletion reason are independently reviewed.</p>
+        </div>
+      )}
 
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-start justify-between gap-4">
@@ -524,7 +609,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Official stock calls use the signed XY API. Live sales uses XY's verified Trade details endpoint (queryJqjymx) with a server-only dashboard session token and deduplicates into the same canonical VMS transaction table used by imported files.
+          Official stock calls use the signed XY API. Live sales uses XY's Trade details endpoint (queryJqjymx) with a server-only dashboard session token and deduplicates into the canonical VMS transaction table. Completing this rolling import is not verification of historical cash periods; check payment types, mapping, sale dates, refunds, and reported pagination coverage before reconciling money.
         </p>
       </section>
 

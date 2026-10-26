@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { calculateDenominationTotal, combinedCashPosition, getCashCustodyAlerts, missingCashAmount } from "../src/lib/cash-custody.ts";
+import { calculateDenominationTotal, combinedCashPosition, getCashCustodyAlerts, missingCashAmount, verifiedCashExpectation, verifiedMissingCashAmount } from "../src/lib/cash-custody.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -106,10 +106,11 @@ test("reconciliation uses exact intervals or one documented manual batch total",
   assert.match(custodyForms, /never invent machine splits/i);
   assert.equal(missingCashAmount(6_000, 10_000), 4_000);
   assert.equal(missingCashAmount(11_000, 10_000), 0);
+  const evidence = { expected_source: "manual_override", expected_calculated_at: "2026-10-25T12:00:00Z" };
   assert.deepEqual(combinedCashPosition([
-    { actual_cash_collected: 6_000, vms_expected_cash: 10_000 },
-    { actual_cash_collected: 2_500, vms_expected_cash: 2_000 },
-    { actual_cash_collected: null, vms_expected_cash: 1_000 },
+    { actual_cash_collected: 6_000, vms_expected_cash: 10_000, ...evidence },
+    { actual_cash_collected: 2_500, vms_expected_cash: 2_000, ...evidence },
+    { actual_cash_collected: null, vms_expected_cash: 1_000, ...evidence },
   ]), {
     actualCash: 8_500,
     expectedCash: 12_000,
@@ -148,4 +149,35 @@ test("overdue controls stop after reconciliation", () => {
   assert.equal(getCashCustodyAlerts({ custody_status: "counted", counted_at: "2026-09-05T12:00:00.000Z" }, now).length, 0);
   assert.equal(getCashCustodyAlerts({ custody_status: "reconciled", reconciled_at: "2026-09-04T12:00:00.000Z" }, now).length, 0);
   assert.equal(getCashCustodyAlerts({ custody_status: "banked", reconciled_at: "2026-01-01T00:00:00.000Z" }, now).length, 0);
+});
+
+test("unsourced expected cash never becomes a phantom cash shortage", () => {
+  const known = { expected_source: "vms_exact", expected_calculated_at: "2026-10-25T12:00:00Z" };
+  const unsourced = { actual_cash_collected: 500, vms_expected_cash: 0 };
+  assert.equal(verifiedCashExpectation(unsourced), null);
+  assert.equal(verifiedMissingCashAmount(unsourced), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, expected_source: "  ", expected_calculated_at: known.expected_calculated_at }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_calculated_at: "invalid" }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: "" }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: null }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: -1 }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: "1500.25" }), 1500.25);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, vms_expected_cash: 0 }), 0, "a sourced actual zero remains zero");
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "vms_cash_only_assumption" }), null, "unknown payment methods cannot verify cash-only sales");
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "manual_required" }), null);
+  assert.equal(verifiedCashExpectation({ ...unsourced, ...known, expected_source: "future_unreviewed_source" }), null);
+  assert.equal(verifiedMissingCashAmount({ ...known, actual_cash_collected: 200, vms_expected_cash: 350 }), 150);
+  assert.equal(verifiedMissingCashAmount({ ...known, actual_cash_collected: null, vms_expected_cash: 350 }), null);
+  assert.deepEqual(combinedCashPosition([
+    unsourced,
+    { ...known, actual_cash_collected: 100, vms_expected_cash: 200 },
+    { ...known, actual_cash_collected: null, vms_expected_cash: 900 },
+  ]), {
+    actualCash: 100,
+    expectedCash: 200,
+    difference: -100,
+    missingCash: 100,
+    overageCash: 0,
+    batchCount: 1,
+  });
 });
