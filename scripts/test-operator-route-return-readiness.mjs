@@ -113,6 +113,9 @@ test("operator closeout uses anchored bilingual physical progress and preserves 
  }
  assert.ok(page.includes("confirmed: confirmedCountKeys.includes(custodyKey(item))"));
  assert.ok(page.includes("returnReadiness.physicalCountComplete"));
+ assert.ok(page.includes("inventoryServiceReady={inventoryFinalizationAvailable}"));
+ assert.ok(component.includes("Verified inventory closeout is unavailable"));
+
  assert.ok(page.includes('id="bag-empty-confirmation"'));
  assert.ok(page.includes('id="return-storage-location"'));
  assert.ok(page.includes('id="route-cancellation-reason"'));
