@@ -83,6 +83,7 @@ type MachineRow = {
   name?: string | null;
   rent_amount?: number | string | null;
   status?: string | null;
+  location?: { name?: string | null } | Array<{ name?: string | null }> | null;
 };
 
 const DEFAULT_SETTINGS: SettingsRow = {
@@ -385,7 +386,7 @@ export default async function GrowthDecisionsPage({
       .eq("status", "confirmed")
       .gte("sale_time", `${historyStart}T00:00:00.000Z`)
       .lte("sale_time", `${historyEnd}T23:59:59.999Z`),
-    supabase.from("machines").select("id, name, rent_amount, status"),
+    supabase.from("machines").select("id, name, rent_amount, status, location:locations(name)"),
     supabase
       .from("location_pipeline_leads")
       .select("id", { count: "exact", head: true })
@@ -588,6 +589,8 @@ export default async function GrowthDecisionsPage({
     return {
       id: machine.id,
       name: machine.name ?? machine.id,
+      site: Array.isArray(machine.location) ? machine.location[0]?.name ?? null : machine.location?.name ?? null,
+      recordedRent: rentVerified ? rentValue : null,
       hasVmsMachineMatch,
       rentVerified,
       reviewReason: !hasVmsMachineMatch
@@ -603,6 +606,11 @@ export default async function GrowthDecisionsPage({
         ? money(vmsGrossProfit + manualGrossProfit - (rentValue ?? 0))
         : null,
     };
+  });
+  const sitePerformanceRows = [...machineProfitRows].sort((a, b) => {
+    if (a.profitAfterRent === null) return b.profitAfterRent === null ? a.name.localeCompare(b.name) : 1;
+    if (b.profitAfterRent === null) return -1;
+    return b.profitAfterRent - a.profitAfterRent || a.name.localeCompare(b.name);
   });
   const verifiedMachineProfitRows = machineProfitRows.filter(
     (row) => row.profitAfterRent !== null,
@@ -847,10 +855,11 @@ export default async function GrowthDecisionsPage({
             <Link className="text-sm font-medium underline underline-offset-2" href="/finance/operations">{ar ? "التقرير المالي" : "Finance operations"}</Link>
           </div>
           <div className="space-y-2">
-            {machineProfitRows.map((machine) => (
+            {sitePerformanceRows.map((machine) => (
               <div key={machine.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3">
                 <div className="min-w-0">
                   <div className="font-medium text-slate-950">{machine.name}</div>
+                  <p className="mt-1 text-xs text-slate-500">{machine.site ?? (ar ? "الموقع غير مسجل" : "Site not recorded")} · {ar ? "الإيجار المسجل" : "Recorded rent"}: {machine.recordedRent === null ? (ar ? "غير موثق" : "Unverified") : formatFinanceMoney(machine.recordedRent)}</p>
                   {machine.reviewReason ? <p className="mt-1 text-xs text-amber-900">{machine.reviewReason}</p> : (
                     <p className="mt-1 text-xs text-slate-500">{ar ? "بعد الإيجار المسجل، قبل المصاريف المشتركة" : "After recorded rent, before shared overhead"}</p>
                   )}
