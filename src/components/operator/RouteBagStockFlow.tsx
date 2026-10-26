@@ -5,6 +5,7 @@ import {
   parseOperatorRouteStockFlow,
   type OperatorRouteStockFlow,
   type RouteFlowLine,
+  type RouteMachineFillLine,
 } from "@/lib/operator-route-stock-flow";
 
 const otherMovementCount = (row: RouteFlowLine) => (
@@ -70,6 +71,26 @@ export function RouteBagStockFlow({
     // Route inventory can change at every completed stop: refresh each open.
     void refresh();
   };
+
+  const machineGroups = (() => {
+    if (flow?.state !== "detailed" || !flow.machineFills) return [];
+    const groups = new Map<string, {
+      machineId: string; machineName: string | null; machineCode: string | null;
+      locationName: string | null; total: number; items: RouteMachineFillLine[];
+    }>();
+    for (const item of flow.machineFills) {
+      const current = groups.get(item.machineId) ?? {
+        machineId: item.machineId, machineName: item.machineName,
+        machineCode: item.machineCode, locationName: item.locationName,
+        total: 0, items: [],
+      };
+      current.total += item.filledQty;
+      current.items.push(item);
+      groups.set(item.machineId, current);
+    }
+    return Array.from(groups.values()).sort((a,b) =>
+      (a.machineName || a.machineCode || a.machineId).localeCompare(b.machineName || b.machineCode || b.machineId));
+  })();
 
   return (
     <section aria-labelledby="route-stock-flow-title"
@@ -213,6 +234,61 @@ export function RouteBagStockFlow({
               ) : <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
                 {tr("No committed route-bag movements are recorded yet.", "لا توجد حركات معتمدة لحقيبة الجولة حتى الآن.")}
               </p>}
+              <section aria-labelledby="machine-fill-details-title" className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                <h3 id="machine-fill-details-title" className="text-base font-bold text-slate-950">
+                  {tr("What was filled at each machine", "ما تم تعبئته في كل جهاز")}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  {tr(
+                    "Only committed bag-to-machine movements, net of recorded fill corrections. This is not the machine's current slot stock.",
+                    "حركات التعبئة المعتمدة من الحقيبة للجهاز بعد تصحيحات التعبئة المسجلة فقط. هذه ليست كمية الخانات الحالية داخل الجهاز.",
+                  )}
+                </p>
+                {flow.state === "detailed" && flow.machineFills !== null ? (
+                  machineGroups.length ? (
+                    <div className="mt-3 space-y-2">
+                      {machineGroups.map(machine => (
+                        <article key={machine.machineId} className="rounded-lg border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h4 className="break-words text-sm font-bold text-slate-950">
+                                {machine.machineName || machine.machineCode || tr("Unidentified route machine", "جهاز الجولة غير المسمّى")}
+                              </h4>
+                              <p className="mt-1 text-xs text-slate-600">
+                                {[machine.machineCode, machine.locationName].filter(Boolean).join(" · ") || machine.machineId.slice(0, 8)}
+                              </p>
+                            </div>
+                            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-center">
+                              <span className="block text-xs text-emerald-800">{tr("Filled", "المعبأ")}</span>
+                              <strong className="block text-lg font-bold tabular-nums text-emerald-950">{machine.total}</strong>
+                            </div>
+                          </div>
+                          <ul className="mt-2 space-y-1 text-sm">
+                            {machine.items.map(item => (
+                              <li key={item.productId} className="flex items-start justify-between gap-3 border-t border-slate-100 pt-2">
+                                <span className="min-w-0 break-words text-slate-700">{item.productName}</span>
+                                <strong className="shrink-0 tabular-nums text-slate-950">{item.filledQty}</strong>
+                              </li>
+                            ))}
+                          </ul>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-600">
+                      {tr("No committed machine fills are recorded yet.", "لا توجد كميات تعبئة معتمدة للأجهزة بعد.")}
+                    </p>
+                  )
+                ) : (
+                  <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    {tr(
+                      "Per-machine fill details could not be verified. Route bag totals above are shown separately; no machine quantity was assumed.",
+                      "تعذر التحقق من تفاصيل التعبئة لكل جهاز. تُعرض أرصدة الحقيبة أعلاه منفصلة ولم تُفترض أي كمية داخل جهاز.",
+                    )}
+                  </p>
+                )}
+              </section>
+
               <p className="text-xs leading-5 text-slate-600">
                 {tr(
                   "These totals reflect committed records, not unsubmitted stop drafts. Remaining stock is the canonical signed bag balance; it may differ from picked minus filled because of returns, sales and corrections. Count physical leftovers when finishing the route.",
