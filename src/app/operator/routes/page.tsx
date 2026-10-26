@@ -94,63 +94,77 @@ function logRouteLoaderIssue({
   );
 }
 
-function routeProgress(route: OperatorRoutePreviewRow) {
-  const completedStops =
-    route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) =>
-      isRouteStopDoneStatus(stop.status),
-    ).length ?? 0;
-  const totalStops = route.route_stops?.length ?? 0;
-  const progress =
-    totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
-  return { completedStops, totalStops, progress };
-}
+const urgencyText: Record<RouteQueueUrgency, { en: string; ar: string }> = {
+  in_progress: { en: "In progress", ar: "قيد التنفيذ" },
+  overdue: { en: "Scheduled date passed", ar: "تجاوز تاريخها" },
+  today: { en: "Scheduled today", ar: "مجدولة اليوم" },
+  upcoming: { en: "Upcoming", ar: "قادمة" },
+  date_unverified: { en: "Date unverified", ar: "التاريخ غير مؤكد" },
+};
 
 function RouteCard({
   route,
-  subtitle,
   t,
+  locale,
+  todayTripoli,
+  stopsVerified,
 }: {
   route: OperatorRoutePreviewRow;
-  subtitle: string;
   t: (key: string, fallback?: string) => string;
+  locale: "ar" | "en";
+  todayTripoli: string;
+  stopsVerified: boolean;
 }) {
-  const { completedStops, totalStops, progress } = routeProgress(route);
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
+  const item = routeQueueItem(route, todayTripoli, stopsVerified);
+  const { doneStops, totalStops, unfinishedStops, progressPercent, urgency } = item;
   const routeStatus = routeDisplayStatus(route.status, route.operator_id);
+  const isTerminal = isTerminalRouteStatus(route.status);
+  const isHighPriority = !isTerminal && (urgency === "in_progress" || urgency === "overdue");
+  const progressUnavailable = progressPercent === null;
+  const urgencyLabel = locale === "ar" ? urgencyText[urgency].ar : urgencyText[urgency].en;
 
   return (
-    <Link
-      href={`/operator/routes/${route.id}`}
-      className="block rounded-lg border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md"
-    >
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <Link href={`/operator/routes/${route.id}`}
+      className={isHighPriority
+        ? "group block rounded-xl border border-emerald-200 border-s-4 border-s-emerald-700 bg-white p-4 shadow-sm transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+        : "group block rounded-xl border border-slate-200 bg-white p-4 transition hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
-          <p className="text-sm text-slate-500">{subtitle}</p>
+          <h3 className="text-base font-bold text-slate-950"><span dir="ltr" className="inline-block tabular-nums">{route.route_date || tr("Unscheduled", "بدون تاريخ")}</span></h3>
+          {!isTerminal ? (
+            <p className={isHighPriority ? "mt-1 text-xs font-semibold text-emerald-800" : "mt-1 text-xs font-medium text-slate-600"}>{urgencyLabel}</p>
+          ) : null}
         </div>
-        <div className="shrink-0">
-          <StatusBadge
-            status={routeStatus}
-            label={t(routeStatus, routeStatus)}
-          />
-        </div>
+        <StatusBadge status={routeStatus} label={t(routeStatus, routeStatus)} />
       </div>
-      <div className="mb-3">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-xs text-slate-600">{t("Progress")}</span>
-          <span className="text-xs font-semibold text-slate-700">
-            {progress}%
-          </span>
-        </div>
-        <div className="h-2 w-full rounded-full bg-slate-200">
-          <div
-            className="h-2 rounded-full bg-green-500 transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-      <div className="text-sm text-slate-600">
-        {completedStops}/{totalStops} {t("completed or skipped")}
-      </div>
+
+      {progressUnavailable ? (
+        <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {totalStops === 0
+            ? tr("No machine stops configured", "لا توجد مواقع أجهزة مسجلة")
+            : tr("Stop progress unverified — open route to inspect", "تقدم المواقع غير مؤكد — افتح الجولة للمراجعة")}
+        </p>
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="text-slate-600">{tr("Completed or skipped", "المكتملة أو المتخطاة")}</span>
+            <strong dir="ltr" className="tabular-nums text-slate-950">{doneStops} / {totalStops}</strong>
+          </div>
+          <div role="progressbar"
+            aria-label={tr("Stops completed or skipped", "المواقع المكتملة أو المتخطاة")}
+            aria-valuemin={0} aria-valuemax={Math.max(1,totalStops ?? 0)} aria-valuenow={doneStops ?? 0}
+            className="h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-emerald-600" style={{width: `${progressPercent}%`}} />
+          </div>
+          {!isTerminal ? <p className="mt-2 text-sm font-semibold text-slate-800">
+            {tr(`${unfinishedStops} unfinished machine stops`, `${unfinishedStops} مواقع لم تنتهِ بعد`)}
+          </p> : null}
+        </>
+      )}
+      <span className="mt-3 block border-t border-slate-100 pt-3 text-sm font-semibold text-emerald-800 group-hover:underline">
+        {tr("Open route", "فتح الجولة")}
+      </span>
     </Link>
   );
 }
