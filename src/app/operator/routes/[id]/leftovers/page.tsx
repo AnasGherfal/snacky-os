@@ -734,6 +734,7 @@ export default function LeftoversPage() {
           nextStep={returnReadiness.nextStep}
           canSubmit={returnReadiness.canSubmit}
           pendingDraft={Boolean(localDraft.pendingDraft)}
+          inventoryServiceReady={inventoryFinalizationAvailable}
           locale={locale}
         />
 
