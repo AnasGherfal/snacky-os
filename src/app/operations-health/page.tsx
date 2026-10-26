@@ -104,13 +104,13 @@ export default async function OperationsHealthPage() {
     || openRouteDiscrepancyCount === null || cashSourceGapCount === null;
 
   return <div className="space-y-6">
-    <PageHeader title="Data Health" subtitle="Fix operational exceptions safely. Cleanup actions require owner/admin access and preserve audit context." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">Machine setup</SecondaryButton><SecondaryButton href="/dashboard">Dashboard</SecondaryButton></div>}/>
+    <PageHeader title={tr("Data Health", "صحة البيانات")} subtitle={tr("Fix operational exceptions safely. Cleanup preserves audit history.", "راجع الحالات التشغيلية دون فقدان سجل المراجعة أو إجراء تعديلات تلقائية.")} action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{tr("Machine setup", "إعداد الأجهزة")}</SecondaryButton><SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton></div>}/>
 
-    <section aria-label="Daily closeout" className="surface-card space-y-3">
+    <section aria-label={tr("Daily closeout", "الإغلاق اليومي")} className="surface-card space-y-3 border-t-4 border-t-emerald-700">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="text-lg font-semibold">Daily owner closeout · {tripoliDate}</h2>
-        <p className="mt-1 text-sm text-slate-600">Read-only snapshot of today's operations in Tripoli time. Counts are records, not proof that all tasks were completed.</p></div>
-        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Cash action queue</SecondaryButton><SecondaryButton href="/routes/inventory-review">Inventory differences</SecondaryButton></div>
+        <div><h2 className="text-lg font-semibold">{tr("Daily owner closeout", "ملخص الإغلاق اليومي")} · <span dir="ltr" className="inline-block tabular-nums">{tripoliDate}</span></h2>
+        <p className="mt-1 text-sm text-slate-600">{tr("Read-only counts in Tripoli time. Recorded activity does not prove that every task was completed.", "أرقام للعرض فقط بتوقيت طرابلس. تسجيل الحركة لا يعني اكتمال جميع المهام.")}</p></div>
+        <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">{tr("Cash action queue", "مهام النقد")}</SecondaryButton><SecondaryButton href="/routes/inventory-review">{tr("Inventory differences", "فروقات المخزون")}</SecondaryButton></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {([
@@ -118,15 +118,15 @@ export default async function OperationsHealthPage() {
           ["Today's cash bags awaiting count",todayCashUncounted,"/cash-collections/action-queue"],
           ["Today's routes recorded",todayRouteCount,"/routes"],
         ] as const).map(([label,count,href])=><Link key={label} href={href} className="rounded-lg border border-slate-200 p-4">
-          <div className="text-xs text-slate-600">{label}</div>
-          <div className="mt-2 text-2xl font-semibold">{count === null ? "Unverified" : count}</div>
-          <div className="mt-2 text-xs text-sky-800">Review records →</div>
+          <div className="text-xs font-medium text-slate-600">{uiLabel(label)}</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">{count === null ? tr("Unverified", "غير مؤكد") : count}</div>
+          <div className="mt-2 text-xs font-semibold text-emerald-800">{tr("Review records", "عرض السجلات")}</div>
         </Link>)}
       </div>
       {todayCashCount === null || todayCashUncounted === null || todayRouteCount === null ? (
-        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.</p>
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{tr("One or more daily closeout sources could not be verified. Unknown counts are not shown as zero.", "تعذر التحقق من أحد مصادر الإغلاق اليومي. لا تُعرض الأرقام غير المعروفة كأنها صفر.")}</p>
       ) : null}
-      <p className="text-xs text-slate-500">Historical exceptions, unpaid supplier purchases, missing sales imports and open route differences remain in the existing review sections below. This snapshot never posts cash, closes routes or changes stock.</p>
+      <p className="text-xs leading-5 text-slate-500">{tr("Older cash, unpaid purchases, sales sources and stock exceptions remain in the review sections below. This snapshot never posts cash, closes routes or changes stock.", "تبقى مهام النقد السابقة والمشتريات غير المدفوعة ومصادر المبيعات وفروقات المخزون في الأقسام أدناه. هذا الملخص لا يثبت النقد أو يغلق الجولات أو يغير المخزون.")}</p>
     </section>
 
     {(currentCashCount === null || !machineSetupVerified) ? (
