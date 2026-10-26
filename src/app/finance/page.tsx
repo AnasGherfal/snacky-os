@@ -389,6 +389,14 @@ export default async function FinancePage({
         </div>}
       />
 
+      {profile && hasAnyRole(profile, ["owner"]) ? (
+        <div role="note" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <strong>Ledger balance is not freely spendable cash.</strong>
+          {" "}Finance transactions do not by themselves prove today's physical cash/bank count, money held by others, or outstanding private loans.
+          Before funding a new vending machine, <Link href="/finance/liquidity" className="font-semibold underline underline-offset-2">verify cash, bank and debts</Link>. Recording an owner snapshot does not post income, loan proceeds or rent.
+        </div>
+      ) : null}
+
       {params.settingsError ? (
         <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
           {params.settingsError}
