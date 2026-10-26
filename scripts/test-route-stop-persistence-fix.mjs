@@ -40,7 +40,14 @@ test("selecting the final machine photo persists it before stop submission", () 
   assert.match(immediateSave, /uploaded\.persisted !== true/);
   assert.match(immediateSave, /setPersistedMachinePhotoReady\(true\)/);
   assert.match(page, /Photo saved\. You can close the app and return later\./);
-  assert.match(page, /!finalPhotoSaving && cleaningDone/);
+  // The derived completion guard now includes the original photo/cleaning
+  // requirements plus Smart Route returns, XY changes and compressor proof.
+  const helper = read("src/lib/operator-stop-readiness.ts");
+  assert.match(page, /const canSubmitStop = stopReadiness\.canComplete/);
+  assert.match(page, /photoSaving: finalPhotoSaving/);
+  assert.match(page, /cleaningDone,/);
+  assert.match(helper, /input\.cleaningDone/);
+  assert.match(helper, /!input\.photoSaving/);
 
   assert.match(uploadProof, /from\("machine_refill_history"\)/);
   assert.match(uploadProof, /\.upsert\([\s\S]*onConflict: "legacy_refill_id"/);
