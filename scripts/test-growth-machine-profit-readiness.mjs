@@ -61,3 +61,15 @@ test("machine comparison distinguishes provisional after-rent figures from net p
  assert.ok(page.includes('machine.profitAfterRent === null'));
  assert.ok(page.includes('href="/finance/operations"'));
 });
+
+test("site comparison ranks verified after-rent contributions and shows rent evidence",()=>{
+ assert.ok(page.includes('location:locations(name)'));
+ assert.ok(page.includes('const sitePerformanceRows = [...machineProfitRows].sort('));
+ assert.ok(page.includes('if (a.profitAfterRent === null)'));
+ assert.ok(page.includes('return b.profitAfterRent - a.profitAfterRent'));
+ assert.ok(page.includes('{sitePerformanceRows.map((machine) => ('));
+ assert.ok(page.includes('machine.site ??'));
+ assert.ok(page.includes('machine.recordedRent === null'));
+ assert.ok(page.includes('Recorded rent'));
+ assert.ok(page.includes('Site not recorded'));
+});
