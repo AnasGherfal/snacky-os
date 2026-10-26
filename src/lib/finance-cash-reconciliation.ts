@@ -11,7 +11,7 @@ export type FinanceCashReconciliation =
   | {
       verified: true;
       asOfDate: string;
-      ledgerSnakyLyd: number;
+      ledgerSnackyLyd: number;
       differenceFromCashAndBankLyd: number;
       differenceIncludingCustodyLyd: number;
       basis: "date_only";
@@ -59,7 +59,7 @@ export function compareOwnerCashCountToLedger({
   }
 
   const asOfRows = rows.filter(row => row.transaction_date && row.transaction_date <= asOfDate);
-  const ledgerSnakyLyd = computeFinanceBalancesFromCutoff({
+  const ledgerSnackyLyd = computeFinanceBalancesFromCutoff({
     rows: asOfRows,
     openingBalances,
     cutoffDate,
@@ -68,9 +68,9 @@ export function compareOwnerCashCountToLedger({
   return {
     verified: true,
     asOfDate,
-    ledgerSnakyLyd,
-    differenceFromCashAndBankLyd: round(ledgerSnakyLyd - directlyAccessibleLyd),
-    differenceIncludingCustodyLyd: round(ledgerSnakyLyd - directlyAccessibleLyd - custodyLyd),
+    ledgerSnackyLyd,
+    differenceFromCashAndBankLyd: round(ledgerSnackyLyd - directlyAccessibleLyd),
+    differenceIncludingCustodyLyd: round(ledgerSnackyLyd - directlyAccessibleLyd - custodyLyd),
     basis: "date_only",
   };
 }
