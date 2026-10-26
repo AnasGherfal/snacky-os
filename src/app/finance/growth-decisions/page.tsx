@@ -659,6 +659,7 @@ export default async function GrowthDecisionsPage({
     minimumHistoryMonths: configuredHistoryMonths,
     monthsWithRevenue: monthsWithRevenue.length,
     costCoverageComplete: vmsCoverageComplete,
+    machineProfitCoverageComplete: unverifiedMachineCount === 0 && activeMachines.length > 0,
     missingCostSalesCount,
     missingCostRevenueLyd,
   });
