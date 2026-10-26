@@ -414,6 +414,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (matchesPrefix(pathname, ["/machines", "/machine-slots", "/locations"])) return hasPermission(user, "machines.view");
   if (matchesPrefix(pathname, ["/issues"])) return hasPermission(user, "issues.view") || hasPermission(user, "issues.create");
 
+  if (matchesPrefix(pathname, ["/finance/liquidity"])) return hasAnyRole(user, ["owner"]);
   if (pathname === "/finance/transactions/new" || pathname.startsWith("/finance/transactions/new/")) return hasPermission(user, "finance.edit");
   if (/^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/.test(pathname)) return hasPermission(user, "finance.edit");
   if (pathname === "/cash-collections/new" || pathname.startsWith("/cash-collections/new/")) {
