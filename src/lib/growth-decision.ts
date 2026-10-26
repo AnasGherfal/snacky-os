@@ -16,6 +16,7 @@ export type GrowthDecisionInput = {
   minimumHistoryMonths: number;
   monthsWithRevenue: number;
   costCoverageComplete: boolean;
+  machineProfitCoverageComplete?: boolean;
   missingCostSalesCount: number;
   missingCostRevenueLyd: number;
 };
@@ -27,6 +28,7 @@ export type GrowthDecisionCode =
   | "fix_existing_first"
   | "build_cash_reserve"
   | "improve_profit_first"
+  | "verify_machine_profit"
   | "complete_product_costs"
   | "collect_more_history"
   | "do_not_buy_payback";
@@ -167,6 +169,19 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
     reasonsAr: [...reasonsAr, ...commonReasonsAr],
     priorities,
   });
+
+  if (input.machineProfitCoverageComplete === false) {
+    return result(
+      "verify_machine_profit",
+      "Verify machine profitability before expanding",
+      "تحقق من ربحية الأجهزة قبل التوسع",
+      "Some active machines lack verified sales, costs, rental data or reliable machine mapping. Do not classify them as loss-making or recommend expansion from incomplete evidence.",
+      "بعض الأجهزة النشطة تنقصها مبيعات أو تكاليف أو إيجارات موثقة أو ربط موثوق. لا تصنفها خاسرة ولا توصي بالتوسع قبل استكمال الأدلة.",
+      ["Complete machine-level sales mapping and rent coverage before making a new hardware purchase."],
+      ["أكمل ربط المبيعات والإيجارات لكل جهاز قبل شراء جهاز جديد."],
+      "low",
+    );
+  }
 
   if (!input.costCoverageComplete) {
     return result(
