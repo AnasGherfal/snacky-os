@@ -53,7 +53,7 @@ export function RouteBagStockFlow({
       if (!response.ok) throw new Error("source_unavailable");
       const result = parseOperatorRouteStockFlow(payload);
       setFlow(result);
-      setCheckedAt(new Date().toISOString());
+      setCheckedAt(result.state === "unverified" ? null : new Date().toISOString());
     } catch {
       setError(tr(
         "Could not verify the latest route stock. Check connection and refresh. No inventory was changed.",
