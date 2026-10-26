@@ -724,6 +724,20 @@ export default function LeftoversPage() {
             : <SecondaryButton href={routeHref}>{tr("Back", "رجوع")}</SecondaryButton>}
         />
 
+        <RouteReturnProgress
+          countTotal={returnReadiness.countTotal}
+          countConfirmed={returnReadiness.countConfirmed}
+          enteredTotal={returnReadiness.enteredTotal}
+          confirmedTotal={returnReadiness.confirmedTotal}
+          possibleVariance={returnReadiness.possibleVariance}
+          physicalCountComplete={returnReadiness.physicalCountComplete}
+          nextStep={returnReadiness.nextStep}
+          canSubmit={returnReadiness.canSubmit}
+          pendingDraft={Boolean(localDraft.pendingDraft)}
+          locale={locale}
+        />
+
+
         <SectionCard>
           <div className="space-y-4 p-4">
             <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
@@ -774,18 +788,6 @@ export default function LeftoversPage() {
           </div>
         </SectionCard>
 
-        <RouteReturnProgress
-          countTotal={returnReadiness.countTotal}
-          countConfirmed={returnReadiness.countConfirmed}
-          enteredTotal={returnReadiness.enteredTotal}
-          confirmedTotal={returnReadiness.confirmedTotal}
-          possibleVariance={returnReadiness.possibleVariance}
-          physicalCountComplete={returnReadiness.physicalCountComplete}
-          nextStep={returnReadiness.nextStep}
-          canSubmit={returnReadiness.canSubmit}
-          pendingDraft={Boolean(localDraft.pendingDraft)}
-          locale={locale}
-        />
 
         {error && (
           <div
