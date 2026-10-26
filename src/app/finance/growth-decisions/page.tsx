@@ -471,6 +471,20 @@ export default async function GrowthDecisionsPage({
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const ledgerRows = ledgerResult.data;
   const directOperatingCosts = summarizeDirectMachineExpenses(ledgerRows, latestStart, latestEnd);
+  // Completed routes establish work performed, not transport expense paid.
+  // When there is no route-linked finance evidence, no per-stop allocation is defensible.
+  const completedRoutesResult = await supabase.from("routes")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "completed")
+    .gte("route_date", latestStart)
+    .lte("route_date", latestEnd);
+  const completedRouteCount = !completedRoutesResult.error && typeof completedRoutesResult.count === "number"
+    ? completedRoutesResult.count : null;
+  const linkedRouteExpenseCount = ledgerResult.level !== "legacy"
+    ? ledgerRows.filter((row) => row.related_route_id && row.transaction_date >= latestStart
+      && row.transaction_date <= latestEnd && row.direction === "money_out" && !row.is_void && !row.voided_at
+      && row.currency === "LYD").length
+    : null;
   const canInspectMachineExpenseLinks = ledgerResult.level !== "legacy";
   const monthly = monthStarts.map((start) => {
     const end = endOfMonth(start);
@@ -890,6 +904,15 @@ export default async function GrowthDecisionsPage({
             {directOperatingCosts.needsMappingCount > 0 ? ` ${directOperatingCosts.needsMappingCount} operating records require evidence review.` : ""}
             {!canInspectMachineExpenseLinks ? (ar ? " ربط المصاريف بالجهاز غير متاح من نسخة دفتر المالية الحالية." : " Machine expense links could not be read from the current finance schema.") : ""}
           </p>
+          <div className="mt-3 rounded-lg border border-sky-200 bg-white/80 p-3">
+            <strong>{ar ? "جاهزية توزيع تكلفة الجولات" : "Route-cost allocation readiness"}</strong>
+            <p className="mt-1">{ar ? "الجولات المكتملة خلال الشهر المرجعي" : "Completed routes in the reference month"}: {completedRouteCount === null ? (ar ? "غير مؤكد" : "Unverified") : completedRouteCount}.
+              {" "}{ar ? "قيود مالية مرتبطة بجولات" : "Route-linked finance entries"}: {linkedRouteExpenseCount === null ? (ar ? "غير مؤكد" : "Unverified") : linkedRouteExpenseCount}.
+            </p>
+            <p className="mt-1 text-xs">{linkedRouteExpenseCount === 0 && completedRouteCount !== null && completedRouteCount > 0
+              ? (ar ? "توجد جولات مكتملة دون قيود تكاليف مرتبطة بها. لا يمكن توزيع مصاريف النقل على الأجهزة بصورة موثوقة." : "Routes were completed, but there are no route-linked expense entries for this month. Per-machine transport cost cannot be reliably allocated.")
+              : (ar ? "لا يمكن تقسيم تكاليف الجولات المشتركة بالتساوي افتراضياً؛ يلزم إثبات التكلفة وقاعدة توزيع قابلة للمراجعة." : "Shared route costs must not be divided equally by assumption. Each allocation needs expense evidence and an auditable allocation rule.")}</p>
+          </div>
           <p className="mt-2 text-xs">{ar
             ? "الأرقام غير المكتملة ليست صفراً مؤكداً. هذه مقارنة مساهمة أولية وليست ربحاً صافياً أو قراراً آلياً بنقل الجهاز."
             : "Unrecorded or unattributed costs are unknown, not verified zero. Figures remain provisional contribution, not net profit or an automatic relocation decision."}</p>
