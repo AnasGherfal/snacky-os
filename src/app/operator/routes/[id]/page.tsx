@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { RouteBagStockFlow } from "@/components/operator/RouteBagStockFlow";
+import { OperatorRouteNextActionCard } from "@/components/operator/OperatorRouteNextActionCard";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { lyd } from "@/lib/format";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -450,6 +451,15 @@ export default async function OperatorRouteDetailPage({
           </div>
         ) : null}
 
+        {nextFocusMatchesPrimaryAction && nextFocus ? (
+          <OperatorRouteNextActionCard
+            focus={nextFocus}
+            machineName={focusedMachineName}
+            hasPickup={hasPickup}
+            locale={locale}
+          />
+        ) : null}
+
         {/* Route Status Cards */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SectionCard>
@@ -479,14 +489,9 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="text-sm text-slate-500 mb-1">{t("Action")}</div>
-              {primaryAction ? (
-                <Link href={primaryAction.href} className="btn-primary w-full text-base">
-                  {primaryAction.label}
-                </Link>
-              ) : (
-                <div className="text-sm text-slate-600">{routeProductsPrepared ? t("Route completed") : t("Waiting for product quantities")}</div>
-              )}
+              <div className="mb-1 text-sm text-slate-500">{tr("Unfinished stops", "المواقع غير المنتهية")}</div>
+              <div className="text-lg font-semibold tabular-nums text-slate-900">{unfinishedStops}</div>
+              <p className="mt-1 text-xs text-slate-500">{tr("Follow the next action above.", "تابع الخطوة التالية الموضحة بالأعلى.")}</p>
             </div>
           </SectionCard>
         </div>
@@ -657,7 +662,7 @@ export default async function OperatorRouteDetailPage({
         ) : null}
 
         {/* Machine Stops */}
-        <section className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <section id="route-machine-stops" className="scroll-mt-6 rounded-lg border border-slate-200 bg-white overflow-hidden">
           <div className="p-4 md:p-6 border-b border-slate-200">
             <h2 className="text-lg font-semibold">{t("Machine Stops")} ({totalStops})</h2>
           </div>
@@ -672,7 +677,9 @@ export default async function OperatorRouteDetailPage({
                 const machine = stop.machine_id ? machineById.get(stop.machine_id) ?? null : null;
 
                 return (
-                <div key={stop.id} className="p-4 md:p-6 hover:bg-slate-50 transition">
+                <div key={stop.id} className={nextFocus?.stopId === stop.id
+                  ? "border-s-4 border-s-emerald-600 bg-emerald-50/50 p-4 transition hover:bg-emerald-50 md:p-6"
+                  : "p-4 transition hover:bg-slate-50 md:p-6"}>
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 items-start gap-3">
                       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
@@ -686,6 +693,11 @@ export default async function OperatorRouteDetailPage({
                       </div>
                     </div>
                     <div className="shrink-0">
+                      {nextFocus?.stopId === stop.id ? (
+                        <span className="mb-2 block rounded-full bg-emerald-100 px-3 py-1 text-center text-xs font-semibold text-emerald-900">
+                          {tr("Next suggested machine", "الجهاز المقترح التالي")}
+                        </span>
+                      ) : null}
                       <StatusBadge status={stop.status} label={t(String(stop.status ?? "unknown"), String(stop.status ?? "unknown"))} />
                     </div>
                   </div>
