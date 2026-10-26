@@ -215,19 +215,19 @@ export default async function OperatorRoutesPage({ searchParams }: {
   const assignedQuery = canManageAllRoutes
     ? routeReadClient
         .from("routes")
-        .select(routeSelect)
+        .select(routeSelect, { count: "exact" })
         .not("operator_id", "is", null)
         .order("route_date", { ascending: false })
     : accessibleOperatorIds.length
       ? routeReadClient
           .from("routes")
-          .select(routeSelect)
+          .select(routeSelect, { count: "exact" })
           .in("operator_id", accessibleOperatorIds)
           .order("route_date", { ascending: false })
-      : Promise.resolve({ data: [], error: null });
+      : Promise.resolve({ data: [], count: 0, error: null });
   const availableQuery = routeReadClient
     .from("routes")
-    .select(routeSelect)
+    .select(routeSelect, { count: "exact" })
     .is("operator_id", null)
     .order("route_date", { ascending: true });
   const [assignedResult, availableResult] = await Promise.all([
@@ -237,6 +237,27 @@ export default async function OperatorRoutesPage({ searchParams }: {
 
   const assignedRoutesError = assignedResult.error ?? null;
   const availableRoutesError = availableResult.error ?? null;
+  // A server-side PostgREST row cap can return fewer routes than exist
+  // without an error. Never hide open work behind an apparently complete list.
+  const assignedCount = "count" in assignedResult ? assignedResult.count : null;
+  const assignedQueryExpected = canManageAllRoutes || accessibleOperatorIds.length > 0;
+  const assignedRoutesIncomplete = !assignedRoutesError && assignedQueryExpected
+    && (typeof assignedCount !== "number" || assignedCount !== (assignedResult.data?.length ?? 0));
+  const availableRoutesIncomplete = !availableRoutesError
+    && (typeof availableResult.count !== "number"
+      || availableResult.count !== (availableResult.data?.length ?? 0));
+  if (assignedRoutesIncomplete || availableRoutesIncomplete) {
+    console.error("[operator:routes] Route query incomplete; refusing partial assignment list", {
+      assigned_expected: assignedCount,
+      assigned_received: assignedResult.data?.length ?? 0,
+      available_expected: availableResult.count,
+      available_received: availableResult.data?.length ?? 0,
+    });
+    return <ErrorState title={tr("Route list incomplete", "قائمة الجولات غير مكتملة")}
+      body={tr("The database returned only part of the route list. Refresh or ask a manager to check the source before relying on it.",
+        "أعاد النظام جزءاً فقط من قائمة الجولات. حدّث الصفحة أو اطلب مراجعة مصدر البيانات قبل الاعتماد عليها.")} />;
+  }
+
   if (assignedRoutesError) {
     logRouteLoaderIssue({
       step: "load_assigned_routes",
@@ -290,6 +311,12 @@ export default async function OperatorRoutesPage({ searchParams }: {
   const stopsVerified = !stopsError && typeof stopCount === "number" && Array.isArray(stopRows)
     && stopRows.length === stopCount
     && new Set(stopRows.map(stop => stop.id)).size === stopRows.length;
+  if (!stopsError && !stopsVerified) {
+    console.warn("[operator:routes] Incomplete stop history — progress will be unverified", {
+      expected_count: stopCount,
+      received_count: stopRows?.length ?? 0,
+    });
+  }
   if (stopsError || !stopsVerified) {
     logRouteLoaderIssue({
       step: "load_route_stop_summaries",
