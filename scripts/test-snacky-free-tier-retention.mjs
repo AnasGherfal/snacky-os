@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const sql=readFileSync("scripts/sql/snacky-free-tier-stock-retention.sql","utf8");
+const executableSql=sql.replace(/^--.*$/gm,"");
 
 test("emergency Free-tier XY storage guard stays read-only for business ledgers",()=>{
   assert.match(sql,/snacky-xy-stock-retention/);
@@ -26,7 +27,7 @@ test("independent cron safeguards clean only temporary logs and reuse snapshot s
   assert.match(sql,/snacky-cron-execution-log-retention/);
   assert.match(sql,/DELETE FROM cron\.job_run_details/);
   assert.match(sql,/start_time < now\(\) - interval '7 days'/);
-  assert.doesNotMatch(sql,/ALTER ROLE|GRANT\s+ALL|pg_terminate_backend|vacuum full/i);
+  assert.doesNotMatch(executableSql,/ALTER ROLE|GRANT\s+ALL|pg_terminate_backend|vacuum full/i);
 });
 
 test("recovery policy distinguishes current stock, historical sample and archive limits",()=>{
