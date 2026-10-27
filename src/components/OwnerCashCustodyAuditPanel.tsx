@@ -17,6 +17,16 @@ export function OwnerCashCustodyAuditPanel({
 }) {
   const ar=locale==="ar";
   const tr=(en:string,arabic:string)=>ar?arabic:en;
+  const flagLabels:Record<string,[string,string]>={
+    collector_not_recorded:["Collector not recorded", "المحصّل غير مسجل"],
+    receiver_not_recorded:["Receiver not recorded", "المستلم غير مسجل"],
+    storage_evidence_not_recorded:["Storage photo reference not recorded", "مرجع صورة التسليم غير مسجل"],
+    removal_evidence_not_recorded:["Removal photo reference not recorded", "مرجع صورة الإزالة غير مسجل"],
+    counter_not_recorded:["Counter not recorded", "من قام بالعدّ غير مسجل"],
+    count_witness_not_recorded:["Witness not recorded", "شاهد العدّ غير مسجل"],
+    same_person_handoff_review:["Same-person receipt", "استلام نفس الشخص"],
+    seal_condition_review:["Seal condition requires review", "حالة الختم تحتاج مراجعة"],
+  };
   const metrics=[
     [tr("Awaiting storage receipt", "بانتظار استلام المخزن"), audit?.waitingForStorageHandoff??null],
     [tr("Received but not counted", "استُلم ولم يُعدّ بعد"), audit?.waitingForPhysicalCount??null],
@@ -138,16 +148,7 @@ export function OwnerCashCustodyAuditPanel({
                     {bag.flags.length>0? (
                       <p className="mt-2 text-xs leading-5 text-amber-900">
                         {tr("Audit coverage gaps / notes", "ملاحظات ونواقص التوثيق")}:{" "}
-                        {bag.flags.map(flag=>({
-                          collector_not_recorded:tr("Collector not recorded", "المحصّل غير مسجل"),
-                          receiver_not_recorded:tr("Receiver not recorded", "المستلم غير مسجل"),
-                          storage_evidence_not_recorded:tr("Storage photo reference not recorded", "مرجع صورة التسليم غير مسجل"),
-                          removal_evidence_not_recorded:tr("Removal photo reference not recorded", "مرجع صورة الإزالة غير مسجل"),
-                          counter_not_recorded:tr("Counter not recorded", "من قام بالعدّ غير مسجل"),
-                          count_witness_not_recorded:tr("Witness not recorded", "شاهد العدّ غير مسجل"),
-                          same_person_handoff_review:tr("Same-person receipt", "استلام نفس الشخص"),
-                          seal_condition_review:tr("Seal condition requires review", "حالة الختم تحتاج مراجعة"),
-                        }[flag]||flag)).join(" · ")}
+                        {bag.flags.map(flag=>tr(flagLabels[flag]?.[0]||flag,flagLabels[flag]?.[1]||flag)).join(" · ")}
                       </p>
                     ):null}
                   </article>
