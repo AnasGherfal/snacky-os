@@ -62,6 +62,33 @@ test("unstarted and unknown-status routes are workflow review, never treated as 
   assert.equal(r.routesNeedingBagCountReview,0);
 });
 
+test("undated routes remain visible and never appear as verified bag returns",()=>{
+ const r=buildDueRouteCloseout({
+  routes:[route("no-date","in_progress",null),route("due")],
+  stops:[stop("s1","no-date","completed"),stop("s2","due","completed")],
+  todayTripoli:today,
+ });
+ assert.equal(r.totalDueOpenRoutes,2);
+ assert.equal(r.undatedOpenRoutes,1);
+ assert.equal(r.routesNeedingWorkflowReview,1);
+ assert.equal(r.routesNeedingBagCountReview,1);
+ assert.equal(r.routeQueue.find(x=>x.routeId==="no-date")?.workflowReviewReason,"undated");
+ assert.equal(r.routeQueue.find(x=>x.routeId==="no-date")?.action,"review_route");
+ assert.throws(()=>buildDueRouteCloseout({routes:[route("future","in_progress","2026-10-28")],stops:[],todayTripoli:today}),/future-dated/);
+});
+
+test("precise workflow review causes are preserved for the owner",()=>{
+ const r=buildDueRouteCloseout({
+  routes:[route("none"),route("unassigned","in_progress","2026-10-26",null),route("not-active","assigned")],
+  stops:[stop("s1","unassigned","completed"),stop("s2","not-active","completed")],
+  todayTripoli:today,
+ });
+ assert.deepEqual(new Map(r.routeQueue.map(x=>[x.routeId,x.workflowReviewReason])),new Map([
+  ["none","no_stops"],["unassigned","no_operator"],["not-active","not_active"]
+ ]));
+ assert.equal(r.routesNeedingWorkflowReview,3);
+});
+
 test("priority is stable and does not mutate source, with an eight-item visual cap",()=>{
  const routes=Array.from({length:17},(_,i)=>route("route-"+i,"in_progress","2026-10-25"));
  const stops=routes.map((r,i)=>stop("s-"+i,r.id,"in_progress"));
@@ -111,7 +138,8 @@ test("read-only management action center uses precise cash counting, owner guard
  assert.ok(page.includes('hasAnyRole(profile,["owner","admin"])'));
  assert.ok(page.includes("readOwnerDueRouteCloseout(db,tripoliDate)"));
  assert.ok(page.includes('if(workspaceResult.error||!workspaceResult.data'));
- assert.ok(page.includes("openRouteStockDifferences={null}"));
+ assert.ok(page.includes("openRouteStockDifferences={openRouteDiscrepancyCount}"));
+ assert.ok(page.indexOf("const openRouteDiscrepancyCount") < page.indexOf("if(workspaceResult.error"));
  assert.ok(page.includes("Data Health cleanup workspace could not be verified"));
 
  assert.ok(page.includes("<OwnerDailyCloseoutActionCenter"));
@@ -123,6 +151,9 @@ test("read-only management action center uses precise cash counting, owner guard
  assert.ok(source.includes('.select("id,route_date,status,operator_id", {count:"exact"})'));
  assert.ok(source.includes('.select("id,route_id,status", {count:"exact"})'));
  assert.ok(source.includes('isTerminalRouteStatus(route.status)'));
+ assert.ok(source.includes("route_date.is.null"));
+ assert.ok(ui.includes("routesNeedingWorkflowReview"));
+ assert.ok(ui.includes("workflowReasons"));
  assert.ok(paging.includes("result.count !== expected"));
  assert.ok(ui.includes("/operator/routes/"));
  assert.ok(ui.includes("/cash-collections/action-queue"));
