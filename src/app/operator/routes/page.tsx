@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { OwnerQaRouteCard } from "@/components/operator/OwnerQaRouteCard";
+import { prioritizeAssignedOperatorRoutes, routeQueueItem, type RouteQueueUrgency } from "@/lib/operator-route-list-focus";
 import { redirect } from "next/navigation";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";
@@ -29,7 +30,6 @@ import {
 } from "@/lib/operator-route-types";
 import {
   isOperatorVisibleRouteStatus,
-  isRouteStopDoneStatus,
   isTerminalRouteStatus,
   routeDisplayStatus,
 } from "@/lib/route-workflow";
@@ -94,63 +94,77 @@ function logRouteLoaderIssue({
   );
 }
 
-function routeProgress(route: OperatorRoutePreviewRow) {
-  const completedStops =
-    route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) =>
-      isRouteStopDoneStatus(stop.status),
-    ).length ?? 0;
-  const totalStops = route.route_stops?.length ?? 0;
-  const progress =
-    totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
-  return { completedStops, totalStops, progress };
-}
+const urgencyText: Record<RouteQueueUrgency, { en: string; ar: string }> = {
+  in_progress: { en: "In progress", ar: "قيد التنفيذ" },
+  overdue: { en: "Scheduled date passed", ar: "تجاوز تاريخها" },
+  today: { en: "Scheduled today", ar: "مجدولة اليوم" },
+  upcoming: { en: "Upcoming", ar: "قادمة" },
+  date_unverified: { en: "Date unverified", ar: "التاريخ غير مؤكد" },
+};
 
 function RouteCard({
   route,
-  subtitle,
   t,
+  locale,
+  todayTripoli,
+  stopsVerified,
 }: {
   route: OperatorRoutePreviewRow;
-  subtitle: string;
   t: (key: string, fallback?: string) => string;
+  locale: "ar" | "en";
+  todayTripoli: string;
+  stopsVerified: boolean;
 }) {
-  const { completedStops, totalStops, progress } = routeProgress(route);
+  const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
+  const item = routeQueueItem(route, todayTripoli, stopsVerified);
+  const { doneStops, totalStops, unfinishedStops, progressPercent, urgency } = item;
   const routeStatus = routeDisplayStatus(route.status, route.operator_id);
+  const isTerminal = isTerminalRouteStatus(route.status);
+  const isHighPriority = !isTerminal && (urgency === "in_progress" || urgency === "overdue");
+  const progressUnavailable = progressPercent === null;
+  const urgencyLabel = locale === "ar" ? urgencyText[urgency].ar : urgencyText[urgency].en;
 
   return (
-    <Link
-      href={`/operator/routes/${route.id}`}
-      className="block rounded-lg border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md"
-    >
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <Link href={`/operator/routes/${route.id}`}
+      className={isHighPriority
+        ? "group block rounded-xl border border-emerald-200 border-s-4 border-s-emerald-700 bg-white p-4 shadow-sm transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+        : "group block rounded-xl border border-slate-200 bg-white p-4 transition hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
-          <p className="text-sm text-slate-500">{subtitle}</p>
+          <h3 className="text-base font-bold text-slate-950"><span dir="ltr" className="inline-block tabular-nums">{route.route_date || tr("Unscheduled", "بدون تاريخ")}</span></h3>
+          {!isTerminal ? (
+            <p className={isHighPriority ? "mt-1 text-xs font-semibold text-emerald-800" : "mt-1 text-xs font-medium text-slate-600"}>{urgencyLabel}</p>
+          ) : null}
         </div>
-        <div className="shrink-0">
-          <StatusBadge
-            status={routeStatus}
-            label={t(routeStatus, routeStatus)}
-          />
-        </div>
+        <StatusBadge status={routeStatus} label={t(routeStatus, routeStatus)} />
       </div>
-      <div className="mb-3">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-xs text-slate-600">{t("Progress")}</span>
-          <span className="text-xs font-semibold text-slate-700">
-            {progress}%
-          </span>
-        </div>
-        <div className="h-2 w-full rounded-full bg-slate-200">
-          <div
-            className="h-2 rounded-full bg-green-500 transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-      <div className="text-sm text-slate-600">
-        {completedStops}/{totalStops} {t("completed or skipped")}
-      </div>
+
+      {progressUnavailable ? (
+        <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {totalStops === 0
+            ? tr("No machine stops configured", "لا توجد مواقع أجهزة مسجلة")
+            : tr("Stop progress unverified — open route to inspect", "تقدم المواقع غير مؤكد — افتح الجولة للمراجعة")}
+        </p>
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="text-slate-600">{tr("Completed or skipped", "المكتملة أو المتخطاة")}</span>
+            <strong dir="ltr" className="tabular-nums text-slate-950">{doneStops} / {totalStops}</strong>
+          </div>
+          <div role="progressbar"
+            aria-label={tr("Stops completed or skipped", "المواقع المكتملة أو المتخطاة")}
+            aria-valuemin={0} aria-valuemax={Math.max(1,totalStops ?? 0)} aria-valuenow={doneStops ?? 0}
+            className="h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-emerald-600" style={{width: `${progressPercent}%`}} />
+          </div>
+          {!isTerminal ? <p className="mt-2 text-sm font-semibold text-slate-800">
+            {tr(`${unfinishedStops} unfinished machine stops`, `${unfinishedStops} مواقع لم تنتهِ بعد`)}
+          </p> : null}
+        </>
+      )}
+      <span className="mt-3 block border-t border-slate-100 pt-3 text-sm font-semibold text-emerald-800 group-hover:underline">
+        {tr("Open route", "فتح الجولة")}
+      </span>
     </Link>
   );
 }
@@ -163,6 +177,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
   const availableView = rawView === "available";
   const { t, locale } = await getServerI18n();
   const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
+  const tripoliToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
 
@@ -200,19 +215,19 @@ export default async function OperatorRoutesPage({ searchParams }: {
   const assignedQuery = canManageAllRoutes
     ? routeReadClient
         .from("routes")
-        .select(routeSelect)
+        .select(routeSelect, { count: "exact" })
         .not("operator_id", "is", null)
         .order("route_date", { ascending: false })
     : accessibleOperatorIds.length
       ? routeReadClient
           .from("routes")
-          .select(routeSelect)
+          .select(routeSelect, { count: "exact" })
           .in("operator_id", accessibleOperatorIds)
           .order("route_date", { ascending: false })
-      : Promise.resolve({ data: [], error: null });
+      : Promise.resolve({ data: [], count: 0, error: null });
   const availableQuery = routeReadClient
     .from("routes")
-    .select(routeSelect)
+    .select(routeSelect, { count: "exact" })
     .is("operator_id", null)
     .order("route_date", { ascending: true });
   const [assignedResult, availableResult] = await Promise.all([
@@ -222,6 +237,27 @@ export default async function OperatorRoutesPage({ searchParams }: {
 
   const assignedRoutesError = assignedResult.error ?? null;
   const availableRoutesError = availableResult.error ?? null;
+  // A server-side PostgREST row cap can return fewer routes than exist
+  // without an error. Never hide open work behind an apparently complete list.
+  const assignedCount = "count" in assignedResult ? assignedResult.count : null;
+  const assignedQueryExpected = canManageAllRoutes || accessibleOperatorIds.length > 0;
+  const assignedRoutesIncomplete = !assignedRoutesError && assignedQueryExpected
+    && (typeof assignedCount !== "number" || assignedCount !== (assignedResult.data?.length ?? 0));
+  const availableRoutesIncomplete = !availableRoutesError
+    && (typeof availableResult.count !== "number"
+      || availableResult.count !== (availableResult.data?.length ?? 0));
+  if (assignedRoutesIncomplete || availableRoutesIncomplete) {
+    console.error("[operator:routes] Route query incomplete; refusing partial assignment list", {
+      assigned_expected: assignedCount,
+      assigned_received: assignedResult.data?.length ?? 0,
+      available_expected: availableResult.count,
+      available_received: availableResult.data?.length ?? 0,
+    });
+    return <ErrorState title={tr("Route list incomplete", "قائمة الجولات غير مكتملة")}
+      body={tr("The database returned only part of the route list. Refresh or ask a manager to check the source before relying on it.",
+        "أعاد النظام جزءاً فقط من قائمة الجولات. حدّث الصفحة أو اطلب مراجعة مصدر البيانات قبل الاعتماد عليها.")} />;
+  }
+
   if (assignedRoutesError) {
     logRouteLoaderIssue({
       step: "load_assigned_routes",
@@ -264,15 +300,24 @@ export default async function OperatorRoutesPage({ searchParams }: {
         .filter(Boolean),
     ),
   );
-  const { data: stopRows, error: stopsError } = routeIds.length
+  const { data: stopRows, error: stopsError, count: stopCount } = routeIds.length
     ? await routeReadClient
         .from("route_stops")
-        .select("id, route_id, status, stop_order, machine_id")
+        .select("id, route_id, status, stop_order, machine_id", { count: "exact" })
         .in("route_id", routeIds)
         .order("stop_order", { ascending: true })
-    : { data: [], error: null };
+    : { data: [], error: null, count: 0 };
 
-  if (stopsError) {
+  const stopsVerified = !stopsError && typeof stopCount === "number" && Array.isArray(stopRows)
+    && stopRows.length === stopCount
+    && new Set(stopRows.map(stop => stop.id)).size === stopRows.length;
+  if (!stopsError && !stopsVerified) {
+    console.warn("[operator:routes] Incomplete stop history — progress will be unverified", {
+      expected_count: stopCount,
+      received_count: stopRows?.length ?? 0,
+    });
+  }
+  if (stopsError || !stopsVerified) {
     logRouteLoaderIssue({
       step: "load_route_stop_summaries",
       query: "route_stops",
@@ -283,7 +328,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
   }
 
   const stopsByRouteId = new Map<string, OperatorRoutePreviewStopRow[]>();
-  if (!stopsError) {
+  if (stopsVerified) {
     (
       (stopRows ?? []) as (OperatorRoutePreviewStopRow & {
         route_id?: string | null;
@@ -307,9 +352,11 @@ export default async function OperatorRoutesPage({ searchParams }: {
   });
   const assignedRoutes = baseAssignedRoutes.map(attachStops);
   const availableRoutes = baseAvailableRoutes.map(attachStops);
-  const assignedOpenRoutes = assignedRoutes.filter(
-    (route) => !isTerminalRouteStatus(route.status),
-  );
+  const assignedOpenRoutes = prioritizeAssignedOperatorRoutes(
+    assignedRoutes.filter(route => !isTerminalRouteStatus(route.status)), tripoliToday, stopsVerified,
+  ).map(item => item.route);
+  const priorityRoute = assignedOpenRoutes[0] ?? null;
+  const priorityRouteSummary = priorityRoute ? routeQueueItem(priorityRoute, tripoliToday, stopsVerified) : null;
   const completedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))
     .sort((a, b) =>
@@ -342,7 +389,7 @@ export default async function OperatorRoutesPage({ searchParams }: {
         action={headerAction}
       />
 
-      <nav className="hidden flex-wrap gap-2 md:flex" aria-label={tr("Route views", "عرض الجولات")}>
+      <nav className="flex flex-wrap gap-2" aria-label={tr("Route views", "عرض الجولات")}>
         <Link href="/operator/routes" aria-current={!availableView ? "page" : undefined}
           className={`inline-flex min-h-11 items-center rounded-lg border px-4 py-2 text-sm font-semibold ${!availableView ? "border-emerald-600 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700"}`}>
           {tr("Assigned", "المسندة")} ({assignedOpenRoutes.length})
@@ -353,7 +400,53 @@ export default async function OperatorRoutesPage({ searchParams }: {
         </Link>
       </nav>
 
+      {!availableView && !assignedRoutesError && priorityRoute && priorityRouteSummary ? (
+        <section aria-labelledby="operator-route-focus-title" className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4 bg-emerald-950 p-4 text-white sm:p-5">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-amber-300">
+                {tr(canManageAllRoutes ? "TEAM · ROUTE TO REVIEW" : "YOUR NEXT ROUTE", canManageAllRoutes ? "الفريق · جولة للمراجعة" : "جولتك التالية")}
+              </p>
+              <h2 id="operator-route-focus-title" className="mt-2 text-xl font-bold">
+                {priorityRouteSummary.urgency === "in_progress"
+                  ? tr("Resume an active route", "تابع جولة قيد التنفيذ")
+                  : priorityRouteSummary.urgency === "overdue"
+                    ? tr("Review an overdue route", "راجع جولة متأخرة")
+                    : priorityRouteSummary.urgency === "today"
+                      ? tr("Route scheduled today", "جولة مجدولة اليوم")
+                      : tr("Next scheduled route", "الجولة المجدولة التالية")}
+              </h2>
+              <p dir="ltr" className="mt-1 inline-block font-semibold tabular-nums text-emerald-100">{priorityRoute.route_date ?? "—"}</p>
+              <p className="mt-2 text-sm leading-6 text-emerald-100">
+                {priorityRouteSummary.unfinishedStops === null
+                  ? tr("Stop progress could not be verified.", "تعذر التحقق من تقدم المواقع.")
+                  : priorityRouteSummary.totalStops === 0
+                    ? tr("No machine stops are configured for this route.", "لا توجد مواقع أجهزة مسجلة لهذه الجولة.")
+                    : tr(
+                        String(priorityRouteSummary.unfinishedStops) + " stops unfinished; " + String(priorityRouteSummary.doneStops) + " completed or skipped.",
+                        "متبقي " + priorityRouteSummary.unfinishedStops + " مواقع؛ المكتملة أو المتخطاة " + priorityRouteSummary.doneStops + ".",
+                      )}
+              </p>
+            </div>
+            <Link href={`/operator/routes/${priorityRoute.id}`}
+              className="flex min-h-12 w-full shrink-0 items-center justify-center rounded-xl bg-amber-400 px-5 py-3 text-center text-sm font-bold text-slate-950 transition-colors hover:bg-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-2 focus-visible:ring-offset-emerald-950 sm:w-auto">
+              {tr("Open route", "فتح الجولة")}
+            </Link>
+          </div>
+          <p className="px-4 py-3 text-xs leading-5 text-slate-600 sm:px-5">
+            {tr("Active routes are shown first, followed by overdue and scheduled work. This does not assign routes or change stop order.", "تظهر الجولات الجارية أولاً ثم المتأخرة والمجدولة. هذا لا يغيّر التكليفات ولا ترتيب المواقع داخل الجولة.")}
+          </p>
+        </section>
+      ) : null}
+
       {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
+
+      {!stopsVerified ? (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          {tr("Stop counts could not be completely verified. No route progress or unfinished-stop count has been assumed to be zero.",
+            "تعذر التحقق الكامل من أعداد المواقع. لم تُعتبر أعداد المواقع غير المنتهية أو تقدم الجولات صفراً.")}
+        </div>
+      ) : null}
 
       {assignedRoutesError || availableRoutesError ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -423,8 +516,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>
@@ -451,8 +546,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")} - ${t("ready to claim")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>
@@ -475,8 +572,10 @@ export default async function OperatorRoutesPage({ searchParams }: {
               <RouteCard
                 key={route.id}
                 route={route}
-                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
                 t={t}
+                locale={locale}
+                todayTripoli={tripoliToday}
+                stopsVerified={stopsVerified}
               />
             ))}
           </div>

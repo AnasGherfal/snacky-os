@@ -23,10 +23,12 @@ import {
   computeFinanceBalancesFromCutoff,
   formatFinanceMoney,
 } from "@/lib/finance-balance";
+import { compareOwnerCashCountToLedger } from "@/lib/finance-cash-reconciliation";
+import { verifyFinanceOpeningEvidence } from "@/lib/finance-opening-evidence";
 import {
   applyVisibleFinanceLedgerFilter,
   FINANCE_TRANSACTIONS_TABLE,
-  loadFinanceLedgerRows,
+  loadCompleteFinanceLedgerRows,
 } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
 import { calculateLiquidityPosition, isCurrentLiquidityAttestation } from "@/lib/liquidity-position";
@@ -366,11 +368,15 @@ export default async function GrowthDecisionsPage({
     paymentsResult,
     liquidityResult,
   ] = await Promise.all([
-    loadFinanceLedgerRows({
+    loadCompleteFinanceLedgerRows({
       label: "growth-decisions.finance-ledger",
-      buildQuery: (columns, level) =>
+      buildQuery: (columns, level, from, to) =>
         applyVisibleFinanceLedgerFilter(
-          supabase.from(FINANCE_TRANSACTIONS_TABLE).select(columns.join(",")),
+          supabase.from(FINANCE_TRANSACTIONS_TABLE)
+            .select(columns.join(","), { count: "exact" })
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
           level,
         ),
     }),
@@ -655,13 +661,29 @@ export default async function GrowthDecisionsPage({
   const reliableAverageMachineProfitAfterRent = reliableProfitCoverage && unverifiedMachineCount === 0
     ? averageMachineProfitAfterRent
     : null;
-  const financeBalances = computeFinanceBalancesFromCutoff({
+  // The opening ledger records can be edited via Finance settings.
+  // A stale hard-coded baseline must never masquerade as cash reconciliation.
+  const financeSettingsResult = await supabase.from("finance_settings")
+    .select("reconciliation_cutoff_date,opening_balance_date")
+    .eq("id", "default").maybeSingle();
+  const financeCutoff = financeSettingsResult.data?.reconciliation_cutoff_date
+    ?? financeSettingsResult.data?.opening_balance_date ?? null;
+  const financeOpeningRows = financeCutoff ? await supabase.from("finance_opening_balances")
+    .select("account_id,balance_date,opening_balance")
+    .eq("balance_date", financeCutoff) : null;
+  const financeOpening = verifyFinanceOpeningEvidence(
+    financeSettingsResult.error ? null : financeSettingsResult.data,
+    financeOpeningRows?.error ? null : financeOpeningRows?.data ?? null,
+  );
+  const financeBalances = financeOpening.verified ? computeFinanceBalancesFromCutoff({
     rows: ledgerRows,
-  });
+    openingBalances: financeOpening.openingBalances,
+    cutoffDate: financeOpening.cutoffDate,
+  }) : null;
   const unpostedInvestorPayments = (paymentsResult.data ?? [])
     .filter((row) => row.finance_posting_status !== "posted")
     .reduce((sum, row) => sum + numeric(row.amount_lyd), 0);
-  const unverifiedLedgerCash = money(financeBalances.snacky_lyd);
+  const unverifiedLedgerCash = financeBalances ? money(financeBalances.snacky_lyd) : null;
   const tripoliToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
@@ -679,7 +701,20 @@ export default async function GrowthDecisionsPage({
   // remain outside spendable cash and loan proceeds are not added twice.
   const cashAvailable: number | null = liquidity ? liquidity.directlyAccessible : null;
   const knownShortTermDebt = liquidity ? liquidity.totalDebts : 0;
-  const reconciliationGap = liquidity ? money(unverifiedLedgerCash - liquidity.directlyAccessible) : null;
+  // Compare the exact same date, not an arbitrary later ledger total.
+  const countedAsOf = String(latestLiquidity?.as_of_date ?? "");
+  const cashToLedger = liquidity && financeOpening.verified ? compareOwnerCashCountToLedger({
+    rows: ledgerRows,
+    asOfDate: countedAsOf,
+    directlyAccessibleLyd: liquidity.directlyAccessible,
+    custodyLyd: liquidity.physicallyHeldElsewhere,
+    openingBalances: financeOpening.openingBalances,
+    cutoffDate: financeOpening.cutoffDate,
+  }) : null;
+  const differenceVsControlledCash = cashToLedger?.verified
+    ? cashToLedger.differenceFromCashAndBankLyd : null;
+  const differenceVsAllCustody = cashToLedger?.verified
+    ? cashToLedger.differenceIncludingCustodyLyd : null;
   const finalizedDue = (statementsResult.data ?? []).reduce(
     (sum, row) => sum + numeric(row.investor_share_due_lyd),
     0,
@@ -770,11 +805,17 @@ export default async function GrowthDecisionsPage({
           </p> : <p className="mt-1">{ar
             ? "لا يوجد جرد حديث مؤكد للنقد والمصرف والديون. توصيات شراء الأجهزة معلقة إلى حين توثيق السيولة."
             : "No recent verified physical cash, bank and debt count. Machine purchase recommendations are paused until the owner records a current position."}</p>}
-          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {formatFinanceMoney(unverifiedLedgerCash)}.
+          <p className="mt-2 text-xs">{ar ? "رصيد دفتر المالية (للمطابقة فقط)" : "Finance ledger balance (reconciliation only)"}: {unverifiedLedgerCash === null ? (ar ? "غير مؤكد" : "Unverified") : formatFinanceMoney(unverifiedLedgerCash)}.
             {" "}{ar ? "لا يُعد هذا رصيداً متاحاً مؤكداً." : "This is not confirmed spendable cash."}
-            {reconciliationGap !== null ? (ar
-              ? ` الفرق مع النقد والمصرف المحصيّ: ${formatFinanceMoney(reconciliationGap)} (ليس خسارة مثبتة؛ راجع حركة النقد لدى الغير).`
-              : ` Difference from counted cash + bank: ${formatFinanceMoney(reconciliationGap)} (not proven loss; investigate custody and ledger timing).`) : ""}
+            {differenceVsControlledCash !== null && differenceVsAllCustody !== null ? (ar
+              ? ` المطابقة بتاريخ الجرد ${countedAsOf}: الفرق عن النقد والمصرف ${formatFinanceMoney(differenceVsControlledCash)}؛ والفرق عن النقد والمصرف والأموال لدى الغير ${formatFinanceMoney(differenceVsAllCustody)}.`
+              : ` At the counted date (${countedAsOf}): ledger minus cash + bank = ${formatFinanceMoney(differenceVsControlledCash)}; ledger minus cash + bank + custody = ${formatFinanceMoney(differenceVsAllCustody)}.`) : ""}
+            {liquidity && (!cashToLedger || !cashToLedger.verified) ? (ar
+              ? " المقارنة بتاريخ الجرد غير متاحة بسبب نقص مصدر الحساب أو تاريخ سابق لرصيد الافتتاح."
+              : " Same-date reconciliation unavailable due to incomplete ledger dates or a count before the opening-balance cutoff.") : ""}
+            {liquidity ? (ar
+              ? " فروقات المطابقة ليست خسارة مثبتة ولا تُنشئ قيداً مالياً آلياً."
+              : " Reconciliation differences are not proven losses and never create balancing transactions.") : ""}
             {unpostedInvestorPayments > 0 ? ` Pending investor payments not posted: ${formatFinanceMoney(unpostedInvestorPayments)}.` : ""}
           </p>
           <Link className="mt-2 inline-block font-semibold underline underline-offset-2" href="/finance/liquidity">{ar ? "تسجيل جرد السيولة والديون" : "Record / review cash and debt snapshot"}</Link>
