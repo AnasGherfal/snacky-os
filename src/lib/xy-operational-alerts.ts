@@ -2,7 +2,7 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyLiveSalesConfig } from "@/lib/xy-live-sales-sync";
 import { getXyStockActivityNotices } from "@/lib/xy-stock-activity-alerts";
-import { lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
+import { knownXyNotificationEventKeys, lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
 
 type Db = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type Notice = {
@@ -232,11 +232,33 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
 
   let created = 0;
   let existing = 0;
-  // Notifications.event_key has a unique partial index. Treat collisions as
-  // already delivered; never update read_at or repeatedly push to a phone.
+  // Current XY scans run frequently; most event keys were inserted in an
+  // earlier pass. Look up only those exact keys before attempting a write.
+  // The partial unique index on event_key is still the concurrency authority:
+  // no upsert, no read_at reset, no API change to existing notifications.
+  const expectedKeys: string[] = [];
+  for (const owner of owners) {
+    for (const notice of notices) {
+      expectedKeys.push(xyOperationalAlertEventKey(notice.kind, `${owner.id}:${notice.scope}`, notice.episode));
+    }
+  }
+  const lookup = await knownXyNotificationEventKeys(expectedKeys, async (keys) => {
+    const result = await db.from("notifications")
+      .select("event_key")
+      .in("event_key", keys)
+      .limit(keys.length);
+    return { data: result.data, error: result.error };
+  });
+  const existingKeys = lookup.keys;
+  if (!lookup.verified) {
+    // Read failures must never hide a new alert; fall back to the proven
+    // insert + unique-conflict handling used before this optimization.
+    console.warn("[xy-alerts] Existing-key lookup unavailable; using safe insert fallback.");
+  }
   for (const owner of owners) {
     for (const notice of notices) {
       const eventKey = xyOperationalAlertEventKey(notice.kind, `${owner.id}:${notice.scope}`, notice.episode);
+      if (existingKeys.has(eventKey)) { existing++; continue; }
       const { error } = await db.from("notifications").insert({
         user_id: owner.id,
         type: notice.type,
@@ -250,8 +272,9 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
         source_id: notice.sourceId ?? null,
         event_key: eventKey,
       });
-      if (error?.code === "23505") { existing++; continue; }
+      if (error?.code === "23505") { existingKeys.add(eventKey); existing++; continue; }
       reportError(error,"persist in-app notification");
+      existingKeys.add(eventKey);
       created++;
     }
   }
