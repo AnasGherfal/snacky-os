@@ -5,6 +5,8 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { useLanguage } from "@/components/I18nProvider";
 import { QuantityStepper } from "@/components/QuantityStepper";
+import { RouteReturnProgress } from "@/components/operator/RouteReturnProgress";
+import { operatorReturnReadiness } from "@/lib/operator-return-readiness";
 import { ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { finalizeRouteInventory } from "@/lib/operator-actions";
 
@@ -679,6 +681,22 @@ export default function LeftoversPage() {
   const hasPhysicalVariance = displayItems.some((item) => (
     Math.max(0, Number(countedQtys[custodyKey(item)] ?? 0)) !== Number(item.signedQuantity ?? 0)
   ));
+  const returnReadiness = operatorReturnReadiness({
+    rows: displayItems.map((item) => ({
+      key: custodyKey(item),
+      ledgerQty: Number(item.signedQuantity ?? 0),
+      enteredQty: Number(countedQtys[custodyKey(item)] ?? 0),
+      confirmed: confirmedCountKeys.includes(custodyKey(item)),
+    })),
+    emptyBagConfirmed,
+    reconciliationReason,
+    cancellationReason,
+    cancelMode: isCancelMode,
+    storageLocationId,
+    storageLocationCount: returnStorageOptions.length,
+    pendingDraft: Boolean(localDraft.pendingDraft),
+    inventoryFinalizationAvailable,
+  });
   const useLedgerCounts = () => {
     setCountedQtys(suggestedPhysicalCounts(displayItems));
     setConfirmedCountKeys([]);
@@ -706,6 +724,21 @@ export default function LeftoversPage() {
             : <SecondaryButton href={routeHref}>{tr("Back", "رجوع")}</SecondaryButton>}
         />
 
+        <RouteReturnProgress
+          countTotal={returnReadiness.countTotal}
+          countConfirmed={returnReadiness.countConfirmed}
+          enteredTotal={returnReadiness.enteredTotal}
+          confirmedTotal={returnReadiness.confirmedTotal}
+          possibleVariance={returnReadiness.possibleVariance}
+          physicalCountComplete={returnReadiness.physicalCountComplete}
+          nextStep={returnReadiness.nextStep}
+          canSubmit={returnReadiness.canSubmit}
+          pendingDraft={Boolean(localDraft.pendingDraft)}
+          inventoryServiceReady={inventoryFinalizationAvailable}
+          locale={locale}
+        />
+
+
         <SectionCard>
           <div className="space-y-4 p-4">
             <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
@@ -722,10 +755,11 @@ export default function LeftoversPage() {
                 <dd className="mt-1 font-semibold text-slate-900">{assignedBagOwnerName || tr("Name unavailable", "الاسم غير متاح")}</dd>
               </div>
             </dl>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">
-                {tr(`${stopSummaries.length} machine stops in this route`, `${stopSummaries.length} محطة جهاز في هذه الجولة`)}
-              </h2>
+            <details className="group">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                <span>{tr(`${stopSummaries.length} machine stops in this route`, `${stopSummaries.length} محطة جهاز في هذه الجولة`)}</span>
+                <span className="text-xs text-emerald-800">{tr("View stops", "عرض المواقع")}</span>
+              </summary>
               {visibleStopSummaries.length ? (
                 <ul className="mt-2 grid gap-2 sm:grid-cols-2">
                   {visibleStopSummaries.map((stop, index) => (
@@ -752,9 +786,10 @@ export default function LeftoversPage() {
               {hiddenStopCount > 0 ? (
                 <p className="mt-2 text-xs text-slate-500">{tr(`+${hiddenStopCount} more stops`, `+${hiddenStopCount} محطات أخرى`)}</p>
               ) : null}
-            </div>
+            </details>
           </div>
         </SectionCard>
+
 
         {error && (
           <div
@@ -787,7 +822,7 @@ export default function LeftoversPage() {
           ) : null}
 
         {isCancelMode ? (
-          <label className="block rounded-lg border border-rose-200 bg-white p-4">
+          <label id="route-cancellation-reason" className="scroll-mt-24 block rounded-lg border border-rose-200 bg-white p-4">
             <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Reason for cancelling the route", "سبب إلغاء الجولة")}</span>
             <textarea
               className="field-input min-h-24"
@@ -801,7 +836,7 @@ export default function LeftoversPage() {
 
         {totalPhysicalCount > 0 ? (
           returnStorageOptions.length ? (
-            <label className="block rounded-lg border border-slate-200 bg-white p-4">
+            <label id="return-storage-location" className="scroll-mt-24 block rounded-lg border border-slate-200 bg-white p-4">
               <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Physical return destination", "وجهة الإرجاع الفعلي")}</span>
               <select
                 className="field-input"
@@ -819,14 +854,19 @@ export default function LeftoversPage() {
               </p>
             </label>
           ) : (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <div id="return-storage-location" className="scroll-mt-24 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
               {tr("No active storage location can receive this return. Ask an admin to activate one before finalizing the route.", "لا يوجد موقع تخزين نشط لاستلام هذا الإرجاع. اطلب من الإدارة تفعيل موقع قبل إنهاء الجولة.")}
             </div>
           )
         ) : null}
 
         {reconciliation.length ? (
-          <SectionCard>
+          <details className="group overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <summary className="flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+              <span>{tr("Optional: detailed route stock movements", "اختياري: تفاصيل حركات مخزون الجولة")}</span>
+              <span className="text-xs text-slate-500">{tr("Tap to view", "اضغط للعرض")}</span>
+            </summary>
+            <SectionCard>
             <div className="space-y-3 p-4">
               <div>
                 <h2 className="text-base font-semibold text-slate-900">{tr("Route Inventory Reconciliation", "تسوية مخزون الجولة")}</h2>
@@ -868,6 +908,7 @@ export default function LeftoversPage() {
               </div>
             </div>
           </SectionCard>
+          </details>
         ) : null}
 
         <SectionCard>
@@ -905,7 +946,7 @@ export default function LeftoversPage() {
         </SectionCard>
 
         {displayItems.length === 0 ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
+          <div id="bag-empty-confirmation" className="scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
             <p className="font-medium text-emerald-800">{tr("No route bag products to count", "لا توجد منتجات في حقيبة الجولة لعدّها")}</p>
             <p className="mt-1 text-sm text-emerald-700">{tr("The route has no operator-bag history or balance. If you physically found a product, add it above before finalizing.", "لا تحتوي الجولة على سجل أو رصيد لحقيبة المشغل. إذا وجدت منتجاً فعلياً فأضفه أعلاه قبل إنهاء الجولة.")}</p>
             <label className="mx-auto mt-4 flex max-w-md cursor-pointer items-center justify-center gap-2 text-sm font-medium text-emerald-950">
@@ -933,7 +974,7 @@ export default function LeftoversPage() {
               <strong>{tr("Instructions:", "التعليمات:")}</strong> {tr("Count each product before handing the bag stock back to storage. Do not enter zero unless there are physically zero units in the bag.", "عدّ كل منتج قبل تسليم مخزون الحقيبة إلى المخزن. لا تدخل صفراً إلا إذا لم توجد أي وحدة فعلياً في الحقيبة.")}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={useLedgerCounts} className="btn-secondary">
-                  {tr("Use Snacky OS counts", "استخدام أرصدة Snacky OS")}
+                  {tr("Prefill ledger quantities — still count physically", "تعبئة الكميات من السجل — يجب العدّ الفعلي")}
                 </button>
               </div>
             </div>
@@ -976,7 +1017,10 @@ export default function LeftoversPage() {
                     </div>
                     <div className="space-y-3 p-3">
                       {group.items.map((item) => (
-                        <div key={custodyKey(item)} className="rounded-lg border border-slate-200 bg-white p-4">
+                        <div id={"bag-count-" + displayItems.findIndex((candidate) => custodyKey(candidate) === custodyKey(item))}
+                          key={custodyKey(item)} className={confirmedCountKeys.includes(custodyKey(item))
+                            ? "scroll-mt-24 rounded-lg border border-emerald-200 bg-emerald-50/30 p-4"
+                            : "scroll-mt-24 rounded-lg border border-amber-200 bg-white p-4"}>
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                             <div className="min-w-0 flex-1">
                               <p className="font-semibold text-slate-900">{item.productName}</p>
@@ -1030,7 +1074,7 @@ export default function LeftoversPage() {
             </div>
 
             {hasPhysicalVariance ? (
-              <label className="block rounded-lg border border-amber-200 bg-white p-4">
+              <label id="return-variance-reason" className="scroll-mt-24 block rounded-lg border border-amber-200 bg-white p-4">
                 <span className="mb-2 block text-sm font-semibold text-slate-900">{tr("Reason for inventory difference", "سبب فرق المخزون")}</span>
                 <textarea
                   className="field-input min-h-24"
@@ -1044,13 +1088,30 @@ export default function LeftoversPage() {
 
             <SectionCard>
               <div className="p-4">
-                <div className="text-sm text-slate-500 mb-1">{tr("Total physical units to return", "إجمالي الوحدات الفعلية للإعادة")}</div>
+                <div className="mb-1 text-sm text-slate-500">{tr(
+                  returnReadiness.physicalCountComplete ? "Counted units to return" : "Entered units to return · pending physical verification",
+                  returnReadiness.physicalCountComplete ? "الوحدات المعدودة للإرجاع" : "وحدات مدخلة للإرجاع · بانتظار تأكيد العدّ الفعلي",
+                )}</div>
                 <div className="text-3xl font-bold text-slate-900">{totalPhysicalCount}</div>
                 <p className="text-xs text-slate-600 mt-2">{tr("units", "وحدة")}</p>
               </div>
             </SectionCard>
 
-            <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+            <div className="sticky bottom-2 z-20 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-lg backdrop-blur sm:static sm:mx-0 sm:rounded-xl sm:border sm:border-slate-200 sm:px-4 sm:shadow-none">
+              <p aria-live="polite" className="text-xs font-semibold text-slate-700">
+                {returnReadiness.countTotal === 0
+                  ? returnReadiness.physicalCountComplete
+                    ? tr("Empty bag physically confirmed", "تم تأكيد خلو الحقيبة بعد الفحص الفعلي")
+                    : tr("Confirm the bag is physically empty", "تأكد فعلياً أن الحقيبة فارغة")
+                  : tr(String(returnReadiness.countConfirmed) + " of " + returnReadiness.countTotal + " products physically confirmed",
+                      "تم تأكيد " + returnReadiness.countConfirmed + " من " + returnReadiness.countTotal + " منتجات بعد العدّ الفعلي")}
+              </p>
+              {returnReadiness.nextStep && !submitting ? (
+                <a href={"#" + returnReadiness.nextStep.anchor}
+                  className="flex min-h-10 items-center justify-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-center text-sm font-semibold text-amber-950 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700">
+                  {tr("Go to next unfinished check", "الانتقال للفحص الناقص التالي")}
+                </a>
+              ) : null}
               <button
                 onClick={handleCompleteRoute}
                 disabled={submitting || !inventoryFinalizationAvailable}
