@@ -2,6 +2,7 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyLiveSalesConfig } from "@/lib/xy-live-sales-sync";
 import { getXyStockActivityNotices } from "@/lib/xy-stock-activity-alerts";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
 import { knownXyNotificationEventKeys, lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
 
 type Db = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
@@ -190,16 +191,27 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     ));
   } else {
     // Only once a complete, recent XY transaction-window is verified can an
-    // absence of sales be treated as a meaningful signal.
+    // absence of sales be treated as a meaningful signal. Use the same
+    // non-deleted imported-batch provenance as cash reconciliation and XY
+    // sales health. Archived, failed and orphan raw rows are not evidence
+    // of recent successful transactions or machine activity.
     for (const machine of machines) {
       if (!stockedMachineIds.has(machine.id)) continue;
       if (machine.vms_online_status !== "1") continue;
       const [payment,delivery] = await Promise.all([
-        db.from("vms_transactions_raw").select("payment_time,delivery_time")
+        db.from("vms_transactions_raw")
+          .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+          .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+          .is("batch.deleted_at",null)
           .eq("mapped_machine_id",machine.id).eq("transaction_status","successful_sale")
+          .not("payment_time","is",null)
           .order("payment_time",{ascending:false,nullsFirst:false}).limit(1).maybeSingle(),
-        db.from("vms_transactions_raw").select("payment_time,delivery_time")
+        db.from("vms_transactions_raw")
+          .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+          .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+          .is("batch.deleted_at",null)
           .eq("mapped_machine_id",machine.id).eq("transaction_status","successful_sale")
+          .not("delivery_time","is",null)
           .order("delivery_time",{ascending:false,nullsFirst:false}).limit(1).maybeSingle(),
       ]);
       reportError(payment.error,"payment-time sales");
