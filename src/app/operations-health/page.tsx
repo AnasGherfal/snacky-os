@@ -4,6 +4,8 @@ import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from 
 import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
 import { OwnerDailyCloseoutActionCenter } from "@/components/OwnerDailyCloseoutActionCenter";
+import { OwnerCashCustodyAuditPanel } from "@/components/OwnerCashCustodyAuditPanel";
+import { readOwnerCashCustodyAudit } from "@/lib/owner-cash-custody-source";
 import { readOwnerDueRouteCloseout } from "@/lib/owner-closeout-source";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
@@ -41,7 +43,7 @@ export default async function OperationsHealthPage() {
     todayCashResult,todayCashUncountedResult,todayRoutesResult,
     workspaceResult,machinesResult,locationsResult,currentCashResult,
     routeDiscrepanciesResult,cashSourceGapsResult,
-    allCashWithoutCountResult,cashReconciliationReviewResult,dueRouteCloseoutResult,
+    allCashWithoutCountResult,cashReconciliationReviewResult,dueRouteCloseoutResult,cashCustodyAuditResult,
   ] = await Promise.all([
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
@@ -62,6 +64,7 @@ export default async function OperationsHealthPage() {
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).in("reconciliation_status",["pending","variance_review"]),
     readOwnerDueRouteCloseout(db,tripoliDate),
+    readOwnerCashCustodyAudit(db),
   ]);
   const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
   const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
@@ -91,6 +94,7 @@ export default async function OperationsHealthPage() {
         pendingCashReviews={cashReconciliationReviewCount}
         openRouteStockDifferences={null}
       />
+      <OwnerCashCustodyAuditPanel audit={cashCustodyAuditResult.data} locale={locale} />
       <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
         {tr("Data Health cleanup workspace could not be verified. Inventory exception totals and cleanup controls are unavailable; this is not an all-clear.",
           "تعذر التحقق من مساحة تنظيف صحة البيانات. إحصاءات فروقات المخزون وإجراءات التنظيف غير متاحة؛ لا يعني ذلك خلو التشغيل من المشاكل.")}
@@ -163,6 +167,7 @@ export default async function OperationsHealthPage() {
       pendingCashReviews={cashReconciliationReviewCount}
       openRouteStockDifferences={openRouteDiscrepancyCount}
     />
+    <OwnerCashCustodyAuditPanel audit={cashCustodyAuditResult.data} locale={locale} />
 
     <section aria-label={tr("Daily closeout", "الإغلاق اليومي")} className="surface-card space-y-3 border-t-4 border-t-emerald-700">
       <div className="flex flex-wrap items-center justify-between gap-2">
