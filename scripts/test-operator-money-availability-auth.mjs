@@ -38,6 +38,8 @@ test("operator-money API denies inactive sessions and gates service-role stock r
   const post=api.slice(api.indexOf("export async function POST("));
   assert.match(get,/profile\.active_status !== "active"/);
   assert.match(post,/profile\.active_status !== "active"/);
+  assert.match(get,/if \(!manager && !canReadOperatorPurchaseAvailability\(profile\)\)/);
+  assert.match(post,/if \(!manager && !canReadOperatorPurchaseAvailability\(profile\)\)/);
   const availability=post.indexOf('if (action === "availability")');
   const gate=post.indexOf("if (!canReadOperatorPurchaseAvailability(profile))",availability);
   const read=post.indexOf("await getOperatorPurchaseAvailability(productId)",availability);
