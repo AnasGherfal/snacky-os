@@ -73,6 +73,9 @@ export default async function OperationsHealthPage() {
     ? allCashWithoutCountResult.count : null;
   const cashReconciliationReviewCount = !cashReconciliationReviewResult.error && typeof cashReconciliationReviewResult.count === "number"
     ? cashReconciliationReviewResult.count : null;
+  // Independently verified discrepancy count remains useful when cleanup RPC fails.
+  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
+    ? routeDiscrepanciesResult.count : null;
 
 
 
@@ -92,12 +95,12 @@ export default async function OperationsHealthPage() {
         todayCashNotCounted={todayCashUncounted}
         allCashNotCounted={allCashWithoutCount}
         pendingCashReviews={cashReconciliationReviewCount}
-        openRouteStockDifferences={null}
+        openRouteStockDifferences={openRouteDiscrepancyCount}
       />
       <OwnerCashCustodyAuditPanel audit={cashCustodyAuditResult.data} locale={locale} />
       <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-        {tr("Data Health cleanup workspace could not be verified. Inventory exception totals and cleanup controls are unavailable; this is not an all-clear.",
-          "تعذر التحقق من مساحة تنظيف صحة البيانات. إحصاءات فروقات المخزون وإجراءات التنظيف غير متاحة؛ لا يعني ذلك خلو التشغيل من المشاكل.")}
+        {tr("Data Health cleanup workspace could not be verified. Advanced cleanup controls are unavailable; independently verified closeout counts above remain visible. This is not an all-clear.",
+          "تعذر التحقق من مساحة تنظيف صحة البيانات. أدوات التنظيف المتقدمة غير متاحة؛ تبقى أعداد الإغلاق المتحقق منها بشكل مستقل ظاهرة أعلاه، وهذا لا يعني عدم وجود مشاكل.")}
       </div>
     </div>;
   }
@@ -114,8 +117,6 @@ export default async function OperationsHealthPage() {
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
   const currentCashCount = !currentCashResult.error && typeof currentCashResult.count === "number"
     ? currentCashResult.count : null;
-  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
-    ? routeDiscrepanciesResult.count : null;
   const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
     ? cashSourceGapsResult.count : null;
 
