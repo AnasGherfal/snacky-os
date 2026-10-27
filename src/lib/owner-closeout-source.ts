@@ -20,10 +20,13 @@ export async function readOwnerDueRouteCloseout(
   todayTripoli: string,
 ): Promise<{ data: DueRouteCloseout | null; error: string | null }> {
   try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(todayTripoli)) {
+      throw new Error("Tripoli business date must be YYYY-MM-DD.");
+    }
     const routes = await loadAllExactOwnerRows<DueRouteRow>(async (from,to) => {
       const result = await db.from("routes")
         .select("id,route_date,status,operator_id", {count:"exact"})
-        .lte("route_date",todayTripoli)
+        .or(`route_date.lte.${todayTripoli},route_date.is.null`)
         .order("route_date", {ascending:true})
         .order("id", {ascending:true})
         .range(from,to);
