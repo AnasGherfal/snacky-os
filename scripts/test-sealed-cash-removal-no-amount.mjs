@@ -46,7 +46,8 @@ test("cash SQL stores NULL when nobody counted cash; idempotent retries compare 
 });
 
 test("later cash counter enters the real physical amount and XY reconciliation remains separate",()=>{
-  assert.match(workflow, /This sealed cash box has no declared amount/);
+  assert.match(workflow, /Physically count the cash in this sealed box before submitting/);
+  assert.doesNotMatch(workflow, /No second amount is required/);
   assert.match(workflow, /Total counted · LYD/);
   assert.match(workflow, /cash_location/);
   assert.match(cashCount, /actual amount counted from this cash box once/);
