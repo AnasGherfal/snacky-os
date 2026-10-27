@@ -46,3 +46,14 @@ test("operator-money API denies inactive sessions and gates service-role stock r
   assert.doesNotMatch(service,/\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
   assert.match(api,/Only owner\/admin can perform this action/);
 });
+
+test("operator money API responses are private and non-cacheable", () => {
+  const api=readFileSync("src/app/api/operator-money/route.ts","utf8");
+  assert.match(api,/export const dynamic = "force-dynamic"/);
+  assert.match(api,/headers\.set\("Cache-Control", "private, no-store, max-age=0"\)/);
+  assert.match(api,/headers\.set\("Vary", "Cookie"\)/);
+  assert.equal((api.match(/NextResponse\.json\(/g) ?? []).length, 1,
+    "Only the protected response helper may call NextResponse.json");
+  assert.ok((api.match(/operatorMoneyJson\(/g) ?? []).length > 30,
+    "Every financial or purchase API result uses the private response helper");
+});
