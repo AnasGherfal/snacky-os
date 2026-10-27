@@ -135,7 +135,7 @@ test('cash box details retain unverified removal declarations while Finance post
   assert.match(groupedCashSql, /removed_amount_lyd/);
   assert.match(api, /snacky_cash_collection_machine_lines_v1/);
   assert.match(ui, /Amounts recorded at removal/);
-  assert.match(ui, /machine\.removed_amount_lyd/);
+  assert.match(ui, /declaredRemoval\.centsByMachine\[index\]/);
   assert.match(ui, /summarizeDeclaredRemoval\(box\.machines\)/);
   assert.match(ui, /Known subtotal · incomplete/);
   assert.match(ui, /Actual cash physically counted · LYD/);
