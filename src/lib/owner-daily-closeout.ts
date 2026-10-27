@@ -12,12 +12,14 @@ export type DueRouteStopRow = {
   status: string | null;
 };
 export type DueRouteAction = "return_bag_count" | "finish_machine_stops" | "review_route";
+export type WorkflowReviewReason = "undated" | "no_stops" | "no_operator" | "not_active" | null;
 export type DueRouteReview = {
   routeId: string;
   routeDate: string;
   routeStatus: string;
   operatorAssigned: boolean;
   action: DueRouteAction;
+  workflowReviewReason: WorkflowReviewReason;
   totalStops: number;
   completedOrSkippedStops: number;
   unfinishedStops: number;
@@ -26,6 +28,7 @@ export type DueRouteCloseout = {
   verified: true;
   asOfDate: string;
   totalDueOpenRoutes: number;
+  undatedOpenRoutes: number;
   routesNeedingBagCountReview: number;
   routesWithUnfinishedStops: number;
   routesNeedingWorkflowReview: number;
@@ -54,6 +57,11 @@ export function buildDueRouteCloseout({
   if (!/^\d{4}-\d{2}-\d{2}$/.test(todayTripoli)) {
     throw new Error("Missing valid Tripoli business date.");
   }
+  // Reject a future or malformed route date even if a caller supplies bad rows.
+  if (routes.some(route => route.route_date !== null
+    && (!/^\d{4}-\d{2}-\d{2}$/.test(route.route_date) || route.route_date > todayTripoli))) {
+    throw new Error("Owner closeout includes an invalid or future-dated route.");
+  }
   const routeIds = new Set(routes.map(route => route.id));
   const grouped = new Map<string, DueRouteStopRow[]>();
   for (const stop of stops) {
@@ -70,9 +78,18 @@ export function buildDueRouteCloseout({
       const totalStops = relatedStops.length;
       const completedOrSkippedStops = relatedStops.filter(stop => isRouteStopDoneStatus(stop.status)).length;
       const unfinishedStops = totalStops - completedOrSkippedStops;
-      // An assigned/unstarted or unknown-status route must not be described
-      // as ready to visit machines. Its pickup/start workflow needs review.
-      const action: DueRouteAction = totalStops === 0 || !route.operator_id || !isActiveRouteStatus(route.status)
+      // A route without a date must not vanish from management's action queue.
+      // State the cause instead of implying the bag or stops are verified.
+      const workflowReviewReason: WorkflowReviewReason = !route.route_date
+        ? "undated"
+        : totalStops === 0
+          ? "no_stops"
+          : !route.operator_id
+            ? "no_operator"
+            : !isActiveRouteStatus(route.status)
+              ? "not_active"
+              : null;
+      const action: DueRouteAction = workflowReviewReason !== null
         ? "review_route"
         : unfinishedStops > 0
           ? "finish_machine_stops"
@@ -83,6 +100,7 @@ export function buildDueRouteCloseout({
         routeStatus: route.status ?? "unknown",
         operatorAssigned: Boolean(route.operator_id),
         action,
+        workflowReviewReason,
         totalStops,
         completedOrSkippedStops,
         unfinishedStops,
@@ -100,6 +118,7 @@ export function buildDueRouteCloseout({
     verified: true,
     asOfDate: todayTripoli,
     totalDueOpenRoutes: sorted.length,
+    undatedOpenRoutes: sorted.filter(item => item.workflowReviewReason === "undated").length,
     routesNeedingBagCountReview: sorted.filter(item => item.action === "return_bag_count").length,
     routesWithUnfinishedStops: sorted.filter(item => item.action === "finish_machine_stops").length,
     routesNeedingWorkflowReview: sorted.filter(item => item.action === "review_route").length,
