@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { DueRouteCloseout, DueRouteAction } from "@/lib/owner-daily-closeout";
+import type { DueRouteCloseout, DueRouteAction, WorkflowReviewReason } from "@/lib/owner-daily-closeout";
 
 const actionLabels: Record<DueRouteAction, {en:string;ar:string}> = {
   return_bag_count: {
@@ -14,6 +14,13 @@ const actionLabels: Record<DueRouteAction, {en:string;ar:string}> = {
     en:"Route setup or workflow needs review",
     ar:"إعداد الجولة أو حالتها بحاجة للمراجعة",
   },
+};
+
+const workflowReasons: Record<Exclude<WorkflowReviewReason, null>, {en:string;ar:string}> = {
+  undated:{en:"Schedule missing — review the route date",ar:"موعد الجولة غير محدد — راجع التاريخ"},
+  no_stops:{en:"No machine stops configured",ar:"لم تتم إضافة مواقع الأجهزة"},
+  no_operator:{en:"Assign an operator before pickup",ar:"عيّن مشغلاً قبل استلام البضاعة"},
+  not_active:{en:"Check the route pickup/start state",ar:"راجع حالة استلام البضاعة وبداية الجولة"},
 };
 
 export function OwnerDailyCloseoutActionCenter({
@@ -37,9 +44,10 @@ export function OwnerDailyCloseoutActionCenter({
   const tr=(en:string,arabic:string)=>ar?arabic:en;
   const counts=[
     {
-      title:tr("Due routes still open", "جولات مستحقة ولم تُغلق"),
+      title:tr("Due or unscheduled open routes", "جولات مستحقة أو غير مجدولة"),
       count:routes?.totalDueOpenRoutes ?? null,
-      detail:tr("Scheduled today or earlier; future routes excluded.", "المجدولة اليوم أو قبله؛ لا تشمل الجولات القادمة."),
+      detail:tr("Due today/earlier or missing a schedule. Undated: ", "المستحقة حتى اليوم أو بلا موعد. غير المجدولة: ")
+        +(routes===null?tr("Unverified","غير مؤكد"):String(routes.undatedOpenRoutes)),
       href:"/routes",
     },
     {
@@ -52,6 +60,12 @@ export function OwnerDailyCloseoutActionCenter({
       title:tr("Machine stops unfinished", "جولات بها مواقع غير منتهية"),
       count:routes?.routesWithUnfinishedStops ?? null,
       detail:tr("Finish or explicitly skip the remaining stops.", "أكمل المواقع المتبقية أو تخطّها بشكل صريح."),
+      href:"/routes",
+    },
+    {
+      title:tr("Routes needing setup review", "جولات تحتاج مراجعة الإعداد"),
+      count:routes?.routesNeedingWorkflowReview ?? null,
+      detail:tr("Schedule, operator, machine stops, or pickup/start state missing.", "موعد الجولة أو المشغّل أو مواقع الأجهزة أو تأكيد الاستلام والبداية."),
       href:"/routes",
     },
     {
@@ -121,8 +135,8 @@ export function OwnerDailyCloseoutActionCenter({
       <div className="border-t border-slate-200 px-4 py-4 sm:px-5">
         <h3 className="text-base font-bold text-slate-950">{tr("Routes to follow up", "الجولات المطلوب متابعتها")}</h3>
         <p className="mt-1 text-xs leading-5 text-slate-600">
-          {tr("Due-dated, non-terminal routes only. A finished stop is not proof of a returned bag or reconciled cash.",
-            "جولات مستحقة لم تُغلق فقط. إنهاء الموقع لا يثبت إرجاع الحقيبة أو تسوية النقد.")}
+          {tr("Due or unscheduled non-terminal routes. A finished stop is not proof of returned stock or reconciled cash.",
+            "جولات مستحقة أو بلا موعد لم تُغلق. إنهاء الموقع لا يثبت إرجاع المخزون أو تسوية النقد.")}
         </p>
         {routes===null ? (
           <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
@@ -147,6 +161,11 @@ export function OwnerDailyCloseoutActionCenter({
                     <p className="mt-1 text-xs font-semibold text-amber-900">
                       {ar?actionLabels[route.action].ar:actionLabels[route.action].en}
                     </p>
+                    {route.action==="review_route" && route.workflowReviewReason ? (
+                      <p className="mt-1 text-xs text-amber-900">
+                        {ar?workflowReasons[route.workflowReviewReason].ar:workflowReasons[route.workflowReviewReason].en}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs text-slate-600">
                       {tr("Stops completed/skipped", "المواقع المكتملة أو المتخطاة")}:{" "}
                       <span dir="ltr" className="inline-block tabular-nums">{route.completedOrSkippedStops}/{route.totalStops}</span>
