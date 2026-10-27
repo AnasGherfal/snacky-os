@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
 import {
-  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey,
+  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey, knownXyNotificationEventKeys,
 } from "../src/lib/xy-operational-alert-rules.ts";
 
 const now = Date.parse("2026-10-09T10:00:00Z");
@@ -66,4 +66,50 @@ test("protected XY scheduled worker persists owner in-app alerts, not web push",
   assert.match(worker,/error\?\.code === "23505"/);
   assert.doesNotMatch(worker,/sendPush|sendEmail|webpush/);
   assert.match(bell,/Operations alerts and work updates/);
+});
+
+
+test("existing XY notification preflight uses bounded exact-key batches and skips only verified persisted keys", async () => {
+  const keys = Array.from({ length: 45 }, (_, i) => `notice-${i}`);
+  const known = new Set(["notice-0","notice-21","notice-44"]);
+  const requests = [];
+  const result = await knownXyNotificationEventKeys([...keys, "notice-0"], async (chunk) => {
+    requests.push(chunk);
+    return { data: chunk.filter(key => known.has(key)).map(event_key => ({ event_key })), error: null };
+  });
+  assert.equal(result.verified, true);
+  assert.deepEqual([...result.keys].sort(), [...known].sort());
+  assert.deepEqual(requests.map(page => page.length), [20,20,5]);
+  assert.equal(requests.flat().length,45,"Repeated keys must not trigger redundant reads");
+});
+
+test("unreadable or inconsistent notification preflight always falls back to index-protected insertion", async () => {
+  const scenarios = [
+    async () => ({ data: null, error: null }),
+    async () => ({ data: [], error: { message:"temporarily unavailable" } }),
+    async () => { throw new Error("network interrupted"); },
+    async () => ({ data: [{ event_key:"unrelated-key" }], error: null }),
+    async () => ({ data: [{ event_key:null }], error: null }),
+  ];
+  for (const read of scenarios) {
+    const result = await knownXyNotificationEventKeys(["existing-key"], read);
+    assert.equal(result.verified, false);
+    assert.equal(result.keys.size, 0, "A failed lookup cannot hide an undelivered alert");
+  }
+  const empty = await knownXyNotificationEventKeys([], async () => {
+    throw new Error("Empty inputs must not query the database");
+  });
+  assert.equal(empty.verified,true);
+  assert.equal(empty.keys.size,0);
+});
+
+test("XY worker checks existing event keys before insert but retains atomic 23505 fallback", () => {
+  const worker = fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const lookup = worker.indexOf("await knownXyNotificationEventKeys(");
+  const insert = worker.indexOf('from("notifications").insert(');
+  assert.ok(lookup >= 0 && insert > lookup);
+  assert.match(worker,/if \(existingKeys\.has\(eventKey\)\) \{ existing\+\+; continue; \}/);
+  assert.match(worker,/if \(error\?\.code === "23505"\) \{ existingKeys\.add\(eventKey\); existing\+\+; continue; \}/);
+  assert.match(worker,/if \(!lookup\.verified\)/);
+  assert.doesNotMatch(worker,/\.upsert\(/,"Partial event_key unique index is not a safe PostgREST upsert target");
 });
