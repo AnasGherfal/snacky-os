@@ -49,3 +49,41 @@ export function noSalesFor24Hours(lastSaleAt: number | null, machineCreatedAt: n
 export function xyOperationalAlertEventKey(kind: string, scope: string, episode: string) {
   return ["xy_operation_v1", kind, scope, episode].map((part) => encodeURIComponent(part)).join(":").slice(0, 240);
 }
+
+
+/**
+ * Skip in-app XY notices that are already persisted. This is a best-effort,
+ * read-only optimization: errors never count as existing notices, so callers
+ * must still rely on the database's unique event-key index during insert.
+ *
+ * Chunking bounds PostgREST URL length and avoids list-read row caps. Keys
+ * are unique within this lookup, and no notification rows are modified.
+ */
+export async function knownXyNotificationEventKeys(
+  candidateKeys: readonly string[],
+  readChunk: (keys: string[]) => Promise<{
+    data: Array<{ event_key: string | null }> | null;
+    error: unknown | null;
+  }>,
+): Promise<{ keys: Set<string>; verified: boolean }> {
+  const uniqueKeys = [...new Set(candidateKeys)];
+  const known = new Set<string>();
+  const failed = () => ({ keys: new Set<string>(), verified: false });
+  for (let i = 0; i < uniqueKeys.length; i += 20) {
+    const chunk = uniqueKeys.slice(i, i + 20);
+    try {
+      const { data, error } = await readChunk(chunk);
+      if (error || !Array.isArray(data) || data.length > chunk.length) return failed();
+      const requested = new Set(chunk);
+      for (const row of data) {
+        if (!row || typeof row.event_key !== "string" || !requested.has(row.event_key)) {
+          return failed();
+        }
+        known.add(row.event_key);
+      }
+    } catch {
+      return failed();
+    }
+  }
+  return { keys: known, verified: true };
+}
