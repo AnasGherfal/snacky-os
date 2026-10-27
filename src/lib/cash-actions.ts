@@ -399,30 +399,15 @@ export async function confirmCashCollectionCount(formData: FormData) {
   const path = `/cash-collections/${id}`;
   const { profile, supabase } = await requireCapability(path, canCountCash);
   const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
-  const useRecordedMachineTotal = clean(formData.get("use_recorded_machine_total")) === "yes";
-  let totalAmount: number | null = null;
-
-  if (useRecordedMachineTotal) {
-    const { data: machineAmounts, error: machineAmountError } = await supabase
-      .from("cash_collection_machines")
-      .select("machine_id, removed_amount_lyd")
-      .eq("cash_collection_id", id);
-
-    if (machineAmountError) {
-      console.error("[cash] Failed to load recorded machine amounts", machineAmountError);
-      fail(path, "Could not verify the machine cash amounts.");
-    }
-
-    const rows = machineAmounts ?? [];
-    if (!rows.length || rows.some((row) => row.removed_amount_lyd === null || row.removed_amount_lyd === undefined || !Number.isFinite(Number(row.removed_amount_lyd)) || Number(row.removed_amount_lyd) < 0)) {
-      fail(path, "One or more machine amounts are missing. Review this cash collection before confirming it.");
-    }
-
-    totalAmount = Math.round(rows.reduce((sum, row) => sum + Number(row.removed_amount_lyd), 0) * 100) / 100;
-  } else {
-    const totalRaw = clean(formData.get("total_amount_lyd"));
-    totalAmount = optionalAmount(formData.get("total_amount_lyd"));
-    if (!totalRaw || totalAmount === null || totalAmount < 0) fail(path, "Enter a valid total cash amount.");
+  // Reject older/fabricated auto-count requests even if they bypass the form.
+  // A removal declaration is NOT proof of money physically counted.
+  if (formData.has("use_recorded_machine_total")) {
+    fail(path, "Removal declarations are not physical counts. Count the actual cash in the bag and enter its total.");
+  }
+  const totalRaw = clean(formData.get("total_amount_lyd"));
+  const totalAmount = optionalAmount(formData.get("total_amount_lyd"));
+  if (!totalRaw || totalAmount === null || totalAmount < 0) {
+    fail(path, "Enter a valid independently counted cash total.");
   }
 
   const { data: automaticPeriod, error } = await supabase.rpc("confirm_cash_count_auto_period_v1", {
@@ -441,8 +426,8 @@ export async function confirmCashCollectionCount(formData: FormData) {
     entityType: "cash_collection",
     entityId: id,
     afterData: { custody_status: "counted", total_amount_lyd: totalAmount, automatic_period: automaticPeriod ?? null },
-    metadata: { related_finance: true, period_source: "previous_full_cash_removal", amount_source: useRecordedMachineTotal ? "recorded_machine_amounts" : "manual_legacy_total" },
-    summary: useRecordedMachineTotal ? "Confirmed stored cash from the per-machine amounts recorded at removal" : "Saved one combined stored-cash total; VMS reconciliation remains available for later",
+    metadata: { related_finance: true, period_source: "previous_full_cash_removal", amount_source: "independent_physical_count" },
+    summary: "Saved independently counted cash total; removal declarations and XY expectation remain separate comparisons",
   });
   revalidateCashPaths(id);
   redirect(`${path}?success=${encodeURIComponent("Cash total saved and added to Snacky LYD. You can compare it with VMS later.")}`);
