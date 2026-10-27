@@ -122,6 +122,9 @@ export async function GET(request: Request) {
   }
 
   const manager = isOwnerAdminRole(profile);
+  if (!manager && !canReadOperatorPurchaseAvailability(profile)) {
+    return operatorMoneyJson({ success: false, error: "Operator money is available only to active linked Snacky staff." }, { status: 403 });
+  }
   const url = new URL(request.url);
   const requestedPersonId = clean(url.searchParams.get("personId"));
   const requestedPeriodId = clean(url.searchParams.get("periodId"));
@@ -434,6 +437,9 @@ export async function POST(request: Request) {
 
   const action = clean(body.action);
   const manager = isOwnerAdminRole(profile);
+  if (!manager && !canReadOperatorPurchaseAvailability(profile)) {
+    return operatorMoneyJson({ success: false, error: "Operator money actions require active linked Snacky staff." }, { status: 403 });
+  }
   const requestedPersonId = clean(body.personId);
   const ownPersonId = clean(profile.team_member_id);
   const personId = manager ? requestedPersonId || ownPersonId : ownPersonId;
