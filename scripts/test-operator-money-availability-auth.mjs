@@ -59,3 +59,15 @@ test("operator money API responses are private and non-cacheable", () => {
   assert.ok((api.match(/operatorMoneyJson\(/g) ?? []).length > 30,
     "Every financial or purchase API result uses the private response helper");
 });
+
+test("purchase overview enforces active employee authorization before privileged movement proof", () => {
+  const overview=readFileSync("src/app/api/operator-money/overview/route.ts","utf8");
+  const guard=overview.indexOf('if (profile.active_status !== "active")');
+  const staff=overview.indexOf('if (!isOwnerAdminRole(profile) && !canReadOperatorPurchaseAvailability(profile))');
+  const read=overview.indexOf('getSupabaseAdminClient()',staff);
+  assert.ok(guard>=0 && staff>guard && read>staff,
+    "Inactive and unauthorized users must be denied before the admin inventory proof client is used");
+  assert.match(overview,/Cache-Control": "private, no-store, max-age=0"/);
+  assert.match(overview,/resolvePurchasePerson\(manager/);
+  assert.match(overview,/verifyPurchaseStock\(/);
+});
