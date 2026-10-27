@@ -6,6 +6,7 @@ import {
   emptyTotals, moneyValue, readAllPurchaseRows, resolvePurchasePerson,
   summarizePurchases, tripoliMonth, verifyPurchaseStock,
 } from "../src/lib/operator-purchase-overview.ts";
+import { canReadOperatorPurchaseAvailability } from "../src/lib/operator-money-availability-auth.ts";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -125,6 +126,7 @@ function client(kind) {
 }
 globalThis.__purchaseOverviewTest = {
   getCurrentProfile: async () => env.profile,
+  canReadOperatorPurchaseAvailability,
   getAuthAccessToken: async () => "test-token",
   isOwnerAdminRole: (profile) => profile.role === "owner" || profile.role === "admin",
   getSupabaseServerClient: () => client("user"),
@@ -136,11 +138,13 @@ const source = readFileSync(routeUrl, "utf8");
 let code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 code = code.replace(/import \{([^}]+)\} from "(?:next\/server|@\/lib\/auth|@\/lib\/authz|@\/lib\/supabase-server)";/g,
   (_, names) => `const {${names}} = globalThis.__purchaseOverviewTest;`);
+code = code.replace(/import \{([^}]+)\} from "@\/lib\/operator-money-availability-auth";/g,
+  (_, names) => `const {${names}} = globalThis.__purchaseOverviewTest;`);
 code = code.replace('"@/lib/operator-purchase-overview"', JSON.stringify(new URL("../src/lib/operator-purchase-overview.ts", import.meta.url).href));
 code = code.replace('"@/lib/operator-debt-adjustment-overview"', JSON.stringify(new URL("../src/lib/operator-debt-adjustment-overview.ts", import.meta.url).href));
 const { GET } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 function reset(role = "operator") {
-  env = { profile: { role, team_member_id: A }, calls: [], tables: {
+  env = { profile: { role, team_member_id: A, active_status: "active" }, calls: [], tables: {
     team_members: team, operator_personal_purchase_status: [purchase(), purchase({ id: "purchase-b", person_id: B, inventory_movement_id: "movement-b" })],
     inventory_movements: [movement({ unit_cost_lyd: 999, notes: "must not leak" }), movement({ id: "movement-b", to_entity_id: B, source_id: "purchase-b" })],
     storage_locations: [{ id: S, name: "Main storage" }],
@@ -153,6 +157,15 @@ test("route: unauthenticated and forged operator requests never reach database r
   assert.equal((await GET(request())).status, 401); assert.equal(env.calls.length, 0);
   reset(); assert.equal((await GET(request(`personId=${B}`))).status, 403); assert.equal(env.calls.length, 0);
 });
+test("route: an inactive or unrelated account is denied before privileged proof reads", async () => {
+  reset(); env.profile.active_status = "inactive";
+  assert.equal((await GET(request())).status, 403); assert.equal(env.calls.length, 0);
+  reset("viewer");
+  assert.equal((await GET(request())).status, 403); assert.equal(env.calls.length, 0);
+  reset(); env.profile.team_member_id = null;
+  assert.equal((await GET(request())).status, 403); assert.equal(env.calls.length, 0);
+});
+
 test("route: an operator receives only own totals, history and sanitized movement proof", async () => {
   reset(); const result = await GET(request(`personId=${A}`));
   assert.equal(result.status, 200); assert.deepEqual(result.body.people, []);
