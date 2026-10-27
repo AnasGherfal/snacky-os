@@ -75,7 +75,7 @@ export function buildRealMachineTrainingFixture(snapshot: QaReadOnlySnapshot): {
     }
     return {
       id: machine.id, name: machine.name, location: "Tripoli", machineCode: machine.machineCode,
-      status: "assigned", xyPending: false, pendingReason: "", cleaningDone: false,
+      status: "assigned" as const, xyPending: false, pendingReason: "", cleaningDone: false,
       photoReady: false, note: "", verifiedAt: null, issues: [], lanes,
     };
   });
