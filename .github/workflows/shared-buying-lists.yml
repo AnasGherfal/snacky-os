@@ -61,7 +61,9 @@ jobs:
           path: diagnostics/*.log
           retention-days: 7
   browser:
-    runs-on: ubuntu-latest
+    # Playwright 1.55 browser binaries support Ubuntu 24.04, not the newer
+    # ubuntu-26.04 runner currently selected by ubuntu-latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     needs: contracts
     steps:
