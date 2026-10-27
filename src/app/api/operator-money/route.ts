@@ -4,6 +4,7 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getOperatorPurchaseAvailability } from "./availability";
+import { canReadOperatorPurchaseAvailability } from "@/lib/operator-money-availability-auth";
 
 type ErrorLike = {
   code?: unknown;
@@ -104,6 +105,9 @@ export async function GET(request: Request) {
   const { profile, supabase } = await context();
   if (!profile || !supabase) {
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
+  }
+  if (profile.active_status !== "active") {
+    return NextResponse.json({ success: false, error: "Inactive team accounts cannot access operator money." }, { status: 403 });
   }
 
   const manager = isOwnerAdminRole(profile);
@@ -406,6 +410,9 @@ export async function POST(request: Request) {
   if (!profile || !supabase) {
     return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
   }
+  if (profile.active_status !== "active") {
+    return NextResponse.json({ success: false, error: "Inactive team accounts cannot submit money actions." }, { status: 403 });
+  }
 
   let body: Record<string, unknown>;
   try {
@@ -422,6 +429,11 @@ export async function POST(request: Request) {
   const periodId = clean(body.periodId);
 
   if (action === "availability") {
+    // The reader below intentionally uses the service role for available
+    // storage quantities. Authorize the requester BEFORE that privileged read.
+    if (!canReadOperatorPurchaseAvailability(profile)) {
+      return NextResponse.json({ success: false, error: "Stock availability is limited to active Snacky team members." }, { status: 403 });
+    }
     const productId = clean(body.productId);
     if (!productId) {
       return NextResponse.json({ success: false, error: "Product is required." }, { status: 400 });
