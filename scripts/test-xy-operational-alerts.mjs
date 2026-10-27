@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
+import { isEligibleCashSourceBatch } from "../src/lib/vms-cash-source.ts";
 import {
   verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey, knownXyNotificationEventKeys,
 } from "../src/lib/xy-operational-alert-rules.ts";
@@ -112,4 +113,31 @@ test("XY worker checks existing event keys before insert but retains atomic 2350
   assert.match(worker,/if \(error\?\.code === "23505"\) \{ existingKeys\.add\(eventKey\); existing\+\+; continue; \}/);
   assert.match(worker,/if \(!lookup\.verified\)/);
   assert.doesNotMatch(worker,/\.upsert\(/,"Partial event_key unique index is not a safe PostgREST upsert target");
+});
+
+test("no-sales alerts consult only active cash-eligible transaction import batches", () => {
+  const worker = fs.readFileSync("src/lib/xy-operational-alerts.ts", "utf8");
+  const segment = worker.slice(worker.indexOf("const [payment,delivery]"), worker.indexOf("const latestAt ="));
+  assert.match(segment, /vms_import_batches!inner\(id\)/);
+  assert.equal((segment.match(/\.in\("batch\.status",\[\.\.\.CASH_ELIGIBLE_VMS_BATCH_STATUSES\]\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.is\("batch\.deleted_at",null\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.eq\("transaction_status","successful_sale"\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.eq\("mapped_machine_id",machine\.id\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.not\("(payment_time|delivery_time)","is",null\)/g) ?? []).length, 2);
+  assert.match(worker, /reportError\(payment\.error,"payment-time sales"\)/);
+  assert.match(worker, /reportError\(delivery\.error,"delivery-time sales"\)/);
+});
+
+test("deleted, failed and unknown XY transaction batches cannot suppress no-sales monitoring", () => {
+  assert.equal(isEligibleCashSourceBatch({ status: "imported", deleted_at: null }), true);
+  assert.equal(isEligibleCashSourceBatch({ status: "partially_imported", deleted_at: null }), true);
+  assert.equal(isEligibleCashSourceBatch({ status: "imported_with_warnings", deleted_at: null }), true);
+  for (const b of [
+    { status: "imported", deleted_at: "2026-07-01T00:00:00Z" },
+    { status: "failed", deleted_at: null },
+    { status: "draft", deleted_at: null },
+    { status: "deleted", deleted_at: null },
+    { status: null, deleted_at: null },
+    { status: "imported" },
+  ]) assert.equal(isEligibleCashSourceBatch(b), false);
 });
