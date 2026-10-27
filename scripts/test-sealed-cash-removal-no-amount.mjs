@@ -50,7 +50,9 @@ test("later cash counter enters the real physical amount and XY reconciliation r
   assert.doesNotMatch(workflow, /No second amount is required/);
   assert.match(workflow, /Actual cash physically counted · LYD/);
   assert.match(workflow, /cash_location/);
-  assert.match(cashCount, /actual amount counted from this cash box once/);
+  assert.match(cashCount, /Cash physically counted \\(LYD\\)/);
+  assert.match(cashCount, /Earlier removal declarations — NOT a physical count/);
+  assert.doesNotMatch(cashCount, /name="use_recorded_machine_total"/);
   assert.match(actions, /confirm_cash_count_auto_period_v1/);
   assert.match(actions, /calculate_cash_collection_expectation/);
 });
