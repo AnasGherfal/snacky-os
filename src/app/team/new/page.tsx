@@ -21,7 +21,7 @@ export default async function NewTeamMemberPage({ searchParams }: { searchParams
             {error}
           </div>
         ) : null}
-        <TeamMemberForm action={createTeamMember} submitLabel="Create member" createRequestId={randomUUID()} />
+        <TeamMemberForm action={createTeamMember} submitLabel="Create member" createRequestId={randomUUID()} createRequestOwnerId={profile.id} />
       </FormPageLayout>
     </>
   );
