@@ -162,7 +162,7 @@ export default async function EditVmsProductMappingPage({
                 </select>
               </FormField>
               <FormField label="Status">
-                <select name="status" defaultValue={mapping.status ?? mapping.match_status ?? "needs_review"} className="field-input">
+                <select name="status" defaultValue={mapping.match_status ?? mapping.status ?? "needs_review"} className="field-input">
                   {statusOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}

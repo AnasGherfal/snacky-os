@@ -117,7 +117,9 @@ function productSearchText(product: ProductOption) {
 
 function normalizeMappingRow(row: VmsProductMappingRow, productById: Map<string, ProductOption>): VmsProductMappingRow {
   const snackyProductId = row.snacky_product_id ?? row.product_id ?? null;
-  const status = row.status ?? row.match_status ?? "needs_review";
+  // XY synchronization can mark the catalogue row confirmed even while its Snacky match needs review.
+  // The mapping-specific status is authoritative for purchasing and operator attention.
+  const status = row.match_status ?? row.status ?? "needs_review";
   return {
     ...row,
     vms_product_code: row.vms_product_code ?? row.vms_product_id ?? null,
@@ -214,12 +216,12 @@ export default async function VmsProductMappingPage({
   const countByStatus = (statusValue: string) => supabase
     .from("vms_product_mappings")
     .select("id", { count: "exact", head: true })
-    .eq("status", statusValue);
+    .eq("match_status", statusValue);
   let query = supabase
     .from("vms_product_mappings")
     .select(mappingSelect, { count: "exact" })
     .order("updated_at", { ascending: false });
-  if (activeStatus !== "all") query = query.eq("status", activeStatus);
+  if (activeStatus !== "all") query = query.eq("match_status", activeStatus);
   if (search) {
     const pattern = supabaseLikePattern(search.replaceAll(",", " "));
     const clauses = [`vms_product_code.ilike.${pattern}`, `vms_product_id.ilike.${pattern}`, `vms_product_name.ilike.${pattern}`, `snacky_product_name.ilike.${pattern}`];
