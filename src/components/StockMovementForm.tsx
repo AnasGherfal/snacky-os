@@ -96,6 +96,8 @@ export function StockMovementForm({
     try { raw = window.sessionStorage.getItem(quickAddStorageKey); }
     catch { return; }
     if (!raw) return;
+    let blocked = false;
+    let message = "A product save from this tab was interrupted. Check Products, then retry the SAME saved request.";
     try {
       const saved = JSON.parse(raw) as { id?: unknown; fields?: unknown };
       const id = String(saved?.id ?? "");
@@ -114,14 +116,20 @@ export function StockMovementForm({
       if (!String(immutable.get("name") ?? "").trim()) throw new Error("Missing saved product name");
       immutable.set("client_product_id", id);
       quickAddFrozenRequestRef.current = immutable;
-      setQuickAddError("A product save from this tab was interrupted. Check Products, then retry the SAME saved request.");
     } catch {
       // Do not silently generate a different UUID when we cannot read the
       // earlier request. Require manual review before starting a new one.
-      setQuickAddRecoveryBlocked(true);
-      setQuickAddError("Saved product request could not be recovered. Check Products before starting another.");
+      blocked = true;
+      message = "Saved product request could not be recovered. Check Products before starting another.";
     }
-    setShowQuickAdd(true);
+    // Defer UI state updates until after this effect so product form hydration
+    // and initial draft restoration do not race the recovery banner.
+    const timer = window.setTimeout(() => {
+      setQuickAddRecoveryBlocked(blocked);
+      setQuickAddError(message);
+      setShowQuickAdd(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [canQuickAddProduct, quickAddStorageKey]);
   const movementDraft = useMemo<StockMovementDraft>(() => ({
     clientSubmissionId,
