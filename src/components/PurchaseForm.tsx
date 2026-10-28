@@ -623,6 +623,7 @@ export function PurchaseForm({
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const submittingRef = useRef(false);
+  const supplierSaveInFlightRef = useRef(false);
   const submitMessageRef = useRef<HTMLDivElement | null>(null);
   const lastAppliedScanKey = useRef(0);
   const restockPrefillAppliedRef = useRef(false);
@@ -1087,12 +1088,14 @@ export function PurchaseForm({
   );
 
   const handleQuickAddSupplier = async () => {
+    if (supplierSaveInFlightRef.current) return;
     const name = quickSupplierName.trim().replace(/\s+/g, " ");
     if (!name) {
       setQuickSupplierError("Enter a supplier name.");
       return;
     }
 
+    supplierSaveInFlightRef.current = true;
     setQuickSupplierPending(true);
     setQuickSupplierError("");
     try {
@@ -1127,6 +1130,7 @@ export function PurchaseForm({
     } catch (error) {
       setQuickSupplierError(error instanceof Error ? error.message : "Could not add supplier.");
     } finally {
+      supplierSaveInFlightRef.current = false;
       setQuickSupplierPending(false);
     }
   };
