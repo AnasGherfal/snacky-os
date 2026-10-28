@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useMemo, useState, useTransition } from "react";
+import { useCallback, useDeferredValue, useMemo, useRef, useState, useTransition } from "react";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
@@ -72,6 +72,12 @@ export function StockMovementForm({
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [missingProduct, setMissingProduct] = useState("");
   const [isPending, startTransition] = useTransition();
+  const quickAddInFlightRef = useRef(false);
+  const quickAddFrozenRequestRef = useRef<FormData | null>(null);
+  const [quickAddError, setQuickAddError] = useState("");
+  const adjustmentInFlightRef = useRef(false);
+  const adjustmentCompletedRef = useRef(false);
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
   const deferredQuery = useDeferredValue(query);
   const draftKey = useDraftKey("inventory-movement", ["new"]);
   const movementDraft = useMemo<StockMovementDraft>(() => ({
@@ -183,29 +189,71 @@ export function StockMovementForm({
   };
 
   const quickAddAction = (formData: FormData) => {
+    // Disabling after React paints is too late for rapid double-taps. Keep
+    // both a synchronous lock and the exact first request across uncertain
+    // network outcomes. The server verifies its UUID before returning a replay.
+    if (quickAddInFlightRef.current) return;
+    if (!quickAddFrozenRequestRef.current) {
+      const clientProductId = globalThis.crypto?.randomUUID?.();
+      if (!clientProductId) {
+        setQuickAddError("Could not create a safe request ID. Reload this page before adding a product.");
+        return;
+      }
+      formData.set("client_product_id", clientProductId);
+      quickAddFrozenRequestRef.current = formData;
+    }
+    quickAddInFlightRef.current = true;
+    setQuickAddError("");
     startTransition(async () => {
-      await createQuickProduct(formData);
-      setShowQuickAdd(false);
+      try {
+        await createQuickProduct(quickAddFrozenRequestRef.current!);
+        quickAddFrozenRequestRef.current = null;
+        setShowQuickAdd(false);
+      } catch (error) {
+        console.error("[stock] Could not confirm quick product creation", error);
+        setQuickAddError("Save not confirmed. Check Products, then retry this SAME request. A new product will not be created on an identical retry.");
+      } finally {
+        quickAddInFlightRef.current = false;
+      }
     });
   };
 
   const submitMovementAction = async (formData: FormData) => {
+    if (adjustmentInFlightRef.current || adjustmentCompletedRef.current) return;
+    adjustmentInFlightRef.current = true;
+    setAdjustmentSaving(true);
     const nextDraft = movementDraft;
     localDraft.saveNow(nextDraft);
     try {
       await createStorageAdjustment(formData);
+      adjustmentCompletedRef.current = true;
       localDraft.clearDraft();
     } catch (error) {
       localDraft.saveNow(nextDraft);
       const target = redirectTarget(error);
-      if (target && !target.includes("error=")) localDraft.clearDraft();
+      if (target && !target.includes("error=")) {
+        adjustmentCompletedRef.current = true;
+        localDraft.clearDraft();
+      }
       throw error;
+    } finally {
+      adjustmentInFlightRef.current = false;
+      setAdjustmentSaving(false);
     }
   };
 
   return (
     <>
-      <form action={submitMovementAction} onSubmitCapture={() => localDraft.saveNow(movementDraft)} className="space-y-6">
+      <form action={submitMovementAction} onSubmitCapture={(event) => {
+        if (adjustmentInFlightRef.current || adjustmentCompletedRef.current) {
+          event.preventDefault();
+          return;
+        }
+        localDraft.saveNow(movementDraft);
+      }} className="space-y-6" aria-busy={adjustmentSaving}>
+      {adjustmentSaving ? <p role="status" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm font-medium text-sky-950">
+        Saving storage adjustment… / جارٍ حفظ تعديل المخزون… Do not submit again.
+      </p> : null}
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
       <input type="hidden" name="product_id" value={selectedProductId} />
       <input type="hidden" name="quantity" value={simpleQuantity} />
@@ -322,7 +370,9 @@ export function StockMovementForm({
       </FormSection>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button className="btn-primary" disabled={!selectedProductId || !simpleStorageLocationId || (adjustmentType !== "set_exact" && simpleQuantity < 1)}>Save adjustment</button>
+        <button className="btn-primary disabled:opacity-50" disabled={adjustmentSaving || adjustmentCompletedRef.current || !selectedProductId || !simpleStorageLocationId || (adjustmentType !== "set_exact" && simpleQuantity < 1)}>
+          {adjustmentSaving ? "Saving adjustment…" : adjustmentCompletedRef.current ? "Saved" : "Save adjustment"}
+        </button>
         <SecondaryButton href="/inventory">Cancel</SecondaryButton>
       </div>
       </form>
@@ -342,7 +392,8 @@ export function StockMovementForm({
                 <FormField label="Category"><select name="category" className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>
                 <FormField label="Brand"><input name="brand" className="field-input" /></FormField>
                 <FormField label="Selling price"><input name="selling_price" type="number" step="0.01" className="field-input" /></FormField>
-                <button className="btn-primary" disabled={isPending}>{isPending ? "Adding..." : "Add product"}</button>
+                {quickAddError ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{quickAddError}</p> : null}
+                <button className="btn-primary" disabled={isPending || quickAddInFlightRef.current}>{isPending ? "Adding…" : quickAddFrozenRequestRef.current ? "Retry saved product request" : "Add product"}</button>
               </form>
             </div>
           </div>
