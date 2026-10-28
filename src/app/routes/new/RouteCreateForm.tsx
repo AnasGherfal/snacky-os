@@ -337,6 +337,7 @@ export function RouteCreateForm({
   const [saving, setSaving] = useState(false);
   const [uncertainRouteSave, setUncertainRouteSave] = useState(false);
   const routeSaveInFlightRef = useRef(false);
+  const routeSaveCompletedRef = useRef(false);
   const routeCreateRequestIdRef = useRef("");
   const frozenRouteRequestRef = useRef<Record<string, unknown> | null>(null);
   const [xyRefreshStatus, setXyRefreshStatus] = useState<"refreshing" | "fresh" | "warning">("refreshing");
@@ -1289,7 +1290,7 @@ export function RouteCreateForm({
 
     // React state updates are asynchronous. This synchronous lock prevents
     // rapid taps/Enter from dispatching a second POST before "saving" paints.
-    if (routeSaveInFlightRef.current) return;
+    if (routeSaveInFlightRef.current || routeSaveCompletedRef.current) return;
     setStockErrors([]);
     if (!frozenRouteRequestRef.current) {
       const validationError = validate();
@@ -1371,6 +1372,7 @@ export function RouteCreateForm({
           ? "Route stops planned. Add exact product quantities at storage before starting."
           : "Route created successfully.",
       );
+      routeSaveCompletedRef.current = true;
       localDraft.clearDraft();
       frozenRouteRequestRef.current = null;
       routeCreateRequestIdRef.current = "";
