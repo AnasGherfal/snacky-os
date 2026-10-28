@@ -61,3 +61,21 @@ test("stock adjustment and product Add forms use synchronous locks and frozen re
   assert.match(ui,/Saving storage adjustment/);
   assert.match(ui,/client_submission_id/);
 });
+
+test("a lost Quick Add response survives browser reload for the same signed-in owner",()=>{
+  const page=readFileSync("src/app/inventory/movements/new/page.tsx","utf8");
+  const ui=readFileSync("src/components/StockMovementForm.tsx","utf8");
+  assert.match(page,/userId=\{profile\.id\}/);
+  assert.match(ui,/snacky:stock-quick-product:v1:\$\{userId\}/);
+  assert.match(ui,/sessionStorage\.getItem\(quickAddStorageKey\)/);
+  assert.match(ui,/sessionStorage\.setItem\(quickAddStorageKey, JSON\.stringify/);
+  assert.match(ui,/sessionStorage\.removeItem\(quickAddStorageKey\)/);
+  assert.match(ui,/immutable\.set\("client_product_id", id\)/);
+  assert.match(ui,/quickAddFrozenRequestRef\.current = immutable/);
+  assert.match(ui,/quickAddRecoveryBlocked/);
+  assert.match(ui,/Saved product request could not be recovered/);
+  assert.match(ui,/String\(quickAddFrozenRequestRef\.current\.get\("name"\)/);
+  assert.match(ui,/router\.refresh\(\)/);
+  assert.match(ui,/Start a different product request/);
+  assert.match(ui,/window\.confirm\("Check Products/);
+});
