@@ -1,5 +1,5 @@
 'use client';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { BuyingItem } from '@/lib/buying-lists';
 import { sourcePriceText, type BuyingSource, type BuyingSources } from '@/lib/buying-sources';
 import styles from './BuyingLists.module.css';
@@ -22,16 +22,32 @@ export function BuyingSourceEditor({ item, source, sources, ar, disabled, save }
   const [primary, setPrimary] = useState(source?.primary.supplier_id ?? '');
   const [alternative, setAlternative] = useState(source?.alternative?.supplier_id ?? '');
   const [note, setNote] = useState(source?.note ?? '');
+  const submitInFlightRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const prices = sources.options.find(i => i.product_id === item.product_id)?.prices ?? [];
   const price = prices.find(p => p.supplier_id === primary);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await save({ product_id: item.product_id, primary_supplier_id: primary, alternative_supplier_id: alternative || null, note });
+    if (submitInFlightRef.current || disabled || !primary) return;
+    submitInFlightRef.current = true;
+    setSaving(true);
+    setSaveError('');
+    try {
+      // The parent uses a durable request ID and does the actual success
+      // acknowledgement. Here we prevent fast duplicate button submissions.
+      await save({ product_id: item.product_id, primary_supplier_id: primary, alternative_supplier_id: alternative || null, note });
+    } catch {
+      setSaveError(ar ? 'تعذر تأكيد الحفظ. تحقق من نتيجة القائمة قبل إعادة المحاولة.' : 'Save not confirmed. Check the list result before retrying.');
+    } finally {
+      submitInFlightRef.current = false;
+      setSaving(false);
+    }
   }
   return <details className={styles.sourceEditor}>
     <summary>{ar ? (source ? 'تعديل تعليمات المورد' : 'تحديد المورد والسعر المرجعي') : (source ? 'Edit store instructions' : 'Choose store & price reference')}</summary>
-    <form onSubmit={submit}>
-      <fieldset disabled={disabled} className={styles.fields}>
+    <form onSubmit={submit} aria-busy={saving}>
+      <fieldset disabled={disabled || saving} className={styles.fields}>
         <label>{ar ? 'المورد المطلوب' : 'Required store'}<select required value={primary} onChange={e => { setPrimary(e.target.value); if (alternative === e.target.value) setAlternative(''); }}>
           <option value="">{ar ? 'اختر المورد' : 'Choose store'}</option>
           {sources.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -46,7 +62,8 @@ export function BuyingSourceEditor({ item, source, sources, ar, disabled, save }
         </label>
       </fieldset>
       <p className={styles.hint}>{ar ? 'يُحفظ السعر المرجعي من سجل الشراء عند التأكيد. لا تتغير تعليمات منتج تم تسجيل نتيجته.' : 'The price reference is saved from purchase history at confirmation. Instructions cannot change after an item result is recorded.'}</p>
-      <button type="submit" className={styles.primary} disabled={disabled || !primary}>{ar ? 'حفظ تعليمات المورد' : 'Save store instructions'}</button>
+      {saveError ? <p role="alert" className={styles.hint}>{saveError}</p> : null}
+      <button type="submit" className={styles.primary} disabled={disabled || saving || !primary}>{saving ? (ar ? 'جارٍ الحفظ…' : 'Saving…') : ar ? 'حفظ تعليمات المورد' : 'Save store instructions'}</button>
     </form>
   </details>;
 }
