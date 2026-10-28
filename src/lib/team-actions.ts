@@ -133,7 +133,7 @@ export async function createTeamMember(formData: FormData) {
     summary: `Created team member ${payload.full_name}`,
     idempotencyKey: `create-team-member:${clientCreateId}` });
   revalidatePath("/team");
-  redirect("/team");
+  redirect(`/team?created_member=${data.id}`);
 }
 
 export async function updateTeamMember(formData: FormData) {
