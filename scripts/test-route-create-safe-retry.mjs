@@ -69,9 +69,10 @@ test("server checks original receipt before changing stock reservations",()=>{
 
 test("route creation UI has immediate synchronous lock, frozen payload and stable retry identity",()=>{
   const ui=readFileSync("src/app/routes/new/RouteCreateForm.tsx","utf8");
-  assert.match(ui,/if \(routeSaveInFlightRef\.current\) return/);
+  assert.match(ui,/if \(routeSaveInFlightRef\.current \|\| routeSaveCompletedRef\.current\) return/);
   assert.match(ui,/routeSaveInFlightRef\.current = true/);
   assert.match(ui,/routeSaveInFlightRef\.current = false/);
+  assert.match(ui,/routeSaveCompletedRef\.current = true/);
   assert.match(ui,/frozenRouteRequestRef\.current/);
   assert.match(ui,/routeCreateRequestIdRef\.current/);
   assert.match(ui,/sessionStorage\.setItem\(storageKey, routeCreateRequestIdRef\.current\)/);
