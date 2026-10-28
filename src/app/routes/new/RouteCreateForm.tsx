@@ -1309,6 +1309,66 @@ export function RouteCreateForm({
     return "";
   };
 
+  const recoverSavedRouteRequest = async () => {
+    const original = frozenRouteRequestRef.current;
+    if (storedRouteRecovery !== "ready" || !original || routeSaveInFlightRef.current || routeSaveCompletedRef.current) return;
+    routeSaveInFlightRef.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      // Read-only from the user's perspective when the first creation
+      // succeeded; the server returns the same UUID through its verified
+      // completion receipt. If it never completed, only this exact ID can
+      // be inserted, never a separate duplicate route.
+      const response = await fetch("/api/routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(original),
+      });
+      const result = await response.json().catch(() => ({ error: "Could not verify the prior route response." }));
+      if (!response.ok || !result.routeId) {
+        throw new Error(result.error || "The earlier route could not be verified. Check Routes before starting another.");
+      }
+      try {
+        window.sessionStorage.setItem("snacky-route-created",
+          original.creationMode === "stops_only"
+            ? "Route stops planned. Add exact product quantities at storage before starting."
+            : "Route created successfully.");
+        window.sessionStorage.removeItem("snacky:route-create-id:v1");
+        window.sessionStorage.removeItem("snacky:route-create-payload:v1");
+      } catch { /* A verified database receipt takes precedence over browser storage. */ }
+      routeSaveCompletedRef.current = true;
+      localDraft.clearDraft();
+      frozenRouteRequestRef.current = null;
+      routeCreateRequestIdRef.current = "";
+      setStoredRouteRecovery("none");
+      setUncertainRouteSave(false);
+      router.replace(`/routes/${result.routeId}`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "The previous route save is still unverified.");
+      setScrollErrorIntoView(true);
+    } finally {
+      routeSaveInFlightRef.current = false;
+      if (!routeSaveCompletedRef.current) setSaving(false);
+    }
+  };
+
+  const discardSavedRouteRequest = () => {
+    if (routeSaveInFlightRef.current || routeSaveCompletedRef.current) return;
+    if (!window.confirm(tr(locale,
+      "Before starting a new route, check the Routes list for the previous save. Only continue if you have confirmed it will not create a duplicate.",
+      "قبل إنشاء جولة جديدة، راجع قائمة الجولات وتحقق من الحفظ السابق. تابع فقط بعد التأكد من عدم إنشاء جولة مكررة."))) return;
+    try {
+      window.sessionStorage.removeItem("snacky:route-create-id:v1");
+      window.sessionStorage.removeItem("snacky:route-create-payload:v1");
+    } catch { /* Storage could be unavailable; in-memory request is cleared below. */ }
+    frozenRouteRequestRef.current = null;
+    routeCreateRequestIdRef.current = "";
+    setStoredRouteRecovery("none");
+    setUncertainRouteSave(false);
+    setError("");
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (storedRouteRecovery !== "none") {
@@ -1473,6 +1533,30 @@ export function RouteCreateForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6" aria-busy={saving}>
+      {storedRouteRecovery !== "none" ? (
+        <section role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <h2 className="font-semibold">{tr(locale, "Previous route save requires verification", "حفظ جولة سابقة يحتاج إلى تحقق")}</h2>
+          <p className="mt-2">{tr(locale,
+            "A route may have been created before the page was reloaded. Do not start a new copy until you check the original.",
+            "ربما تم إنشاء الجولة قبل إعادة تحميل الصفحة. لا تنشئ نسخة ثانية قبل التأكد من حفظ الجولة الأولى.")}</p>
+          {storedRouteRecovery === "id_only" ? <p className="mt-2">
+            {tr(locale, "Only the previous request ID could be recovered. Check the Routes list before clearing it.",
+              "تم استرجاع رقم الطلب فقط. راجع الجولات قبل إلغاء الطلب السابق.")}
+          </p> : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {storedRouteRecovery === "ready" ? (
+              <button type="button" className="btn-primary" onClick={() => void recoverSavedRouteRequest()} disabled={saving}>
+                {saving ? tr(locale, "Checking previous save…", "جارٍ التحقق من الحفظ السابق…")
+                  : tr(locale, "Resume the SAME saved route", "استكمال نفس الجولة المحفوظة")}
+              </button>
+            ) : null}
+            <Link href="/routes" className="btn-secondary">{tr(locale, "Check existing routes", "راجع الجولات الموجودة")}</Link>
+            <button type="button" className="btn-secondary" onClick={discardSavedRouteRequest} disabled={saving}>
+              {tr(locale, "Start a different route after checking", "بدء جولة مختلفة بعد التحقق")}
+            </button>
+          </div>
+        </section>
+      ) : null}
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
       {planningWarnings.length ? (
