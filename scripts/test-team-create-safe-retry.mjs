@@ -31,7 +31,19 @@ test("team server rejects duplicate UUID before any new login creation or passwo
   const page=readFileSync("src/app/team/new/page.tsx","utf8");
   const form=readFileSync("src/components/TeamMemberForm.tsx","utf8");
   assert.match(page,/createRequestId=\{randomUUID\(\)\}/);
-  assert.match(form,/name="client_create_id" value=\{createRequestId \?\? ""\}/);
+  assert.match(page,/createRequestOwnerId=\{profile\.id\}/);
+  assert.match(form,/TeamCreateRequestIdField/);
+  const identity=readFileSync("src/components/TeamCreateRequestIdentity.tsx","utf8");
+  const list=readFileSync("src/app/team/page.tsx","utf8");
+  assert.match(identity,/name="client_create_id" value=\{requestId\}/);
+  assert.match(identity,/sessionStorage\.getItem\(key\)/);
+  assert.match(identity,/sessionStorage\.setItem\(key, id\)/);
+  assert.match(identity,/sessionStorage\.removeItem\(key\)/);
+  assert.match(identity,/snacky:team-create-request:v1/);
+  assert.match(identity,/Start a different member after checking Team/);
+  assert.doesNotMatch(identity,/temporary_password|password:|password=/);
+  assert.match(list,/TeamCreateReceiptClear/);
+  assert.match(action,/created_member=\$\{data\.id\}/);
   const section=action.slice(action.indexOf("export async function createTeamMember("),
     action.indexOf("export async function updateTeamMember("));
   assert.match(section,/isTeamCreateRequestId\(clientCreateId\)/);
