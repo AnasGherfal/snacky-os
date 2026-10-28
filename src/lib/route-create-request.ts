@@ -13,7 +13,8 @@ export function isClientRouteCreateId(value: unknown): value is string {
  * This fingerprint is server-computed, never trusted from the browser.
  */
 export function routeCreateFingerprint(payload: Record<string, unknown>): string {
-  const { clientRouteId: _excluded, ...request } = payload;
+  const request = { ...payload };
+  delete request.clientRouteId;
   return createHash("sha256").update(JSON.stringify(request)).digest("hex");
 }
 
