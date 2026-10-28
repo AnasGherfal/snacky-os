@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import { isEligibleCashSourceBatch } from "../src/lib/vms-cash-source.ts";
 import {
-  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey, knownXyNotificationEventKeys,
+  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey, knownXyNotificationEventKeys, verifiedRecentXySalesEvidence,
 } from "../src/lib/xy-operational-alert-rules.ts";
 
 const now = Date.parse("2026-10-09T10:00:00Z");
@@ -124,8 +124,9 @@ test("no-sales alerts consult only active cash-eligible transaction import batch
   assert.equal((segment.match(/\.eq\("transaction_status","successful_sale"\)/g) ?? []).length, 2);
   assert.equal((segment.match(/\.eq\("mapped_machine_id",machine\.id\)/g) ?? []).length, 2);
   assert.equal((segment.match(/\.not\("(payment_time|delivery_time)","is",null\)/g) ?? []).length, 2);
-  assert.match(worker, /reportError\(payment\.error,"payment-time sales"\)/);
-  assert.match(worker, /reportError\(delivery\.error,"delivery-time sales"\)/);
+  assert.match(worker,/if \(payment\.error \|\| delivery\.error\)/);
+  assert.match(worker,/machineSalesReadIncomplete=true/);
+  assert.match(worker,/xy_sales_machine_query_unavailable/);
 });
 
 test("deleted, failed and unknown XY transaction batches cannot suppress no-sales monitoring", () => {
@@ -140,4 +141,57 @@ test("deleted, failed and unknown XY transaction batches cannot suppress no-sale
     { status: null, deleted_at: null },
     { status: "imported" },
   ]) assert.equal(isEligibleCashSourceBatch(b), false);
+});
+
+
+test("recent eligible XY sale evidence must be real, timely and parseable", () => {
+  const now=Date.parse("2026-10-28T10:00:00Z");
+  const recent={payment_time:"2026-10-28T09:51:00Z",delivery_time:null};
+  assert.equal(verifiedRecentXySalesEvidence([recent],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:null,delivery_time:"2026-10-28T09:50:00Z"}],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([null,recent],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"2026-10-27T10:00:00Z"}],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([],now),false,"Vendor summary alone is not database evidence");
+  assert.equal(verifiedRecentXySalesEvidence([null],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:null,delivery_time:null}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"garbage"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"2026-10-27T09:59:59Z"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{delivery_time:"2026-10-28T10:00:01Z"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([recent],NaN),false);
+  // Either timestamp can verify real activity; an invalid future delivery
+  // timestamp must not hide a genuine recent payment.
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:recent.payment_time,delivery_time:"2027-01-01T10:00:00Z"}],now),true);
+});
+
+test("no-sales worker verifies persisted eligible network evidence, not just sync metadata",()=>{
+  const worker=fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const start=worker.indexOf("if (salesReady) {");
+  const end=worker.indexOf("if (!salesReady) {",start);
+  const gate=worker.slice(start,end);
+  assert.ok(start>0&&end>start);
+  assert.match(gate,/verifiedRecentXySalesEvidence/);
+  assert.match(gate,/payment_time/);
+  assert.match(gate,/delivery_time/);
+  assert.equal((gate.match(/vms_import_batches!inner\(id\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.in\("batch\.status",\[\.\.\.CASH_ELIGIBLE_VMS_BATCH_STATUSES\]\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.is\("batch\.deleted_at",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.not\("mapped_machine_id","is",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.not\("mapped_product_id","is",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.eq\("transaction_status","successful_sale"\)/g)??[]).length,2);
+  assert.match(gate,/salesReady=false/);
+  assert.match(worker,/if \(!salesReady\)/);
+});
+
+test("one unavailable machine sales query never prevents independent stock or status notices",()=>{
+  const worker=fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const perMachineStart=worker.indexOf("let machineSalesReadIncomplete=false;");
+  const independentStart=worker.indexOf("const activityAlerts=await getXyStockActivityNotices");
+  assert.ok(independentStart>perMachineStart&&perMachineStart>0);
+  const segment=worker.slice(perMachineStart,independentStart);
+  assert.match(segment,/if \(payment\.error \|\| delivery\.error\)/);
+  assert.match(segment,/machineSalesReadIncomplete=true/);
+  assert.match(segment,/continue;/);
+  assert.doesNotMatch(segment,/reportError\(payment\.error/);
+  assert.doesNotMatch(segment,/reportError\(delivery\.error/);
+  assert.match(segment,/xy_sales_machine_query_unavailable/);
 });
