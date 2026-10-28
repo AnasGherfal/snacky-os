@@ -1,4 +1,5 @@
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { TemporaryPasswordInput } from "@/components/TemporaryPasswordInput";
 import { appRoles, AppRole } from "@/lib/authz";
 import { roleDescriptions } from "@/lib/team";
@@ -65,7 +66,12 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
         </div> : <p className="text-sm text-slate-500">Create login access for members who need to sign in.</p>}
         <TemporaryPasswordInput />
       </FormSection>
-      <div className="flex flex-col gap-3 sm:flex-row"><button className="btn-primary">{submitLabel}</button><SecondaryButton href={backHref}>Cancel</SecondaryButton></div>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <FormSubmitButton pendingLabel="Saving team member…" slowLabel="Still processing the first request. Do not add another member." timeoutLabel="Still processing. Check the team list before retrying." className="btn-primary">
+          {submitLabel}
+        </FormSubmitButton>
+        <SecondaryButton href={backHref}>Cancel</SecondaryButton>
+      </div>
     </form>
   );
 }
