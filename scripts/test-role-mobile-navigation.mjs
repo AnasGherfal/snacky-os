@@ -26,8 +26,8 @@ function profile(role, roles = [role]) {
 function routes(role, roles) { return getRoleMobileDestinations(profile(role, roles)).map((x) => x.href); }
 
 test("role shortcuts prioritize the correct daily workflow instead of an owner-only menu", () => {
-  assert.deepEqual(routes("owner"), ["/dashboard", "/routes", "/inventory", "/machines"]);
-  assert.deepEqual(routes("crm"), ["/my-work", "/issues", "/locations-pipeline", "/relationships"]);
+  assert.deepEqual(routes("owner"), ["/dashboard", "/routes", "/inventory", "/cash-collections"]);
+  assert.deepEqual(routes("crm"), ["/my-work", "/issues", "/locations-pipeline", "/follow-ups"]);
   assert.deepEqual(routes("operator"), ["/operator/routes", "/operator/routes?view=available", "/operator/issues", "/cash-handling"]);
   assert.deepEqual(routes("warehouse"), ["/my-day", "/warehouse/pick-lists", "/inventory", "/buying-lists"]);
   assert.deepEqual(routes("purchasing"), ["/my-day", "/buying-lists", "/purchases", "/products"]);
@@ -133,7 +133,7 @@ test("real role navigation renders Arabic links and opens the existing More draw
   assert.deepEqual(hrefs, routes("crm"));
   assert.equal(view.nodes.find(n => n.props?.href === "/issues").props["aria-current"], "page");
   const texts = view.nodes.map(n => n.props?.children).filter(x => typeof x === "string");
-  for (const value of ["عملي", "البلاغات", "الجهات", "المواقع", "المزيد"]) assert.ok(texts.includes(value), value);
+  for (const value of ["عملي", "البلاغات", "الجهات", "المتابعات", "المزيد"]) assert.ok(texts.includes(value), value);
   const button = view.nodes.find(n => n.type === "button");
   assert.equal(button.props["aria-haspopup"], "dialog");
   button.props.onClick();
