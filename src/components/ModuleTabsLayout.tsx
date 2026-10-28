@@ -3,7 +3,7 @@
 import { ReactNode, useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ModuleTabs } from "@/components/ModuleTabs";
-import { getModuleTabGroupForPath, pathnameFromHref } from "@/components/module-tabs-config";
+import { getModuleTabGroupForPath, isFocusedWorkFormPath, pathnameFromHref } from "@/components/module-tabs-config";
 import { AppRole, canAccessPath, hasRole } from "@/lib/authz";
 
 type ModuleTabsProfile = {
@@ -40,7 +40,7 @@ export function ModuleTabsLayout({ children, profile }: { children: ReactNode; p
 
   return (
     <>
-      {tabGroup && visibleTabs.length > 1 ? (
+      {tabGroup && !isFocusedWorkFormPath(pathname) && visibleTabs.length > 1 ? (
         <div className="mb-6">
           <ModuleTabs
             tabs={visibleTabs}
