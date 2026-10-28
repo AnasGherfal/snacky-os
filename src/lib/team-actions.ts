@@ -9,6 +9,7 @@ import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { selectedTeamRoles, teamProductPermission } from "@/lib/team-role-selection";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { tempPasswordCookie } from "@/lib/team";
+import { isTeamCreateRequestId, sameTeamCreatePayload } from "@/lib/team-create-request";
 
 function teamPayload(formData: FormData) {
   let roles;
@@ -95,7 +96,26 @@ export async function createTeamMember(formData: FormData) {
   if (!supabase) redirect("/team/new?error=Supabase%20is%20not%20configured.");
   const payload = teamPayload(formData);
   if (!payload.full_name) redirect("/team/new?error=Full%20name%20is%20required.");
-  const { data, error } = await supabase.from("team_members").insert(payload).select("id").single();
+  const clientCreateId = clean(formData.get("client_create_id"));
+  if (!isTeamCreateRequestId(clientCreateId)) {
+    redirect("/team/new?error=Could%20not%20verify%20the%20original%20create%20request.%20Reload%20the%20form.");
+  }
+  // The pre-existing team_members UUID primary key is the authoritative
+  // duplicate guard. Do not issue a second Auth create/reset operation when
+  // the original row already exists, even if the first HTTP response was lost.
+  const { data, error } = await supabase.from("team_members")
+    .insert({id: clientCreateId,...payload}).select("id").single();
+  if (error?.code === "23505") {
+    const prior = await supabase.from("team_members")
+      .select("full_name,email,phone,role,roles,crm_focus,can_add_products,active_status")
+      .eq("id",clientCreateId).maybeSingle();
+    if (prior.error || !prior.data || !sameTeamCreatePayload(prior.data, payload)) {
+      redirect("/team/new?error=The%20previous%20team%20request%20could%20not%20be%20verified.%20Review%20the%20team%20list.");
+    }
+    // Partial login creation may still require correction. Never repeat a
+    // password reset or create a new team member from a duplicate POST.
+    redirect(`/team/${clientCreateId}/edit?error=${encodeURIComponent("This team member already exists. Review the saved record and login access; no duplicate was created.")}`);
+  }
   if (error || !data?.id) {
     console.error("[team:create] Failed to create team member", error);
     redirect("/team/new?error=Could%20not%20create%20team%20member.");
@@ -109,7 +129,9 @@ export async function createTeamMember(formData: FormData) {
     redirect(`/team/${data.id}/edit?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not create login access.")}`);
   }
   await logActivity({ profile, action: "create", entityType: "team_member", entityId: data.id, entityLabel: payload.full_name,
-    afterData: { ...payload, login_access_created: String(formData.get("create_login_access") || "") === "yes" }, summary: `Created team member ${payload.full_name}` });
+    afterData: { ...payload, login_access_created: String(formData.get("create_login_access") || "") === "yes" },
+    summary: `Created team member ${payload.full_name}`,
+    idempotencyKey: `create-team-member:${clientCreateId}` });
   revalidatePath("/team");
   redirect("/team");
 }
