@@ -985,8 +985,8 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
         `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
       ),
-      href: "/restock-priority?filter=critical",
-      cta: t("Open restock priority"),
+      href: "/restock-priority/purchase-list",
+      cta: localize("Open What to Buy", "افتح قائمة الشراء"),
     });
   }
   if (machinesNeedingRefillCount > 0) {
@@ -1039,7 +1039,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         action={(
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/routes/new">{t("Create Route")}</PrimaryButton>
-            <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
+            <SecondaryButton href="/restock-priority/purchase-list">{localize("What to Buy", "شن نشتري؟")}</SecondaryButton>
           </div>
         )}
       />
@@ -1056,7 +1056,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
             <div className="text-lg font-semibold text-amber-950">{localize("Machine refill forecast needs attention", "توقع تعبئة الماكينات يحتاج إلى متابعة")}</div>
             <p className="mt-1 text-sm text-amber-900">{localize("Snacky OS could not safely calculate machine timing from the latest XY data. Product assignment remains protected by storage validation.", "لم يتمكن Snacky OS من حساب موعد تعبئة الماكينات بأمان من أحدث بيانات XY. لا يزال تخصيص المنتجات محمياً بالتحقق من مخزون المستودع.")}</p>
-            <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{localize("Open refill dashboard", "فتح لوحة التعبئة")}</SecondaryButton><SecondaryButton href="/vms-import/sources">{localize("Check XY data", "فحص بيانات XY")}</SecondaryButton></div>
+            <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{localize("Open refill dashboard", "فتح لوحة التعبئة")}</SecondaryButton><SecondaryButton href="/admin/vms-api">{localize("Check current XY data", "فحص بيانات XY الحالية")}</SecondaryButton></div>
           </section>
         ) : (
           <RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />
