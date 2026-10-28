@@ -9,12 +9,22 @@ import {buyingUuid,buyingTotals,buyingError} from '@/lib/buying-lists';
 import {getServerI18n} from '@/lib/i18n/server';
 import {BuyingProgress,BuyingCopyLink} from '@/components/BuyingListClient';
 import {BuyingListTable} from '@/components/BuyingListTable';
+import {SharedMarketChecklist} from '@/components/SharedMarketChecklist';
 import styles from '@/components/BuyingLists.module.css';
 export const dynamic='force-dynamic';
 export default async function Page({params}:{params:Promise<{id:string}>}){
  const {id}=await params;if(!buyingUuid.test(id))notFound();const {locale}=await getServerI18n(),ar=locale==='ar';
  let view;try{view=await buyingWorkspace(id);}catch(error){unstable_rethrow(error);return <section className={styles.workspace}><h1>{ar?'تعذر فتح القائمة':'List unavailable'}</h1><p role="alert">{buyingError('denied',ar)}</p><Link href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></section>;}
- const list=view.data.record;if(!list)notFound();const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);
+ const list=view.data.record;if(!list)notFound();
+ if(list.shopping_mode)return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="buying-list-detail">
+  <header className={styles.header}><div><p>{ar?'قائمة تسوق مشتركة':'Shared shopping checklist'} · {id.slice(0,8).toUpperCase()}</p><h1>{list.title}</h1><p>{ar?'المشتري:':'Buyer:'} <b>{list.buyer_name}</b> · {ar?'الموعد:':'Due:'} <bdi>{list.due_on}</bdi></p></div><Link className={styles.secondary} href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></header>
+  <div className={styles.actions}><Link className={styles.secondary} href={`/buying-lists/${id}/print`}>{ar?'عرض للطباعة / PDF':'Print / PDF view'}</Link><BuyingCopyLink ar={ar}/>{hasAnyRole(view.profile,buyingPurchaseRoles)?<Link className={styles.primary} href="/purchases/new">{ar?'تسجيل الإيصال':'Record receipt'}</Link>:null}</div>
+  <p className={styles.hint}>{ar?'في الإيصال، سجّل الأصناف والنكهات والكميات والأسعار التي اشتريتها فعلياً. علامات القائمة لا تنشئ إيصالاً ولا تضيف مخزوناً.':'On the receipt, enter the exact products, flavours, quantities and prices you actually bought. Checklist ticks do not create a receipt or add stock.'}</p>
+  {list.instructions?<p className={styles.notice} style={{whiteSpace:'pre-wrap'}}>{list.instructions}</p>:null}
+  <SharedMarketChecklist key={list.id} list={list} userId={view.profile.id} memberId={view.data.me} planner={view.data.planner} people={view.data.people}/>
+  <p className={styles.hint}>{ar?'القائمة محفوظة في حسابك ويمكن فتحها من هاتفك. حدّث الصفحة لرؤية آخر تقدم من جهاز آخر.':'This checklist is saved to your account and can be opened on your phone. Reload to see the latest progress from another device.'}</p>
+ </section>;
+ const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);
  return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="buying-list-detail">
   <header className={styles.header}><div><p>{ar?'قائمة مشتركة':'Shared checklist'} · {id.slice(0,8).toUpperCase()} · v{list.revision}</p><h1>{list.title}</h1><p>{ar?'المشتري:':'Buyer:'} <b>{list.buyer_name}</b> · {ar?'الموعد:':'Due:'} <bdi>{list.due_on}</bdi></p></div><Link className={styles.secondary} href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></header>
   <div className={styles.actions}><Link className={styles.primary} href={`/buying-lists/${id}/print`}>{ar?'عرض للطباعة / PDF':'Print / PDF view'}</Link><BuyingCopyLink ar={ar}/>{hasAnyRole(view.profile,buyingPurchaseRoles)?<Link className={styles.secondary} href={`/buying-lists/${id}/purchases`}>{ar?'فواتير الشراء / وضع المنتجات في المخزن':'Purchase receipts / place goods in storage'}</Link>:null}</div>

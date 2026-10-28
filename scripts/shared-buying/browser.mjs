@@ -25,7 +25,7 @@ assert.ifError((await admin.from('products').insert(products)).error);
 const date=sql("select (now() at time zone 'Africa/Tripoli')::date"),ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements),'finance',(select count(*) from public.financial_transactions),'purchases',(select count(*) from public.purchase_orders),'purchase_lines',(select count(*) from public.purchase_order_lines),'purchase_payments',(select count(*) from public.purchase_payments))::text"),baseline=ledger();
 async function record(role,id){const r=await accounts[role].client.rpc('snacky_buying_workspace_v1',{p_id:id,p_filters:{}});assert.ifError(r.error);return r.data;}
 async function command(role,action,id,revision,payload={}){const r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:id,revision,action,payload}});assert.ifError(r.error);return r.data;}
-let browser,safari,server,listId,tls;const results=[],pageErrors=[],audits=[];
+let browser,safari,server,listId,marketListId,tls;const results=[],pageErrors=[],audits=[];
 async function check(name,fn){try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,2000)});let i=0;for(const b of [browser,safari])for(const c of b?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failed-${results.length}-${++i}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+e.message);}finally{writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}}
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:35e6});writeFileSync('diagnostics/buying-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Production build failed');
 try{
@@ -34,13 +34,14 @@ try{
  browser=await chromium.launch({headless:true});
  async function session(role,locale='en',width=1440,b=browser,origin=app){const c=await b.newContext({viewport:{width,height:960},hasTouch:width<700,ignoreHTTPSErrors:origin==='https://127.0.0.1:3443'});await c.addCookies([{name:'snacky_os_language',value:locale,url:origin}]);const p=await c.newPage();p.setDefaultTimeout(20000);p.setDefaultNavigationTimeout(45000);p.on('pageerror',e=>pageErrors.push(`${role} ${new URL(p.url()).pathname}: ${e.message}`));await p.goto(origin+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login')),p.locator('form button[type=submit]').click()]);await p.waitForLoadState('networkidle');return p;}
  const owner=await session('owner'),buyer=await session('warehouse'),replacement=await session('purchasing'),operator=await session('operator'),crm=await session('crm');
- await check('owner shares the existing whole-box planning list; lost creation response recovers without duplicate',async()=>{
-  await owner.evaluate(items=>localStorage.setItem('snacky-restock-shopping-list',JSON.stringify(items)),products.slice(0,3).map(p=>({productId:p.id,name:p.name,suggestedQty:24,purchaseUnit:'box',unitsPerBox:12,boxesQty:2,lastPurchaseCost:2})));
-  await owner.goto(app+'/restock-priority/shopping-list');await owner.getByRole('textbox',{name:'List title',exact:true}).fill('Shared buyer acceptance');await owner.getByRole('combobox',{name:'Assigned buyer',exact:true}).selectOption(accounts.warehouse.member);await owner.getByRole('textbox',{name:'Buyer instructions',exact:true}).fill('Verify expiry and box size; report shortages.');
-  let request,receipt;await owner.route('**/api/buying-lists',async route=>{if(route.request().method()!=='POST')return route.continue();request=route.request().postDataJSON();const response=await route.fetch();receipt=await response.json();if(receipt.ok)await route.abort('failed');else await route.fulfill({response});},{times:1});
-  await owner.getByRole('button',{name:'Save & assign list',exact:true}).click();await owner.getByText('Save not confirmed. Retry the same saved request.',{exact:true}).waitFor();assert.equal(receipt.ok,true);listId=request.list_id;assert.equal(sql(`select count(*) from buying_private.lists where id='${listId}'`),'1');
-  await owner.reload();const response=owner.waitForResponse(r=>r.url().endsWith('/api/buying-lists')&&r.request().method()==='POST');await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);await owner.waitForURL(u=>u.pathname==='/buying-lists/'+listId);
-  const actual=(await record('owner',listId)).record;assert.equal(actual.items.length,3);assert.equal(actual.items[0].planned_boxes,2);assert.equal(actual.items[0].units_per_box,12);assert.equal(actual.assigned_to,accounts.warehouse.member);assert.equal(sql(`select count(*) from buying_private.commands where list_id='${listId}'`),'1');
+ await check('legacy whole-box lists retain exact snapshots and an idempotent create API',async()=>{
+  listId=randomUUID();
+  const request={request_id:randomUUID(),list_id:listId,revision:0,action:'create',payload:{title:'Shared buyer acceptance',assigned_to:accounts.warehouse.member,due_on:date,instructions:'Verify expiry and box size; report shortages.',items:products.slice(0,3).map(p=>({product_id:p.id,boxes:2,units_per_box:12}))}};
+  const response=await owner.request.post(app+'/api/buying-lists',{headers:{Origin:app},data:request});assert.equal(response.status(),200);const receipt=await response.json();assert.equal(receipt.ok,true);
+  const replay=await owner.request.post(app+'/api/buying-lists',{headers:{Origin:app},data:request});assert.equal(replay.status(),200);assert.deepEqual(await replay.json(),receipt);
+  await owner.goto(app+'/buying-lists/'+listId);await owner.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();
+  const actual=(await record('owner',listId)).record;assert.equal(actual.shopping_mode,false);assert.equal(actual.items.length,3);assert.equal(actual.items[0].planned_boxes,2);assert.equal(actual.items[0].units_per_box,12);assert.equal(actual.assigned_to,accounts.warehouse.member);assert.equal(sql(`select count(*) from buying_private.commands where list_id='${listId}'`),'1');
+  assert.equal(await owner.getByRole('link',{name:'Purchase receipts / place goods in storage',exact:true}).getAttribute('href'),'/buying-lists/'+listId+'/purchases');
  });
  await check('assigned warehouse buyer opens the shared list; operator and CRM cannot read it',async()=>{
   assert.ok(listId);await buyer.goto(app+'/buying-lists');await buyer.getByRole('link').filter({hasText:'Shared buyer acceptance'}).click();await buyer.waitForURL(u=>u.pathname.endsWith(listId));await buyer.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();
@@ -113,6 +114,79 @@ try{
   const warehouseView=await record('warehouse',listId);assert.equal(warehouseView.planner,true);assert.equal(warehouseView.record.assigned_to,accounts.purchasing.member);
   await replacement.goto(app+'/buying-lists/'+listId);await replacement.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();
   const actual=await record('purchasing',listId);assert.equal(actual.planner,true);assert.equal(actual.record.assigned_to,accounts.purchasing.member);
+  assert.equal(ledger(),baseline);
+ });
+ await check('owner adds flexible shopping needs and explicitly imports a product plan; an interrupted share replays without duplication',async()=>{
+  await owner.evaluate(p=>localStorage.setItem('snacky-restock-shopping-list',JSON.stringify([{productId:p.id,name:p.name,suggestedQty:24,purchaseUnit:'box',unitsPerBox:12,boxesQty:2,lastPurchaseCost:2}])),products[0]);
+  await owner.goto(app+'/restock-priority/shopping-list');
+  const checklist=owner.getByRole('region',{name:'Market checklist',exact:true});
+  await checklist.locator('summary').filter({hasText:'Add something to the list'}).click();
+  for(const need of [{label:'Chips',quantity:'2',flexibility:'any_brand'},{label:'Bebeto',quantity:'1',flexibility:'any_flavour'}]){
+   await checklist.getByRole('textbox',{name:'What do you need?',exact:true}).fill(need.label);
+   await checklist.getByRole('spinbutton',{name:'Quantity needed',exact:true}).fill(need.quantity);
+   await checklist.getByRole('combobox',{name:'Acceptable alternatives',exact:true}).selectOption(need.flexibility);
+   await checklist.getByRole('button',{name:'Add to checklist',exact:true}).click();
+   await checklist.getByRole('checkbox',{name:'Got '+need.label,exact:true}).waitFor();
+  }
+  assert.equal(await checklist.getByRole('checkbox',{name:'Got '+products[0].name,exact:true}).count(),0,'An older product plan must not replace or silently merge into the draft');
+  await owner.locator('summary').filter({hasText:'Use an older saved product plan'}).click();
+  await owner.getByRole('button',{name:'Import older plan',exact:true}).click();
+  await checklist.getByRole('checkbox',{name:'Got '+products[0].name,exact:true}).waitFor();
+  assert.equal(await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).count(),1);
+  await owner.getByRole('textbox',{name:'List title',exact:true}).fill('Flexible market run');
+  await owner.getByRole('combobox',{name:'Who is shopping?',exact:true}).selectOption(accounts.warehouse.member);
+  await owner.getByRole('textbox',{name:'Instructions',exact:true}).fill('Get chips even if the preferred flavour is unavailable.');
+  let request,receipt;
+  await owner.route('**/api/buying-lists/checklist',async route=>{request=route.request().postDataJSON();const response=await route.fetch();receipt=await response.json();if(receipt.ok)await route.abort('failed');else await route.fulfill({response});},{times:1});
+  await owner.getByRole('button',{name:'Save to Snacky',exact:true}).click();
+  await owner.getByText('Save is not confirmed. Retry the same saved request before making another change.',{exact:true}).waitFor();
+  assert.equal(receipt.ok,true);marketListId=request.list_id;
+  assert.equal(sql(`select count(*) from buying_private.lists where id='${marketListId}'`),'1');
+  await owner.reload();
+  const response=owner.waitForResponse(r=>r.url().endsWith('/api/buying-lists/checklist')&&r.request().method()==='POST');
+  await owner.getByRole('button',{name:'Retry saved change',exact:true}).click();
+  const saved=await response;assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
+  await owner.waitForURL(u=>u.pathname==='/buying-lists/'+marketListId);
+  const actual=(await record('owner',marketListId)).record;
+  assert.equal(actual.shopping_mode,true);assert.deepEqual(actual.items,[]);assert.equal(actual.checklist_items.length,3);
+  assert.equal(actual.checklist_items[0].product_id,null);assert.equal(actual.checklist_items[0].flexibility,'any_brand');assert.equal(actual.checklist_items[0].quantity,2);
+  assert.equal(actual.checklist_items[1].product_id,null);assert.equal(actual.checklist_items[1].flexibility,'any_flavour');assert.equal(actual.checklist_items[2].product_id,products[0].id);
+  assert.equal(sql(`select count(*) from buying_private.commands where list_id='${marketListId}'`),'1');
+  assert.equal(ledger(),baseline);
+ });
+ await check('shared market ticks and unavailable needs survive reload, remain separate from receipts, and fit English and Arabic phones',async()=>{
+  assert.ok(marketListId);await buyer.goto(app+'/buying-lists/'+marketListId);
+  const checklist=buyer.getByRole('region',{name:'Market checklist',exact:true});
+  let response=buyer.waitForResponse(r=>r.url().endsWith('/api/buying-lists/checklist')&&r.request().method()==='POST');
+  await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).click();assert.equal((await(await response).json()).ok,true);
+  await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).waitFor({state:'detached'});
+  await checklist.getByText('2 left to get',{exact:true}).waitFor();
+  await buyer.reload();
+  assert.equal(await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).count(),0);
+  const bebeto=checklist.locator('article').filter({has:buyer.getByRole('checkbox',{name:'Got Bebeto',exact:true})});
+  await bebeto.locator('summary').filter({hasText:'Update quantity or note'}).click();
+  await bebeto.getByRole('checkbox',{name:'None found',exact:true}).check();
+  await bebeto.getByRole('textbox',{name:'Note / what did you find?',exact:true}).fill('No suitable flavour available today');
+  response=buyer.waitForResponse(r=>r.url().endsWith('/api/buying-lists/checklist')&&r.request().method()==='POST');
+  await bebeto.getByRole('button',{name:'Save progress',exact:true}).click();assert.equal((await(await response).json()).ok,true);
+  await bebeto.getByText('Not found — still needed',{exact:true}).waitFor();assert.equal(await bebeto.getByRole('checkbox',{name:'Got Bebeto',exact:true}).isChecked(),false);
+  await checklist.getByRole('button',{name:'Got',exact:true}).click();
+  await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).waitFor();assert.equal(await checklist.getByRole('checkbox',{name:'Got Chips',exact:true}).isChecked(),true);
+  assert.equal(await checklist.getByRole('checkbox',{name:'Got Bebeto',exact:true}).count(),0,'Unavailable must never be shown as acquired');
+  await owner.reload();
+  const actual=(await record('owner',marketListId)).record;
+  assert.equal(actual.checklist_items[0].acquired_quantity,2);assert.equal(actual.checklist_items[0].product_id,null);
+  assert.equal(actual.checklist_items[1].unavailable,true);assert.equal(actual.checklist_items[1].acquired_quantity,0);
+  assert.equal(actual.remaining_count,2);assert.equal(actual.acquired_count,1);
+  assert.equal(await buyer.getByRole('link',{name:'Record receipt',exact:true}).getAttribute('href'),'/purchases/new');
+  assert.equal(await buyer.locator(`a[href="/buying-lists/${marketListId}/purchases"]`).count(),0);
+  for(const [label,p,width] of [['market-mobile-en',buyer,390],['market-mobile-ar',arabic,320]]){
+   await p.setViewportSize({width,height:960});await p.goto(app+'/buying-lists/'+marketListId);await p.locator('#buying-list-detail').waitFor();
+   assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),label);
+   await p.screenshot({path:`${out}/${label}.png`,fullPage:true});
+   const scan=await new AxeBuilder({page:p}).include('#buying-list-detail').analyze();audits.push({label,violations:scan.violations});
+  }
+  writeFileSync(out+'/accessibility.json',JSON.stringify(audits,null,2));assert.equal(audits.flatMap(a=>a.violations).length,0);
   assert.equal(ledger(),baseline);
  });
  assert.deepEqual(pageErrors,[]);assert.equal(results.filter(r=>r.status!=='passed').length,0,'Every scenario must pass');

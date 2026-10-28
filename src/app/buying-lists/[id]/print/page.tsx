@@ -7,13 +7,19 @@ import {buyingUuid,buyingTotals} from '@/lib/buying-lists';
 import {getServerI18n} from '@/lib/i18n/server';
 import {BuyingPrintButton} from '@/components/BuyingListClient';
 import {BuyingListTable} from '@/components/BuyingListTable';
+import {MarketChecklistPrint} from '@/components/MarketChecklistPrint';
 import styles from '@/components/BuyingLists.module.css';
 export const dynamic='force-dynamic';
 export default async function Page({params}:{params:Promise<{id:string}>}){
  const {id}=await params;if(!buyingUuid.test(id))notFound();const {locale}=await getServerI18n(),ar=locale==='ar';
  let view;try{view=await buyingWorkspace(id);}catch(error){unstable_rethrow(error);return <p role="alert">{ar?'تعذر التحقق من القائمة. لم يتم إنشاء نسخة للطباعة.':'Could not verify this list. No printable copy was created.'}</p>;}
  if(view.sourcesStatus==='unavailable')return <section className={styles.workspace}><h1>{ar?'تعذر التحقق من تعليمات الموردين':'Store instructions unavailable'}</h1><p role="alert">{ar?'أعد التحميل قبل الطباعة؛ لا نطبع تعليمات قديمة عند تعذر التحقق.':'Reload before printing. Unverified store instructions cannot be printed.'}</p><Link href={`/buying-lists/${id}`}>{ar?'العودة للقائمة':'Back to checklist'}</Link></section>;
- const list=view.data.record;if(!list)notFound();const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);
+ const list=view.data.record;if(!list)notFound();
+ if(list.shopping_mode)return <div className={styles.workspace} dir={ar?'rtl':'ltr'}>
+  <div className={styles.actions}><BuyingPrintButton ar={ar}/><Link className={styles.secondary} href={`/buying-lists/${id}`}>{ar?'العودة للقائمة':'Back to checklist'}</Link><span>{ar?'في نافذة الطباعة اختر حفظ PDF.':'Choose Save as PDF in the print dialog.'}</span></div>
+  <MarketChecklistPrint list={list} ar={ar}/>
+ </div>;
+ const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);
  return <div className={styles.workspace} dir={ar?'rtl':'ltr'}>
   <div className={styles.actions}><BuyingPrintButton ar={ar}/><Link className={styles.secondary} href={`/buying-lists/${id}`}>{ar?'العودة للقائمة':'Back to checklist'}</Link><span>{ar?'في نافذة الطباعة اختر حفظ PDF.':'Choose Save as PDF in the print dialog.'}</span></div>
   <article data-buying-print className={styles.printSheet}>

@@ -231,7 +231,7 @@ function BuyTodayCard({ item }: { item: RestockPriorityItem }) {
   );
 }
 
-function BuyTodayPanel({ items, purchaseList }: { items: RestockPriorityItem[]; purchaseList: RestockShoppingListItem[] }) {
+function BuyTodayPanel({ items, purchaseList, userId }: { items: RestockPriorityItem[]; purchaseList: RestockShoppingListItem[]; userId: string }) {
   if (!items.length) return null;
 
   const totalSuggestedQty = purchaseList.reduce((sum, item) => sum + item.suggestedQty, 0);
@@ -245,7 +245,7 @@ function BuyTodayPanel({ items, purchaseList }: { items: RestockPriorityItem[]; 
             These are the products Snacky should buy first based on storage gaps, route demand, missing machine stock, and recent sales velocity.
           </p>
         </div>
-        <CreatePurchaseListButton items={purchaseList} className="w-full justify-center sm:w-auto" />
+        <CreatePurchaseListButton items={purchaseList} destination="review" userId={userId} className="w-full justify-center sm:w-auto" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -465,7 +465,7 @@ export default async function RestockPriorityPage({
         action={
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/restock-priority/shopping-list">Open Buying List</SecondaryButton>
-            <CreatePurchaseListButton items={purchaseListItems} />
+            <CreatePurchaseListButton items={purchaseListItems} destination="review" userId={profile.id} />
             <SecondaryButton href="/inventory/movements/new">Storage adjustment</SecondaryButton>
           </div>
         }
@@ -541,7 +541,7 @@ export default async function RestockPriorityPage({
             <EmptyState title="No products match this filter" body="Try Buy today or clear the search." action={<SecondaryButton href="/restock-priority">Reset filters</SecondaryButton>} />
           ) : (
             <div className="space-y-8">
-              <BuyTodayPanel items={buyTodayItems} purchaseList={purchaseListItems} />
+              <BuyTodayPanel items={buyTodayItems} purchaseList={purchaseListItems} userId={profile.id} />
               <ProductSection title={sectionTitle("critical")} items={sections.critical} currentPath={currentPath} canEditProducts={canEditProducts} />
               <ProductSection title={sectionTitle("important")} items={sections.important} currentPath={currentPath} canEditProducts={canEditProducts} />
               {sections.normal.length ? (
