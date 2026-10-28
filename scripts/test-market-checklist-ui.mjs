@@ -160,6 +160,56 @@ test("Remaining keeps partial and unavailable needs visible and Got shows only f
   assert.ok(gotChecks.every(node => node.props.disabled), "Read-only viewers cannot tick progress");
 });
 
+test("market search filters by label or note without changing progress", () => {
+  const changes = [];
+  const rows = [item({ label: "Chips" }), item({ id: uuid(2), label: "Bebeto", note: "Orange available" }), item({ id: uuid(3), label: "Water", acquired_quantity: 6 })];
+  const harness = componentModule("src/components/MarketChecklist.tsx");
+  const view = harness.mount("MarketChecklist", { items: rows, ar: false, draftKey: "search", allowEdit: true,
+    onAdd: async () => true, onEdit: async () => true, onRemove: async () => true, onProgress: async payload => { changes.push(payload); return true; } });
+  const search = nodes(view.render()).find(node => node.type === "input" && node.props.type === "search");
+  assert.ok(search);
+  search.props.onChange({ target: { value: "orange" } });
+  const matching = nodes(view.render()).filter(node => node.type === "input" && node.props["aria-label"]?.startsWith("Got "));
+  assert.deepEqual(matching.map(node => node.props["aria-label"]), ["Got Bebeto"]);
+  assert.match(text(view.render()), /Showing 1 of 2/);
+  nodes(view.render()).find(node => node.type === "button" && node.props.children === "Clear search").props.onClick();
+  assert.equal(nodes(view.render()).filter(node => node.type === "input" && node.props["aria-label"]?.startsWith("Got ")).length, 2);
+  assert.equal(changes.length, 0);
+});
+
+test("unsaved quantity or note blocks quick checking until saved", () => {
+  const store = memoryStorage(), saved = [];
+  const key = `cart:${uuid(1)}:progress`;
+  store.setItem(key, JSON.stringify({ acquired: "0", unavailable: false, note: "Found another flavour" }));
+  const harness = componentModule("src/components/MarketChecklist.tsx", { local: store });
+  const view = harness.mount("MarketChecklist", { items: [item()], ar: false, draftKey: "cart", allowEdit: true,
+    onAdd: async () => true, onEdit: async () => true, onRemove: async () => true, onProgress: async payload => { saved.push(payload); return true; } });
+  nodes(view.render()).find(node => node.props?.["aria-label"] === "Got Chips").props.onChange({ target: { checked: true } });
+  assert.equal(saved.length, 0);
+  assert.match(text(view.render()), /Save them before ticking it off/);
+  store.removeItem(key);
+  store.setItem(`cart:${uuid(1)}:edit`, JSON.stringify({ id: uuid(1), label: "Different chips", quantity: "6", unit: "boxes", flexibility: "any_brand", note: "" }));
+  nodes(view.render()).find(node => node.props?.["aria-label"] === "Got Chips").props.onChange({ target: { checked: true } });
+  assert.equal(saved.length, 0);
+  store.removeItem(`cart:${uuid(1)}:edit`);
+  nodes(view.render()).find(node => node.props?.["aria-label"] === "Got Chips").props.onChange({ target: { checked: true } });
+  assert.equal(saved.length, 1);
+});
+
+test("editing need cannot overwrite a fresher progress note", async () => {
+  const harness = componentModule("src/components/MarketChecklist.tsx");
+  const parent = harness.mount("MarketChecklist", { items: [item({ note: "Original note" })], ar: false, draftKey: "notes", allowEdit: true,
+    onAdd: async () => true, onEdit: async () => true, onRemove: async () => true, onProgress: async () => true });
+  const edit = nodes(parent.render()).find(node => typeof node.type === "function" && node.type.name === "ItemForm" && node.props.item);
+  const saves = [];
+  const form = harness.mount(edit.type, { ...edit.props, onSave: async value => { saves.push(value); return true; } });
+  form.render(); await form.effects();
+  assert.equal(nodes(form.render()).filter(node => node.type === "textarea").length, 0, "Note editing should have one location");
+  form.render({ item: { ...edit.props.item, note: "Updated in progress" } });
+  await nodes(form.render()).find(node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(saves[0].note, "Updated in progress");
+});
+
 test("adding a generic need preserves its stable row identity and draft until the save is confirmed", async () => {
   const submitted = [];
   let success = false;
