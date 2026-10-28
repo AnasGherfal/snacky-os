@@ -53,7 +53,7 @@ test("unmapped sales display actual source products with a mapping review link, 
   assert.match(text,/180/);
   assert.match(text,/184/);
   assert.match(text,/has not guessed/);
-  assert.match(text, /"href":"\\/vms-mappings"/);
+  assert.match(text, /"href":"\/vms-mappings"/);
 });
 test("verified empty buying gap is distinct from loading failure",async()=>{
   const {text}=await render({items:[{...item,suggestedBuyQty:0,suggestedBoxesQty:0,purchaseUnits:0,estimatedBuyCost:0}]});assert.match(text,/Nothing to buy for this coverage window/);assert.doesNotMatch(text,/could not be verified/);
