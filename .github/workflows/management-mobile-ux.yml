@@ -52,11 +52,14 @@ jobs:
       - name: Lint physical ledger model and reader
         run: npx eslint src/lib/storage-inventory-model.ts src/lib/storage-inventory-data.ts src/lib/operator-bag-stock.ts src/lib/inventory-movement-filter-groups.ts src/lib/product-quantity.ts src/app/inventory/OperatorBagStockView.tsx
       - name: Lint Storage layout (legacy any typing deferred)
-        run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
+        run: >-
+          npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Lint full Movement Log (legacy any typing deferred)
-        run: npx eslint src/app/inventory/movements/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
+        run: >-
+          npx eslint src/app/inventory/movements/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Lint CRM workspace (pre-existing any typing deferred)
-        run: npx eslint src/components/CrmWorkspace.tsx --rule "@typescript-eslint/no-explicit-any: off"
+        run: >-
+          npx eslint src/components/CrmWorkspace.tsx --rule "@typescript-eslint/no-explicit-any: off"
       - name: Typecheck
         run: npm run typecheck
       - name: Production build
