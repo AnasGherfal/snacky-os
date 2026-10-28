@@ -99,3 +99,31 @@ const groups: Record<AppModuleKey, ModuleTabGroup> = {
 };
 export function pathnameFromHref(href: string) { return href.split("?")[0]?.split("#")[0] || href; }
 export function getModuleTabGroupForPath(pathname: string): ModuleTabGroup | null { const key = getAppModuleKey(pathname); return key ? groups[key] : null; }
+
+
+/**
+ * Creation and editing are focused workflows. Showing the full module tab
+ * strip above a long form crowds the Save/Apply action and encourages
+ * accidental navigation. List, overview and audit pages retain tabs.
+ * All hidden tab destinations remain accessible via sidebar/More.
+ */
+export function isFocusedWorkFormPath(pathname: string): boolean {
+  return [
+    /^\/routes\/new(?:\/|$)/,
+    /^\/routes\/[^/]+\/edit(?:\/|$)/,
+    /^\/purchases\/new(?:\/|$)/,
+    /^\/purchases\/[^/]+\/edit(?:\/|$)/,
+    /^\/products\/new(?:\/|$)/,
+    /^\/products\/[^/]+\/edit(?:\/|$)/,
+    /^\/machines\/new(?:\/|$)/,
+    /^\/machines\/[^/]+\/edit(?:\/|$)/,
+    /^\/issues\/new(?:\/|$)/,
+    /^\/issues\/[^/]+\/edit(?:\/|$)/,
+    /^\/finance\/transactions\/new(?:\/|$)/,
+    /^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/,
+    /^\/cash-collections\/new(?:\/|$)/,
+    /^\/cash-collections\/[^/]+\/edit(?:\/|$)/,
+    /^\/locations-pipeline\/new(?:\/|$)/,
+    /^\/locations-pipeline\/[^/]+\/edit(?:\/|$)/,
+  ].some((pattern) => pattern.test(pathname));
+}
