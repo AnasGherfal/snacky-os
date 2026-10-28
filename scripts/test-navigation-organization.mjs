@@ -24,9 +24,10 @@ function moduleItems(name) {
 test("daily workflows have consistent primary tab order", () => {
   const expected = {
     stockTabs: ["/inventory", "/restock-priority/purchase-list", "/purchases", "/products"],
-    crmTabs: ["/my-work", "/issues", "/locations-pipeline", "/relationships"],
+    crmTabs: ["/my-work", "/issues", "/locations-pipeline", "/follow-ups"],
+    machinesTabs: ["/machines", "/locations", "/machines/status", "/machines/maintenance"],
     financeTabs: ["/finance", "/finance/transactions", "/finance/expenses", "/finance/rent"],
-    adminTabs: ["/admin", "/team", "/settings", "/vms-import"],
+    adminTabs: ["/admin", "/team", "/settings", "/admin/vms-api"],
     reportsTabs: ["/reports", "/sales", "/reports/cash-reconciliation", "/reports/route-performance"],
   };
   for (const [name, firstFour] of Object.entries(expected)) {
@@ -40,7 +41,7 @@ test("daily workflows have consistent primary tab order", () => {
 test("secondary tabs are reachable through More and do not prefetch everything", () => {
   assert.match(tabs, /const primaryTabs = tabs\.slice\(0, 4\)/);
   assert.match(tabs, /const extraTabs = tabs\.slice\(primaryTabs\.length\)/);
-  assert.match(tabs, /extraTabs\.map/);
+  assert.match(tabs, /renderMoreItems\(primaryMoreItems\)/);
   assert.match(tabs, /aria-current=\{active \? "page"/);
   assert.doesNotMatch(tabs, /tabs\.forEach\(\(tab\) => router\.prefetch/);
 });
@@ -69,12 +70,12 @@ test("daily Stock navigation contains no duplicated diagnostic or buying screens
   assert.match(storage, /href="\/restock-priority\/purchase-list"/);
   assert.match(storage, /href="\/inventory\/stocktake"/);
   assert.match(config, /group: "Stock controls", groupAr: "مراجعة المخزون"/);
-  assert.match(tabs, /extraTabs\.map/);
+  assert.match(tabs, /renderMoreItems\(primaryMoreItems\)/);
 });
 
 test("CRM and Reports show only decision-making pages", () => {
   assert.deepEqual(moduleItems("crmTabs").slice(0, 4), [
-    "/my-work", "/issues", "/locations-pipeline", "/relationships",
+    "/my-work", "/issues", "/locations-pipeline", "/follow-ups",
   ]);
   assert.equal(moduleItems("crmTabs").includes("/my-work/search"), false);
   assert.equal(moduleItems("crmTabs").includes("/my-work/notes"), false);
@@ -82,4 +83,21 @@ test("CRM and Reports show only decision-making pages", () => {
     "/reports", "/sales", "/reports/cash-reconciliation",
     "/reports/route-performance", "/reports/route-product-activity",
   ]);
+});
+
+test("advanced pages stay searchable but never compete with everyday work",()=>{
+  for (const href of [
+    "/admin/testing-lab","/admin/stop-override","/vms-import/monthly-profit-repair",
+    "/finance/cleanup","/finance/import/review","/my-work/team","/contacts",
+  ]) {
+    const line=config.split("\n").find(x=>x.includes(`href: "${href}"`));
+    assert.ok(line && line.includes("advanced: true"),`Advanced link ${href} must be tucked away`);
+  }
+  for(const href of ["/routes/new","/cash-handling","/machines/status","/operations-health","/restock-priority/purchase-list"]) {
+    assert.ok(config.includes(`href: "${href}"`),`Useful work ${href} must remain discoverable`);
+  }
+  assert.match(tabs,/const advancedMoreItems = extraTabs\.filter/);
+  assert.match(tabs,/const activeAdvanced =/);
+  assert.match(tabs,/open=\{activeAdvanced \? true : undefined\}/);
+  assert.match(tabs,/Find a page/);
 });
