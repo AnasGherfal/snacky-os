@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { TeamMemberForm } from "@/components/TeamMemberForm";
 import { FormPageLayout, PageHeader } from "@/components/ui";
@@ -7,7 +8,7 @@ import { createTeamMember } from "@/lib/team-actions";
 
 export default async function NewTeamMemberPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { error } = await searchParams;
 
@@ -20,7 +21,7 @@ export default async function NewTeamMemberPage({ searchParams }: { searchParams
             {error}
           </div>
         ) : null}
-        <TeamMemberForm action={createTeamMember} submitLabel="Create member" />
+        <TeamMemberForm action={createTeamMember} submitLabel="Create member" createRequestId={randomUUID()} createRequestOwnerId={profile.id} />
       </FormPageLayout>
     </>
   );

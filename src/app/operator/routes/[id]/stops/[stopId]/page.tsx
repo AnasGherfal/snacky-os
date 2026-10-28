@@ -6,6 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
+import { StopCompletionReadinessCard } from "@/components/operator/StopCompletionReadinessCard";
+import { getStopCompletionReadiness } from "@/lib/operator-stop-readiness";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
@@ -1823,8 +1825,20 @@ export default function MachineStopPage() {
     );
   }
 
-  const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady;
-  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit;
+  const stopReadiness = getStopCompletionReadiness({
+    cleaningDone,
+    savedPhoto: persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto),
+    selectedPhoto: Boolean(finalPhotoFile),
+    photoSaving: finalPhotoSaving,
+    smartReturnRequired: activeSmartSwapRequirements.length,
+    smartReturnOutstanding: unresolvedSmartReturnRequirements.length,
+    smartXyRequired: activeSmartSwapRequirements.length,
+    smartXyOutstanding: unresolvedSmartXyRequirements.length,
+    compressorInstalled: compressorSafetyInstalled,
+    compressorProofReady,
+    submitting,
+  });
+  const canSubmitStop = stopReadiness.canComplete;
 
   return (
     <>
@@ -1838,6 +1852,15 @@ export default function MachineStopPage() {
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         <RouteStopQuickActions />
+        <StopCompletionReadinessCard
+          steps={stopReadiness.steps}
+          remainingCount={stopReadiness.remainingCount}
+          busy={stopReadiness.busy}
+          locale={locale}
+          savedPhoto={persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto)}
+          selectedPhoto={Boolean(finalPhotoFile)}
+          onOpenCleaning={() => setShowCleaningChecklist(true)}
+        />
 
         {(stopData.queuedXyChanges ?? []).some((change) => change.status === "pending" || change.status === "conflict") ? (
           <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
@@ -2915,7 +2938,7 @@ export default function MachineStopPage() {
           }}
         />
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+        <section id="refill-proof" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">{tr("Refill proof", "إثبات التعبئة")}</h2>
@@ -2956,7 +2979,7 @@ export default function MachineStopPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+        <section id="cleaning-checklist" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="mb-4 text-lg font-semibold">{tr("Cleaning and final check", "التنظيف والفحص النهائي")}</h2>
           <button type="button" onClick={() => setShowCleaningChecklist(!showCleaningChecklist)} className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100">
             <div className="flex items-center justify-between">
@@ -2983,8 +3006,22 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-          <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+        <div className="sticky bottom-2 z-20 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-lg backdrop-blur sm:mx-0 sm:rounded-xl sm:border sm:border-slate-200 sm:px-4">
+          <p aria-live="polite" className={stopReadiness.remainingCount > 0 ? "text-sm font-semibold text-amber-900" : "text-sm font-semibold text-emerald-800"}>
+            {submitting ? tr("Saving actual stock and completing stop…", "جارٍ حفظ المخزون الفعلي وإنهاء الموقع…")
+              : finalPhotoSaving ? tr("Saving machine photo…", "جارٍ حفظ صورة الجهاز…")
+              : stopReadiness.remainingCount > 0
+                ? tr(String(stopReadiness.remainingCount) + " check(s) remaining.", "متبقي " + stopReadiness.remainingCount + " من الفحوصات.")
+                : tr("Ready. Actual quantities save on Complete Stop.", "جاهز. تُحفظ الكميات الفعلية عند إنهاء الموقع.")}
+          </p>
+          {stopReadiness.next && !submitting && !finalPhotoSaving ? (
+            <a href={"#" + stopReadiness.next.anchor}
+              onClick={stopReadiness.next.kind === "cleaning" ? () => setShowCleaningChecklist(true) : undefined}
+              className="btn-secondary flex min-h-11 items-center justify-center text-center">
+              {tr("Go to next unfinished check", "الانتقال للفحص الناقص التالي")}
+            </a>
+          ) : null}
+          <button type="button" onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary min-h-12 w-full disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? `${t("Saving")}...` : t("Complete Stop")}
           </button>
           <SecondaryButton href={routeHref} type="button">{tr("Cancel", "إلغاء")}</SecondaryButton>

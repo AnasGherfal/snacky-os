@@ -11,6 +11,7 @@ on:
       - "src/app/purchases/**"
       - "src/lib/authz.ts"
       - "src/lib/operator-purchase-overview.ts"
+      - "src/lib/operator-money-availability-auth.ts"
       - "src/lib/purchase-actions.ts"
       - "src/lib/xy-vms-data.ts"
       - "src/components/module-tabs-config.ts"
@@ -24,6 +25,7 @@ on:
       - "scripts/test-operator-money-debts.mjs"
       - "scripts/test-operator-money-periods.mjs"
       - "scripts/test-operator-purchase-overview.mjs"
+      - "scripts/test-operator-money-availability-auth.mjs"
       - "scripts/test-purchase-payment-ledger.mjs"
       - "scripts/test-xy-vms-data.mjs"
       - ".github/workflows/operator-money-debts-check.yml"
@@ -39,11 +41,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Personal purchase overview and access regressions
-        run: node --experimental-strip-types --test scripts/test-operator-purchase-overview.mjs
+        run: node --experimental-strip-types --test scripts/test-operator-purchase-overview.mjs scripts/test-operator-money-availability-auth.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Lint purchase overview
-        run: npx eslint src/lib/operator-purchase-overview.ts src/app/api/operator-money/overview/route.ts src/app/operator-money/OperatorMoneyWorkspace.tsx
+        run: npx eslint src/lib/operator-purchase-overview.ts src/lib/operator-money-availability-auth.ts src/app/api/operator-money/overview/route.ts src/app/api/operator-money/route.ts src/app/operator-money/OperatorMoneyWorkspace.tsx
       - name: Operator money, supplier payment, and XY price regressions
         run: >-
           node --test

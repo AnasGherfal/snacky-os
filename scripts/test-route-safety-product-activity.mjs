@@ -70,7 +70,12 @@ test("current route completion endpoint and payload remain intact", () => {
   assert.match(routePage, /extraItems:\s*extraProducts/);
   assert.match(routePage, /missingProducts:\s*missingReports/);
   assert.match(routePage, /CompressorSafetyProofCard/);
-  assert.match(routePage, /compressorReadyForSubmit/);
+  const readiness = read("src/lib/operator-stop-readiness.ts");
+  assert.match(routePage, /compressorInstalled: compressorSafetyInstalled/);
+  assert.match(routePage, /compressorProofReady,/);
+  assert.match(routePage, /const canSubmitStop = stopReadiness\.canComplete/);
+  assert.match(readiness, /if \(input\.compressorInstalled\)/);
+  assert.match(readiness, /done: input\.compressorProofReady/);
   assert.match(routePage, /Save the compressor ON photo before completing this stop/);
 });
 

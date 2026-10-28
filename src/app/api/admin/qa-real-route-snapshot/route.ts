@@ -37,12 +37,17 @@ export async function GET() {
     a.machine_code === "SNK-2509000371" ? -1 : b.machine_code === "SNK-2509000371" ? 1 : 0
   ));
   const machineIds = sorted.map((machine) => machine.id);
-  const { data: stock, error: stockError } = await db.from("latest_vms_stock_by_slot")
-    .select("machine_id,slot_code,product_id,current_qty,capacity,captured_at,vms_product_name")
+  const { data: stock, count: stockCount, error: stockError } = await db.from("latest_vms_stock_by_slot")
+    .select("machine_id,slot_code,product_id,current_qty,capacity,captured_at,vms_product_name", { count: "exact" })
     .in("machine_id", machineIds)
     .order("slot_code")
     .limit(250);
-  if (stockError) return response({ ok: false, error: "Could not read XY selection snapshots." }, 503);
+  if (stockError || stockCount === null || !Array.isArray(stock)) {
+    return response({ ok: false, error: "Could not fully verify XY selection snapshots." }, 503);
+  }
+  if (stock.length !== stockCount) {
+    return response({ ok: false, error: "XY selection snapshot was truncated; no partial training route will be created." }, 409);
+  }
   const productIds = [...new Set((stock ?? []).map((slot) => String(slot.product_id ?? "")).filter(Boolean))];
   const { data: productRows, error: productError } = productIds.length
     ? await db.from("products")
@@ -62,15 +67,16 @@ export async function GET() {
         return true;
       }).map((slot) => {
         const product = byProduct.get(String(slot.product_id ?? ""));
-        const current = Number(slot.current_qty);
-        const capacity = Number(slot.capacity);
+        // Number(null) is 0, but an unknown XY quantity is NOT an empty slot.
+        const current = slot.current_qty === null || slot.current_qty === undefined ? null : Number(slot.current_qty);
+        const capacity = slot.capacity === null || slot.capacity === undefined ? null : Number(slot.capacity);
         return {
           slotCode: String(slot.slot_code),
           productId: product?.id ?? null,
           productName: product?.name ?? slot.vms_product_name ?? "Unmapped",
           imageUrl: product?.image_url ?? null,
-          currentQty: Number.isSafeInteger(current) && current >= 0 ? current : null,
-          capacity: Number.isSafeInteger(capacity) && capacity > 0 ? capacity : null,
+          currentQty: current !== null && Number.isSafeInteger(current) && current >= 0 ? current : null,
+          capacity: capacity !== null && Number.isSafeInteger(capacity) && capacity > 0 ? capacity : null,
           priceLyd: Math.max(0, Number(product?.current_selling_price_lyd ?? 0) || 0),
           capturedAt: slot.captured_at ?? null,
         };

@@ -61,7 +61,8 @@ jobs:
           path: diagnostics/*.log
           retention-days: 7
   browser:
-    runs-on: ubuntu-latest
+    # Playwright 1.55.0 Chromium is supported on Ubuntu 24.04, not ubuntu26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: contracts
     steps:

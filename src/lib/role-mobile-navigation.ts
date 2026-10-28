@@ -21,13 +21,13 @@ const management: MobileShortcut[] = [
   { href: "/dashboard", en: "Home", ar: "الرئيسية", icon: "house" },
   { href: "/routes", en: "Routes", ar: "الجولات", icon: "route", module: "operations" },
   { href: "/inventory", en: "Stock", ar: "المخزون", icon: "warehouse", module: "stock" },
-  { href: "/machines", en: "Machines", ar: "الماكينات", icon: "machines", module: "machines" },
+  { href: "/cash-collections", en: "Cash", ar: "النقدية", icon: "cash", module: "cash" },
 ];
 const customerRelations: MobileShortcut[] = [
   { href: "/my-work", en: "My Work", ar: "عملي", icon: "work" },
   { href: "/issues", en: "Issues", ar: "البلاغات", icon: "issues" },
   { href: "/locations-pipeline", en: "Leads", ar: "الجهات", icon: "leads" },
-  { href: "/relationships", en: "Sites", ar: "المواقع", icon: "sites" },
+  { href: "/follow-ups", en: "Follow-ups", ar: "المتابعات", icon: "work" },
 ];
 const operator: MobileShortcut[] = [
   { href: "/operator/routes", en: "My Routes", ar: "جولاتي", icon: "route" },

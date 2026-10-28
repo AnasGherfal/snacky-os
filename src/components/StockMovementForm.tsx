@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useDeferredValue, useMemo, useState, useTransition } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
@@ -45,6 +46,7 @@ function redirectTarget(error: unknown) {
 }
 
 export function StockMovementForm({
+  userId,
   initialClientSubmissionId,
   products,
   recentProductIds,
@@ -52,6 +54,7 @@ export function StockMovementForm({
   canSeeSellingPrice,
   canQuickAddProduct,
 }: {
+  userId: string;
   initialClientSubmissionId: string;
   products: ProductOption[];
   recentProductIds: string[];
@@ -59,6 +62,8 @@ export function StockMovementForm({
   canSeeSellingPrice: boolean;
   canQuickAddProduct: boolean;
 }) {
+  const router = useRouter();
+  const quickAddStorageKey = `snacky:stock-quick-product:v1:${userId}`;
   const [clientSubmissionId, setClientSubmissionId] = useState(initialClientSubmissionId);
   const [selectedProductId, setSelectedProductId] = useState("");
   const [query, setQuery] = useState("");
@@ -72,8 +77,60 @@ export function StockMovementForm({
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [missingProduct, setMissingProduct] = useState("");
   const [isPending, startTransition] = useTransition();
+  const quickAddInFlightRef = useRef(false);
+  const quickAddFrozenRequestRef = useRef<FormData | null>(null);
+  const [quickAddError, setQuickAddError] = useState("");
+  const [quickAddRecoveryBlocked, setQuickAddRecoveryBlocked] = useState(false);
+  const adjustmentInFlightRef = useRef(false);
+  const adjustmentCompletedRef = useRef(false);
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
   const deferredQuery = useDeferredValue(query);
   const draftKey = useDraftKey("inventory-movement", ["new"]);
+
+  // Recover an unconfirmed product creation after a tab reload. A fresh UUID
+  // would bypass the server's duplicate protection, so keep the ORIGINAL
+  // immutable request in tab-scoped, account-scoped session storage.
+  useEffect(() => {
+    if (!canQuickAddProduct) return;
+    let raw: string | null;
+    try { raw = window.sessionStorage.getItem(quickAddStorageKey); }
+    catch { return; }
+    if (!raw) return;
+    let blocked = false;
+    let message = "A product save from this tab was interrupted. Check Products, then retry the SAME saved request.";
+    try {
+      const saved = JSON.parse(raw) as { id?: unknown; fields?: unknown };
+      const id = String(saved?.id ?? "");
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+        || !saved.fields || typeof saved.fields !== "object" || Array.isArray(saved.fields)) {
+        throw new Error("Bad saved request metadata");
+      }
+      const fields = saved.fields as Record<string, unknown>;
+      const immutable = new FormData();
+      for (const name of ["sku", "name", "barcode", "category", "brand", "selling_price"]) {
+        if (typeof fields[name] !== "string" || fields[name].length > 1000) {
+          throw new Error("Incomplete saved product request");
+        }
+        immutable.set(name, fields[name]);
+      }
+      if (!String(immutable.get("name") ?? "").trim()) throw new Error("Missing saved product name");
+      immutable.set("client_product_id", id);
+      quickAddFrozenRequestRef.current = immutable;
+    } catch {
+      // Do not silently generate a different UUID when we cannot read the
+      // earlier request. Require manual review before starting a new one.
+      blocked = true;
+      message = "Saved product request could not be recovered. Check Products before starting another.";
+    }
+    // Defer UI state updates until after this effect so product form hydration
+    // and initial draft restoration do not race the recovery banner.
+    const timer = window.setTimeout(() => {
+      setQuickAddRecoveryBlocked(blocked);
+      setQuickAddError(message);
+      setShowQuickAdd(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [canQuickAddProduct, quickAddStorageKey]);
   const movementDraft = useMemo<StockMovementDraft>(() => ({
     clientSubmissionId,
     selectedProductId,
@@ -183,29 +240,84 @@ export function StockMovementForm({
   };
 
   const quickAddAction = (formData: FormData) => {
+    // Disabling after React paints is too late for rapid double-taps. Keep
+    // both a synchronous lock and the exact first request across uncertain
+    // network outcomes. The server verifies its UUID before returning a replay.
+    if (quickAddInFlightRef.current || quickAddRecoveryBlocked) return;
+    if (!quickAddFrozenRequestRef.current) {
+      const clientProductId = globalThis.crypto?.randomUUID?.();
+      if (!clientProductId) {
+        setQuickAddError("Could not create a safe request ID. Reload this page before adding a product.");
+        return;
+      }
+      formData.set("client_product_id", clientProductId);
+      quickAddFrozenRequestRef.current = formData;
+      try {
+        window.sessionStorage.setItem(quickAddStorageKey, JSON.stringify({
+          id: clientProductId,
+          fields: Object.fromEntries(
+            ["sku", "name", "barcode", "category", "brand", "selling_price"]
+              .map((name) => [name, String(formData.get(name) ?? "")]),
+          ),
+        }));
+      } catch { /* The in-memory frozen request still protects this mounted form. */ }
+    }
+    quickAddInFlightRef.current = true;
+    setQuickAddError("");
     startTransition(async () => {
-      await createQuickProduct(formData);
-      setShowQuickAdd(false);
+      try {
+        await createQuickProduct(quickAddFrozenRequestRef.current!);
+        quickAddFrozenRequestRef.current = null;
+        try { window.sessionStorage.removeItem(quickAddStorageKey); }
+        catch { /* Browser storage unavailable. */ }
+        setQuickAddError("");
+        setShowQuickAdd(false);
+        router.refresh();
+      } catch (error) {
+        console.error("[stock] Could not confirm quick product creation", error);
+        setQuickAddError("Save not confirmed. Check Products, then retry this SAME request. A new product will not be created on an identical retry.");
+      } finally {
+        quickAddInFlightRef.current = false;
+      }
     });
   };
 
   const submitMovementAction = async (formData: FormData) => {
+    if (adjustmentInFlightRef.current || adjustmentCompletedRef.current) return;
+    adjustmentInFlightRef.current = true;
+    setAdjustmentSaving(true);
     const nextDraft = movementDraft;
     localDraft.saveNow(nextDraft);
     try {
       await createStorageAdjustment(formData);
+      adjustmentCompletedRef.current = true;
       localDraft.clearDraft();
     } catch (error) {
       localDraft.saveNow(nextDraft);
       const target = redirectTarget(error);
-      if (target && !target.includes("error=")) localDraft.clearDraft();
+      if (target && !target.includes("error=")) {
+        adjustmentCompletedRef.current = true;
+        localDraft.clearDraft();
+      }
       throw error;
+    } finally {
+      adjustmentInFlightRef.current = false;
+      setAdjustmentSaving(false);
     }
   };
 
   return (
     <>
-      <form action={submitMovementAction} onSubmitCapture={() => localDraft.saveNow(movementDraft)} className="space-y-6">
+      <form action={submitMovementAction} onSubmitCapture={(event) => {
+        if (adjustmentInFlightRef.current || adjustmentCompletedRef.current) {
+          event.preventDefault();
+          return;
+        }
+        localDraft.saveNow(movementDraft);
+      }} className="space-y-6" aria-busy={adjustmentSaving}>
+      {adjustmentSaving ? <p role="status" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm font-medium text-sky-950">
+        Saving storage adjustment… / جارٍ حفظ تعديل المخزون… Do not submit again.
+      </p> : null}
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
       <input type="hidden" name="product_id" value={selectedProductId} />
       <input type="hidden" name="quantity" value={simpleQuantity} />
@@ -322,7 +434,9 @@ export function StockMovementForm({
       </FormSection>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button className="btn-primary" disabled={!selectedProductId || !simpleStorageLocationId || (adjustmentType !== "set_exact" && simpleQuantity < 1)}>Save adjustment</button>
+        <button className="btn-primary disabled:opacity-50" disabled={adjustmentSaving || adjustmentCompletedRef.current || !selectedProductId || !simpleStorageLocationId || (adjustmentType !== "set_exact" && simpleQuantity < 1)}>
+          {adjustmentSaving ? "Saving adjustment…" : adjustmentCompletedRef.current ? "Saved" : "Save adjustment"}
+        </button>
         <SecondaryButton href="/inventory">Cancel</SecondaryButton>
       </div>
       </form>
@@ -335,14 +449,35 @@ export function StockMovementForm({
               <button type="button" className="btn-secondary" onClick={() => setShowQuickAdd(false)}>Close</button>
             </div>
             <div className="space-y-4">
-              <form action={quickAddAction} className="space-y-4">
+              <form action={quickAddAction} className="space-y-4" aria-busy={isPending}>
+                <fieldset disabled={isPending || Boolean(quickAddFrozenRequestRef.current)} className="min-w-0 space-y-4 border-0 p-0">
                 <FormField label="SKU" hint="Product code will be generated automatically if left blank. SKU is the internal/VMS product code used for matching and reports."><input name="sku" className="field-input" placeholder="Auto if blank" /></FormField>
                 <FormField label="Product name" required><input name="name" required className="field-input" /></FormField>
                 <FormField label="Barcode"><input name="barcode" className="field-input" /></FormField>
                 <FormField label="Category"><select name="category" className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>
                 <FormField label="Brand"><input name="brand" className="field-input" /></FormField>
                 <FormField label="Selling price"><input name="selling_price" type="number" step="0.01" className="field-input" /></FormField>
-                <button className="btn-primary" disabled={isPending}>{isPending ? "Adding..." : "Add product"}</button>
+                </fieldset>
+                {quickAddFrozenRequestRef.current ? (
+                  <p role="status" className="text-sm text-amber-900">
+                    This retry uses your original saved product details for <strong>{String(quickAddFrozenRequestRef.current.get("name") ?? "the product")}</strong>.
+                    Check Products before starting a different item.
+                  </p>
+                ) : null}
+                {quickAddError ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{quickAddError}</p> : null}
+                <button className="btn-primary" disabled={isPending || quickAddInFlightRef.current || quickAddRecoveryBlocked}>{isPending ? "Adding…" : quickAddFrozenRequestRef.current ? "Retry saved product request" : "Add product"}</button>
+                {(quickAddFrozenRequestRef.current || quickAddRecoveryBlocked) && !isPending ? (
+                  <button type="button" className="btn-secondary" onClick={() => {
+                    if (!window.confirm("Check Products for the earlier item before starting a different request. Have you confirmed no duplicate will be created?")) return;
+                    quickAddFrozenRequestRef.current = null;
+                    setQuickAddRecoveryBlocked(false);
+                    try { window.sessionStorage.removeItem(quickAddStorageKey); }
+                    catch { /* Browser storage unavailable. */ }
+                    setQuickAddError("");
+                  }}>
+                    Start a different product request
+                  </button>
+                ) : null}
               </form>
             </div>
           </div>

@@ -385,6 +385,8 @@ export function LocalDraftForm({
   noValidate?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const submissionInFlightRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const draftKey = useDraftKey(formType, draftKeyParts, userId);
   const [snapshot, setSnapshot] = useState<FormDraftValue>({ controls: [], files: {} });
   const [restoredFileNames, setRestoredFileNames] = useState<string[]>([]);
@@ -408,6 +410,11 @@ export function LocalDraftForm({
 
   const wrappedAction = action
     ? async (formData: FormData) => {
+        // Server Actions are not guaranteed idempotent. Lock synchronously
+        // before the asynchronous request, including for Enter/rapid taps.
+        if (submissionInFlightRef.current) return;
+        submissionInFlightRef.current = true;
+        setSubmitting(true);
         const nextSnapshot = refreshSnapshot();
         draft.saveNow(nextSnapshot);
         try {
@@ -418,11 +425,18 @@ export function LocalDraftForm({
           const target = redirectTarget(error);
           if (target && !target.includes("error=")) draft.clearDraft();
           throw error;
+        } finally {
+          submissionInFlightRef.current = false;
+          setSubmitting(false);
         }
       }
     : undefined;
 
-  const handleSubmitCapture = (_event: FormEvent<HTMLFormElement>) => {
+  const handleSubmitCapture = (event: FormEvent<HTMLFormElement>) => {
+    if (submissionInFlightRef.current) {
+      event.preventDefault();
+      return;
+    }
     const nextSnapshot = refreshSnapshot();
     draft.saveNow(nextSnapshot);
   };
@@ -436,7 +450,13 @@ export function LocalDraftForm({
       onInput={refreshSnapshot}
       onChange={refreshSnapshot}
       onSubmitCapture={handleSubmitCapture}
+      aria-busy={submitting}
     >
+      {submitting ? (
+        <p role="status" className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+          Saving in Snacky OS · جارٍ الحفظ في سناكي — do not submit again / لا تضغط مرة ثانية
+        </p>
+      ) : null}
       <DraftRestoreBanner pendingDraft={draft.pendingDraft} onRestore={draft.restoreDraft} onDiscard={draft.discardDraft} />
       {restoredFileNames.length ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
@@ -444,7 +464,7 @@ export function LocalDraftForm({
         </div>
       ) : null}
       <DraftSaveStatus status={draft.status} />
-      {children}
+      <fieldset disabled={submitting} className="contents">{children}</fieldset>
     </form>
   );
 }

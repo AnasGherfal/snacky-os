@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { canReadOperatorPurchaseAvailability } from "@/lib/operator-money-availability-auth";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   emptyTotals, moneyValue, readAllPurchaseRows, resolvePurchasePerson,
@@ -25,6 +26,12 @@ function failure(message: string, status: number) {
 export async function GET(request: Request) {
   const profile = await getCurrentProfile();
   if (!profile) return failure("Session expired.", 401);
+  if (profile.active_status !== "active") return failure("Inactive team accounts cannot access personal purchase balances.", 403);
+  // The detailed stock proof may read privileged inventory movements, scoped
+  // to authorized purchases. Check employee status before any such read.
+  if (!isOwnerAdminRole(profile) && !canReadOperatorPurchaseAvailability(profile)) {
+    return failure("Personal purchase records are limited to active linked Snacky staff.", 403);
+  }
   const url = new URL(request.url);
   const manager = isOwnerAdminRole(profile) && url.searchParams.get("selfOnly") !== "1";
   let personId: string;

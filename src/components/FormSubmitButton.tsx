@@ -19,7 +19,7 @@ export function FormSubmitButton({
   pendingLabel = "Saving...",
   slowLabel,
   slowAfterMs = 12000,
-  timeoutLabel = "Save took too long. Please check your connection and retry.",
+  timeoutLabel = "Still saving. Do not submit again; check the saved record before attempting a new request.",
   timeoutMs = 30000,
   className = "btn-primary",
   disabled = false,
@@ -29,12 +29,13 @@ export function FormSubmitButton({
   const [showSlowLabel, setShowSlowLabel] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const duplicateGuardRef = useRef(false);
-  const activePending = !timedOut && (pending || optimisticPending);
+  const activePending = pending || optimisticPending;
 
   useEffect(() => {
     if (!activePending || !slowLabel) {
-      setShowSlowLabel(false);
-      return;
+      // Reset after the effect rather than synchronously cascading renders.
+      const reset = setTimeout(() => setShowSlowLabel(false), 0);
+      return () => clearTimeout(reset);
     }
     const timer = setTimeout(() => setShowSlowLabel(true), slowAfterMs);
     return () => clearTimeout(timer);
@@ -52,28 +53,30 @@ export function FormSubmitButton({
   useEffect(() => {
     if (!pending) {
       if (!optimisticPending) duplicateGuardRef.current = false;
-      setTimedOut(false);
-      return;
+      const reset = setTimeout(() => setTimedOut(false), 0);
+      return () => clearTimeout(reset);
     }
     duplicateGuardRef.current = true;
-    setOptimisticPending(false);
+    const resetOptimistic = setTimeout(() => setOptimisticPending(false), 0);
     const timer = setTimeout(() => {
+      // Slow network is NOT a failed write. Never unlock while the server
+      // action is still pending: a second click could create a duplicate.
       setTimedOut(true);
-      setOptimisticPending(false);
-      setShowSlowLabel(false);
-      duplicateGuardRef.current = false;
     }, timeoutMs);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(resetOptimistic);
+    };
   }, [optimisticPending, pending, timeoutMs]);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
-    if (disabled || (pending && !timedOut)) {
+    if (disabled || pending || optimisticPending) {
       event.preventDefault();
       return;
     }
     const form = event.currentTarget.form;
     if (form && !form.checkValidity()) return;
-    if (duplicateGuardRef.current && !timedOut) {
+    if (duplicateGuardRef.current) {
       event.preventDefault();
       return;
     }
@@ -86,7 +89,7 @@ export function FormSubmitButton({
     <button
       type="submit"
       className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}
-      disabled={disabled || (pending && !timedOut)}
+      disabled={disabled || pending || optimisticPending}
       aria-busy={activePending}
       onClick={handleClick}
     >
@@ -96,12 +99,8 @@ export function FormSubmitButton({
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
             {pendingLabel}
           </span>
-          {showSlowLabel ? <span className="text-xs font-medium opacity-80">{slowLabel}</span> : null}
-        </span>
-      ) : timedOut ? (
-        <span className="inline-flex flex-col items-center justify-center gap-1 text-center">
-          <span>{children}</span>
-          <span className="text-xs font-medium opacity-80">{timeoutLabel}</span>
+          {timedOut ? <span role="status" className="text-xs font-medium opacity-90">{timeoutLabel}</span>
+            : showSlowLabel ? <span className="text-xs font-medium opacity-80">{slowLabel}</span> : null}
         </span>
       ) : children}
     </button>

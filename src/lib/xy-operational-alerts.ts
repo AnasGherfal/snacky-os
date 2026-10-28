@@ -2,7 +2,8 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyLiveSalesConfig } from "@/lib/xy-live-sales-sync";
 import { getXyStockActivityNotices } from "@/lib/xy-stock-activity-alerts";
-import { lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
+import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
+import { knownXyNotificationEventKeys, lastSaleTimestamp, noSalesFor24Hours, verifiedRecentXySalesEvidence, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
 
 type Db = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type Notice = {
@@ -170,7 +171,7 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
   const salesConfig = getXyLiveSalesConfig();
   const latestSales = salesRunResult.data;
   const summary = (latestSales?.response_summary ?? {}) as Record<string, unknown>;
-  const salesReady = salesConfig.ready && verifiedSalesCoverage({
+  let salesReady = salesConfig.ready && verifiedSalesCoverage({
     status: latestSales?.status ?? null,
     completed_at: latestSales?.completed_at ?? null,
     range_start: typeof summary.range_start === "string" ? summary.range_start : null,
@@ -179,6 +180,49 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     mapped_machine_rows: Number(summary.mapped_machine_rows ?? 0),
     coverage_complete: summary.coverage_complete === true,
   }, nowMs);
+
+  if (salesReady) {
+    // A plausible sync summary alone cannot establish persisted XY source
+    // coverage. Require at least one actual successful, product+machine-mapped
+    // transaction from an eligible, non-deleted batch in the last 24 hours.
+    // Otherwise an empty/archived feed could make every stocked machine appear
+    // to have made zero sales. This check is read-only and never invents money.
+    const since = new Date(nowMs - 24 * HOUR).toISOString();
+    const nowIso = now.toISOString();
+    const [recentPayment,recentDelivery] = await Promise.all([
+      db.from("vms_transactions_raw")
+        .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+        .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+        .is("batch.deleted_at",null)
+        .eq("transaction_status","successful_sale")
+        .not("mapped_machine_id","is",null)
+        .not("mapped_product_id","is",null)
+        .gte("payment_time",since).lte("payment_time",nowIso)
+        .order("payment_time",{ascending:false}).limit(1).maybeSingle(),
+      db.from("vms_transactions_raw")
+        .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+        .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+        .is("batch.deleted_at",null)
+        .eq("transaction_status","successful_sale")
+        .not("mapped_machine_id","is",null)
+        .not("mapped_product_id","is",null)
+        .gte("delivery_time",since).lte("delivery_time",nowIso)
+        .order("delivery_time",{ascending:false}).limit(1).maybeSingle(),
+    ]);
+    if (recentPayment.error || recentDelivery.error) {
+      // This signal can fail independently. Keep machine-status and stock
+      // alerts working instead of letting a sales query abort the entire scan.
+      console.warn("[xy-alerts] Unable to verify recent eligible XY sale evidence", {
+        paymentError:recentPayment.error?.message??null,
+        deliveryError:recentDelivery.error?.message??null,
+      });
+      salesReady=false;
+    } else {
+      salesReady=verifiedRecentXySalesEvidence(
+        [recentPayment.data,recentDelivery.data],nowMs,
+      );
+    }
+  }
 
   if (!salesReady) {
     notices.push(simpleNotice(
@@ -190,20 +234,39 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     ));
   } else {
     // Only once a complete, recent XY transaction-window is verified can an
-    // absence of sales be treated as a meaningful signal.
+    // absence of sales be treated as a meaningful signal. Use the same
+    // non-deleted imported-batch provenance as cash reconciliation and XY
+    // sales health. Archived, failed and orphan raw rows are not evidence
+    // of recent successful transactions or machine activity.
+    let machineSalesReadIncomplete=false;
     for (const machine of machines) {
       if (!stockedMachineIds.has(machine.id)) continue;
       if (machine.vms_online_status !== "1") continue;
       const [payment,delivery] = await Promise.all([
-        db.from("vms_transactions_raw").select("payment_time,delivery_time")
+        db.from("vms_transactions_raw")
+          .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+          .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+          .is("batch.deleted_at",null)
           .eq("mapped_machine_id",machine.id).eq("transaction_status","successful_sale")
+          .not("payment_time","is",null)
           .order("payment_time",{ascending:false,nullsFirst:false}).limit(1).maybeSingle(),
-        db.from("vms_transactions_raw").select("payment_time,delivery_time")
+        db.from("vms_transactions_raw")
+          .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+          .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+          .is("batch.deleted_at",null)
           .eq("mapped_machine_id",machine.id).eq("transaction_status","successful_sale")
+          .not("delivery_time","is",null)
           .order("delivery_time",{ascending:false,nullsFirst:false}).limit(1).maybeSingle(),
       ]);
-      reportError(payment.error,"payment-time sales");
-      reportError(delivery.error,"delivery-time sales");
+      if (payment.error || delivery.error) {
+        machineSalesReadIncomplete=true;
+        console.warn("[xy-alerts] Could not verify XY machine sales",{
+          machineId:machine.id,
+          paymentError:payment.error?.message??null,
+          deliveryError:delivery.error?.message??null,
+        });
+        continue;
+      }
       const latestAt = Math.max(
         lastSaleTimestamp(payment.data) ?? 0,
         lastSaleTimestamp(delivery.data) ?? 0,
@@ -219,6 +282,16 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
         "/sales", machine.id,
       ));
     }
+    if (machineSalesReadIncomplete) {
+      notices.push(simpleNotice(
+        "xy_sales_machine_query_unavailable", "global",
+        String(lastSalesSuccessResult.data?.id ?? "unknown"),
+        "Some XY machine sales checks are unavailable",
+        "One or more XY machine transaction reads failed. Snacky skipped their no-sales warnings rather than treating missing records as zero sales.",
+        "تعذر التحقق من مبيعات بعض الماكينات",
+        "فشل التحقق من معاملات بعض الماكينات. لم يصدر سناكي تنبيه عدم المبيعات لها لأن البيانات غير المؤكدة لا تعني صفر مبيعات.",
+      ));
+    }
   }
 
   // Machine-specific independent inventory-activity warnings. Hospitals use
@@ -232,11 +305,33 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
 
   let created = 0;
   let existing = 0;
-  // Notifications.event_key has a unique partial index. Treat collisions as
-  // already delivered; never update read_at or repeatedly push to a phone.
+  // Current XY scans run frequently; most event keys were inserted in an
+  // earlier pass. Look up only those exact keys before attempting a write.
+  // The partial unique index on event_key is still the concurrency authority:
+  // no upsert, no read_at reset, no API change to existing notifications.
+  const expectedKeys: string[] = [];
+  for (const owner of owners) {
+    for (const notice of notices) {
+      expectedKeys.push(xyOperationalAlertEventKey(notice.kind, `${owner.id}:${notice.scope}`, notice.episode));
+    }
+  }
+  const lookup = await knownXyNotificationEventKeys(expectedKeys, async (keys) => {
+    const result = await db.from("notifications")
+      .select("event_key")
+      .in("event_key", keys)
+      .limit(keys.length);
+    return { data: result.data, error: result.error };
+  });
+  const existingKeys = lookup.keys;
+  if (!lookup.verified) {
+    // Read failures must never hide a new alert; fall back to the proven
+    // insert + unique-conflict handling used before this optimization.
+    console.warn("[xy-alerts] Existing-key lookup unavailable; using safe insert fallback.");
+  }
   for (const owner of owners) {
     for (const notice of notices) {
       const eventKey = xyOperationalAlertEventKey(notice.kind, `${owner.id}:${notice.scope}`, notice.episode);
+      if (existingKeys.has(eventKey)) { existing++; continue; }
       const { error } = await db.from("notifications").insert({
         user_id: owner.id,
         type: notice.type,
@@ -250,8 +345,9 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
         source_id: notice.sourceId ?? null,
         event_key: eventKey,
       });
-      if (error?.code === "23505") { existing++; continue; }
+      if (error?.code === "23505") { existingKeys.add(eventKey); existing++; continue; }
       reportError(error,"persist in-app notification");
+      existingKeys.add(eventKey);
       created++;
     }
   }

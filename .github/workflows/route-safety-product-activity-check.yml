@@ -13,6 +13,10 @@ on:
       - "src/app/api/operator/routes/[id]/stops/[stopId]/manual-sales/route.ts"
       - "src/app/api/operator/routes/[id]/stops/[stopId]/adjustments/route.ts"
       - "src/lib/operator-actions.ts"
+      - "src/lib/route-create-request.ts"
+      - "src/app/api/routes/route.ts"
+      - "src/app/routes/new/RouteCreateForm.tsx"
+      - "scripts/test-route-create-safe-retry.mjs"
       - "src/components/OperationalSalesSummary.tsx"
       - "src/app/sales/page.tsx"
       - "src/app/reports/route-product-activity/page.tsx"
@@ -46,6 +50,8 @@ jobs:
         run: npm ci
       - name: Test route safety and product activity
         run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Test duplicate-safe route creation and request replay
+        run: node --experimental-strip-types --test scripts/test-route-create-safe-retry.mjs
       - name: Test route RLS hardening
         run: node --test scripts/test-route-rls-hardening.mjs
       - name: Test security-invoker view hardening

@@ -1,6 +1,6 @@
 'use client';
 
-import {useState} from 'react';
+import {useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 
 type Props={
@@ -17,10 +17,12 @@ type Props={
 export function CrmLocationPaymentScheduleForm(props:Props){
  const router=useRouter();
  const [busy,setBusy]=useState(false);
+ const inFlight=useRef(false);
+ const lastConfirmedPayload=useRef('');
  const [message,setMessage]=useState('');
  const tr=(en:string,ar:string)=>props.ar?ar:en;
  async function submit(formData:FormData){
-  setBusy(true);setMessage('');
+  if(inFlight.current)return;
   const payload={
    location_id:props.locationId,
    rent_amount:Number(formData.get('rent_amount')||0),
@@ -30,20 +32,27 @@ export function CrmLocationPaymentScheduleForm(props:Props){
    recurring:formData.get('recurring')==='yes',
    notice_days:Number(formData.get('notice_days')||7),
   };
+  const signature=JSON.stringify(payload);
+  if(lastConfirmedPayload.current===signature){
+   setMessage(tr('Already saved. Change a field to save an update.','تم الحفظ مسبقاً. غيّر إحدى الخانات لحفظ تحديث جديد.'));
+   return;
+  }
+  inFlight.current=true;setBusy(true);setMessage('');
   try{
    const response=await fetch('/api/crm/location-payment-schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
    const data=await response.json().catch(()=>({}));
    if(!response.ok||!data.ok)throw new Error(data.code||'save_failed');
+   lastConfirmedPayload.current=signature;
    setMessage(tr('Saved. Future rent obligations will appear automatically in My Work.','تم الحفظ. ستظهر التزامات الإيجار القادمة تلقائياً في «عملي اليوم».'));
    router.refresh();
   }catch{
    setMessage(tr('Could not save the payment schedule. Report the Snacky OS issue and try again.','تعذر حفظ جدول الدفع. بلّغ عن مشكلة Snacky OS ثم حاول مرة أخرى.'));
-  }finally{setBusy(false);}
+  }finally{inFlight.current=false;setBusy(false);}
  }
  return <section className="surface-card" dir={props.ar?'rtl':'ltr'}>
   <h2 className="font-semibold">{tr('Rent & recurring payment setup','إعداد الإيجار والدفع الدوري')}</h2>
   <p className="mt-2 text-sm text-slate-600">{tr('This controls the rent terms shown to Customer Relations and creates a separate unpaid obligation for every payment period. It does not create a Finance expense or mark anything paid.','هذا الإعداد يحدد شروط الإيجار الظاهرة لعلاقات العملاء، وينشئ التزاماً مستقلاً غير مدفوع لكل فترة دفع. لا ينشئ مصروفاً مالياً ولا يسجّل أي دفعة كمدفوعة.')}</p>
-  <form action={submit} className="mt-4 grid gap-4 md:grid-cols-2">
+  <form action={submit} className="mt-4 grid gap-4 md:grid-cols-2" aria-busy={busy}>
    <label className="text-sm">{tr('Agreement type','نوع الاتفاق')}
     <select name="agreement_type" defaultValue={props.agreementType||'other'} className="field-input mt-1">
      <option value="fixed_rent">{tr('Fixed rent','إيجار ثابت')}</option>

@@ -107,5 +107,5 @@ test("liquidity route is owner-only ahead of generic finance role access", () =>
 test("Finance warns that ledger balances do not verify cash or outstanding debts", () => {
   assert.ok(finance.includes("Ledger balance is not freely spendable cash."));
   assert.ok(finance.includes("outstanding private loans"));
-  assert.ok(growth.includes("reconciliationGap"));
+  assert.ok(growth.includes("cashToLedger"));
 });

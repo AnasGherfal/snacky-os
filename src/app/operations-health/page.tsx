@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { DataHealthActionButton } from "@/components/DataHealthActionButton";
 import { OperatorBagReconcileControl } from "@/components/OperatorBagReconcileControl";
+import { OwnerDailyCloseoutActionCenter } from "@/components/OwnerDailyCloseoutActionCenter";
+import { OwnerCashCustodyAuditPanel } from "@/components/OwnerCashCustodyAuditPanel";
+import { readOwnerCashCustodyAudit } from "@/lib/owner-cash-custody-source";
+import { readOwnerDueRouteCloseout } from "@/lib/owner-closeout-source";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -39,12 +43,13 @@ export default async function OperationsHealthPage() {
     todayCashResult,todayCashUncountedResult,todayRoutesResult,
     workspaceResult,machinesResult,locationsResult,currentCashResult,
     routeDiscrepanciesResult,cashSourceGapsResult,
+    allCashWithoutCountResult,cashReconciliationReviewResult,dueRouteCloseoutResult,cashCustodyAuditResult,
   ] = await Promise.all([
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart),
     db.from("cash_collections").select("id",{count:"exact",head:true})
       .is("voided_at",null).gte("collected_at",todayStart).lt("collected_at",tomorrowStart)
-      .in("custody_status",["removed","in_storage"]),
+      .is("counted_at",null),
     db.from("routes").select("id",{count:"exact",head:true})
       .gte("route_date",tripoliDate).lte("route_date",tripoliDate)
       .not("status","in", "(cancelled,canceled,voided)"),
@@ -54,16 +59,50 @@ export default async function OperationsHealthPage() {
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).gte("collected_at",daysAgo(30)).lt("collected_at",daysAgo(3)),
     db.from("route_inventory_discrepancies").select("id",{count:"exact",head:true}).in("status",[...ROUTE_INVENTORY_OPEN_STATUSES]),
     db.from("cash_collections").select("id",{count:"exact",head:true}).is("voided_at",null).in("reconciliation_status",["pending","variance_review"]).is("expected_source",null),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).not("collected_at","is",null).is("counted_at",null),
+    db.from("cash_collections").select("id",{count:"exact",head:true})
+      .is("voided_at",null).in("reconciliation_status",["pending","variance_review"]),
+    readOwnerDueRouteCloseout(db,tripoliDate),
+    readOwnerCashCustodyAudit(db),
   ]);
   const todayCashCount = !todayCashResult.error && typeof todayCashResult.count === "number" ? todayCashResult.count : null;
   const todayCashUncounted = !todayCashUncountedResult.error && typeof todayCashUncountedResult.count === "number" ? todayCashUncountedResult.count : null;
   const todayRouteCount = !todayRoutesResult.error && typeof todayRoutesResult.count === "number" ? todayRoutesResult.count : null;
+  const allCashWithoutCount = !allCashWithoutCountResult.error && typeof allCashWithoutCountResult.count === "number"
+    ? allCashWithoutCountResult.count : null;
+  const cashReconciliationReviewCount = !cashReconciliationReviewResult.error && typeof cashReconciliationReviewResult.count === "number"
+    ? cashReconciliationReviewResult.count : null;
+  // Independently verified discrepancy count remains useful when cleanup RPC fails.
+  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
+    ? routeDiscrepanciesResult.count : null;
 
 
 
   if(workspaceResult.error||!workspaceResult.data||typeof workspaceResult.data!=="object"){
     console.error("[data-health] Workspace unavailable",workspaceResult.error);
-    return <EmptyState title="Data Health unavailable" body="Snacky OS could not load the cleanup workspace."/>;
+    // Closeout is a separate read-only source; keep it usable when the
+    // legacy cleanup RPC is unavailable. NEVER show a green "no issues"
+    // state for a workspace that could not be verified.
+    return <div className="space-y-6">
+      <PageHeader title={tr("Data Health", "صحة البيانات")}
+        subtitle={tr("Owner daily closeout and operational checks", "ملخص الإغلاق اليومي ومراجعة التشغيل")}
+        action={<SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton>} />
+      <OwnerDailyCloseoutActionCenter
+        locale={locale}
+        date={tripoliDate}
+        routes={dueRouteCloseoutResult.data}
+        todayCashNotCounted={todayCashUncounted}
+        allCashNotCounted={allCashWithoutCount}
+        pendingCashReviews={cashReconciliationReviewCount}
+        openRouteStockDifferences={openRouteDiscrepancyCount}
+      />
+      <OwnerCashCustodyAuditPanel audit={cashCustodyAuditResult.data} locale={locale} />
+      <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+        {tr("Data Health cleanup workspace could not be verified. Advanced cleanup controls are unavailable; independently verified closeout counts above remain visible. This is not an all-clear.",
+          "تعذر التحقق من مساحة تنظيف صحة البيانات. أدوات التنظيف المتقدمة غير متاحة؛ تبقى أعداد الإغلاق المتحقق منها بشكل مستقل ظاهرة أعلاه، وهذا لا يعني عدم وجود مشاكل.")}
+      </div>
+    </div>;
   }
 
   const data=workspaceResult.data as any,counts=data.counts??{};
@@ -78,8 +117,6 @@ export default async function OperationsHealthPage() {
   const missingDistance=locations.filter((l:any)=>l.distance_from_storage_km===null||l.distance_from_storage_km===undefined);
   const currentCashCount = !currentCashResult.error && typeof currentCashResult.count === "number"
     ? currentCashResult.count : null;
-  const openRouteDiscrepancyCount = !routeDiscrepanciesResult.error && typeof routeDiscrepanciesResult.count === "number"
-    ? routeDiscrepanciesResult.count : null;
   const cashSourceGapCount = !cashSourceGapsResult.error && typeof cashSourceGapsResult.count === "number"
     ? cashSourceGapsResult.count : null;
 
@@ -115,10 +152,23 @@ export default async function OperationsHealthPage() {
     || openRouteDiscrepancyCount === null || cashSourceGapCount === null
     || todayCashCount === null || todayCashUncounted === null || todayRouteCount === null
     || negativeInventoryCount === null || safeRefillCancellationCount === null
-    || recentVmsAttentionCount === null;
+    || recentVmsAttentionCount === null
+    || allCashWithoutCount === null || cashReconciliationReviewCount === null
+    || !dueRouteCloseoutResult.data;
 
   return <div className="space-y-6">
     <PageHeader title={tr("Data Health", "صحة البيانات")} subtitle={tr("Fix operational exceptions safely. Cleanup preserves audit history.", "راجع الحالات التشغيلية دون فقدان سجل المراجعة أو إجراء تعديلات تلقائية.")} action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/machines/setup">{tr("Machine setup", "إعداد الأجهزة")}</SecondaryButton><SecondaryButton href="/dashboard">{tr("Dashboard", "لوحة التحكم")}</SecondaryButton></div>}/>
+
+    <OwnerDailyCloseoutActionCenter
+      locale={locale}
+      date={tripoliDate}
+      routes={dueRouteCloseoutResult.data}
+      todayCashNotCounted={todayCashUncounted}
+      allCashNotCounted={allCashWithoutCount}
+      pendingCashReviews={cashReconciliationReviewCount}
+      openRouteStockDifferences={openRouteDiscrepancyCount}
+    />
+    <OwnerCashCustodyAuditPanel audit={cashCustodyAuditResult.data} locale={locale} />
 
     <section aria-label={tr("Daily closeout", "الإغلاق اليومي")} className="surface-card space-y-3 border-t-4 border-t-emerald-700">
       <div className="flex flex-wrap items-center justify-between gap-2">

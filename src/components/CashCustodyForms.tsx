@@ -57,21 +57,17 @@ export function CashCountForm({
         No date range is needed here. Snacky OS uses each machine&apos;s previous full cash-removal record as the start and the removal date already saved on this bag as the end.
       </p>
       {recordedMachineTotal !== null && recordedMachineTotal !== undefined ? (
-        <>
-          <input type="hidden" name="use_recorded_machine_total" value="yes" />
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-            <div className="text-sm font-medium text-emerald-900">Cash-bag total from the machine amounts already recorded</div>
-            <div className="mt-2 text-3xl font-semibold text-emerald-950">{recordedMachineTotal.toFixed(2)} LYD</div>
-            <p className="mt-2 text-sm leading-6 text-emerald-900">No second cash amount is required. Snacky OS will verify and use the saved per-machine amounts when you confirm.</p>
-          </div>
-        </>
-      ) : (
-        <FormField label="Total cash counted (LYD)" required hint="No amount was declared during sealed-box removal. Enter the actual amount counted from this cash box once.">
-          <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" required className="field-input text-2xl font-semibold" placeholder="0.00" />
-        </FormField>
-      )}
-      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Confirm the saved collection now. The VMS comparison is a separate step and can be completed later.</p>
-      <button className="btn-primary w-full">{recordedMachineTotal !== null && recordedMachineTotal !== undefined ? "Confirm recorded cash total" : "Save cash total"}</button>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4" role="note">
+          <div className="text-sm font-semibold text-amber-950">Earlier removal declarations — NOT a physical count</div>
+          <div className="mt-2 text-xl font-semibold text-amber-950" dir="ltr">{recordedMachineTotal.toFixed(2)} LYD</div>
+          <p className="mt-2 text-sm leading-6 text-amber-950">This amount was entered at removal, not during counting. Physically count the cash bag and enter what is actually there.</p>
+        </div>
+      ) : null}
+      <FormField label="Cash physically counted (LYD)" required hint="Enter the actual cash in the sealed bag, including when earlier amounts were declared. Zero requires an actual empty-bag count.">
+        <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" autoComplete="off" required className="field-input text-2xl font-semibold" placeholder="0.00" />
+      </FormField>
+      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Count independently. VMS expectations and removal declarations are separate comparisons, not a substitute for physical counting.</p>
+      <button className="btn-primary w-full">Save physically counted total</button>
     </LocalDraftForm>
   );
 }

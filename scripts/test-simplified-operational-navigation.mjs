@@ -57,6 +57,6 @@ test("Inventory auditing and operator custody are preserved, not deleted",()=>{
   assert.match(movements,/\.from\("inventory_movements"\)/);
 });
 test("CRM and Reports keep core pages without extra duplicate dashboards",()=>{
-  assert.deepEqual(group("crmTabs").slice(0,4),["/my-work","/issues","/locations-pipeline","/relationships"]);
+  assert.deepEqual(group("crmTabs").slice(0,4),["/my-work","/issues","/locations-pipeline","/follow-ups"]);
   assert.deepEqual(group("reportsTabs"),["/reports","/sales","/reports/cash-reconciliation","/reports/route-performance","/reports/route-product-activity"]);
 });

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Fo
 import { useI18n } from '@/components/I18nProvider';
 import {
   cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand, cashReferenceMissing,
+  summarizeDeclaredRemoval,
   type CashAction, type CashBox, type CashCommand, type CashReceipt, type CashWorkspace,
 } from '@/lib/cash-handover';
 import styles from './CashHandlingWorkspace.module.css';
@@ -100,24 +101,12 @@ function CashHandlingClient({ userId }: { userId: string }) {
   function submit(event: FormEvent<HTMLFormElement>, box: CashBox) {
     event.preventDefault(); if (!action || pending || busy || cashReferenceMissing(box)) return;
     const form = new FormData(event.currentTarget), get = (key: string) => String(form.get(key) ?? '').trim();
-    const usesRecordedMachineAmounts = action === 'count'
-      && box.machines.length > 0
-      && box.machines.every(machine => Boolean(machine.id) && machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined);
-    const machineCountRows = usesRecordedMachineAmounts
-      ? box.machines.map(machine => ({ machine_id: machine.id!, amount: Number(machine.removed_amount_lyd).toFixed(2) }))
-      : null;
-    const machineCountTotal = machineCountRows
-      ? machineCountRows.reduce((sum, row) => {
-          const [whole, fraction = ''] = row.amount.split('.');
-          return sum + Number(whole || 0) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2) || 0);
-        }, 0)
-      : null;
+    // Never turn amounts entered by the collector at removal into a
+    // physical count. The counter enters the actual sealed-box total.
     const payload: CashCommand['payload'] = action === 'assign' ? { assigned_to: get('assigned_to') }
       : action === 'dropoff' ? { assigned_to: get('assigned_to'), storage_location: get('storage_location'), seal_condition: get('seal_condition'), notes: get('notes') }
       : action === 'deliver' ? { delivery_location: get('delivery_location'), notes: get('notes') }
-      : action === 'count' && machineCountRows && machineCountTotal !== null
-        ? { amount: `${Math.floor(machineCountTotal / 100)}.${String(machineCountTotal % 100).padStart(2, '0')}`, cash_location: get('cash_location'), machine_counts: JSON.stringify(machineCountRows) }
-        : action === 'count' ? { amount: get('amount'), cash_location: get('cash_location') }
+      : action === 'count' ? { amount: get('amount'), cash_location: get('cash_location') }
       : { confirm_bag_id: get('confirm_bag_id'), seal_condition: get('seal_condition'), notes: get('notes') };
     try {
       const command = validateCashCommand({ request_id: crypto.randomUUID(), collection_id: box.id, action, revision: box.revision, payload });
@@ -128,6 +117,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
     return value ? new Intl.DateTimeFormat(ar ? 'ar-LY' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Tripoli' }).format(new Date(value)) : '—';
   }
   const locked = busy || Boolean(pending), box = selected ? view?.rows.find(r => r.id === selected) : null;
+  const declaredRemoval = box ? summarizeDeclaredRemoval(box.machines) : null;
   const label = (a: CashAction) => cashActionLabels[a][ar ? 1 : 0];
   const suggestedAhmed = view?.counters.find((person) => /ahmed.*zegallai|احمد.*زغ|أحمد.*زغ/i.test(person.name))
     ?? view?.counters.find((person) => /^ahmed|^أحمد|^احمد/i.test(person.name));
@@ -205,20 +195,26 @@ function CashHandlingClient({ userId }: { userId: string }) {
             <p>{text('This earlier record is not evidence of a newly collected box. Assignment, handover and counting are unavailable here. Ask the owner to review the existing cash record; do not invent a box number or create another collection.', 'هذا السجل السابق لا يثبت وجود علبة جُمعت الآن. لا يمكن إسناده أو تسليمه أو عده من هذه الصفحة. اطلب من المالك مراجعة سجل النقد الأصلي؛ لا تخترع رقماً للعلبة ولا تنشئ تحصيلاً آخر.')}</p>
           </div> : null}
           {box.amount !== null ? <p className={styles.amount}><bdi>{box.amount} LYD</bdi></p> : null}
-          {box.machines.some(machine => machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined) ? <section className={styles.machineAmounts}>
+          {declaredRemoval && declaredRemoval.knownCount > 0 ? <section className={styles.machineAmounts} aria-label={text('Unverified removal declarations', 'مبالغ السحب غير المتحقق منها')}>
             <div className={styles.machineAmountsHeader}>
               <div>
-                <h3>{text('Amounts recorded at removal', 'المبالغ المسجلة وقت السحب')}</h3>
-                <p className={styles.hint}>{text('Each machine stays separate even when several machines share this physical box.', 'يبقى مبلغ كل ماكينة منفصلاً حتى عند وضع نقد عدة ماكينات في نفس العلبة.')}</p>
+                <h3>{text('Amounts recorded at removal · NOT counted', 'المبالغ المسجلة وقت السحب · ليست عداً فعلياً')}</h3>
+                <p className={styles.hint}>{text('Earlier declarations are not proof of the cash inside. Count the sealed box independently; do not copy these amounts.', 'هذه مبالغ صُرّح بها سابقاً وليست إثباتاً للنقد الموجود. عدّ العلبة بنفسك ولا تنقل هذه المبالغ.')}</p>
               </div>
-              <strong><bdi>{box.machines.reduce((sum, machine) => sum + Number(machine.removed_amount_lyd ?? 0), 0).toFixed(2)} LYD</bdi></strong>
+              <div>
+                <span className={styles.hint}>{declaredRemoval.complete ? text('Declared total · unverified', 'الإجمالي المصرّح به · غير مؤكد') : text('Known subtotal · incomplete', 'المجموع المعروف · غير مكتمل')}</span>
+                <strong className="block"><bdi>{(declaredRemoval.subtotalCents / 100).toFixed(2)} LYD</bdi></strong>
+              </div>
             </div>
-            <div className={styles.machineAmountRows}>
-              {box.machines.map((machine, index) => <div key={machine.id ?? `${machine.name}-${index}`} className={styles.machineAmountRow}>
-                <div><strong>{machine.location || machine.name}</strong>{machine.location ? <span>{machine.name}</span> : null}</div>
-                <bdi>{machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined ? `${Number(machine.removed_amount_lyd).toFixed(2)} LYD` : text('Earlier record · amount not captured', 'سجل سابق · المبلغ غير مسجل')}</bdi>
-              </div>)}
-            </div>
+            <details>
+              <summary className={styles.hint}>{text('Review earlier per-machine declarations', 'عرض المبالغ المصرّح بها لكل ماكينة')}</summary>
+              <div className={styles.machineAmountRows}>
+                {box.machines.map((machine, index) => <div key={machine.id ?? `${machine.name}-${index}`} className={styles.machineAmountRow}>
+                  <div><strong>{machine.location || machine.name}</strong>{machine.location ? <span>{machine.name}</span> : null}</div>
+                  <bdi>{declaredRemoval.centsByMachine[index] !== null ? `${(declaredRemoval.centsByMachine[index]! / 100).toFixed(2)} LYD` : text('Not recorded / unverified', 'غير مسجل أو غير مؤكد')}</bdi>
+                </div>)}
+              </div>
+            </details>
           </section> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{box.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{box.assignee ?? '—'}</dd></div>
             <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.delivery_location ?? box.storage ?? '—'}</dd></div></dl>
@@ -252,30 +248,14 @@ function CashHandlingClient({ userId }: { userId: string }) {
                 <label>{text('Notes · required for an exception or owner receipt', 'ملاحظات · مطلوبة عند وجود ملاحظة أو استلام المالك')}<textarea name="notes" maxLength={1000} rows={3} required={action === 'takeover'} /></label>
               </> : null}
               {action === 'count' ? <>
-                {box.machines.length > 0 && box.machines.every(machine => Boolean(machine.id) && machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined) ? (
-                  <div className={styles.machineAmountRows}>
-                    <p className={styles.hint}>{text('The machine amounts were already entered when the cash was removed. Review them below; Snacky will use their sum as the cash-box total. No second amount is required.', 'تم إدخال مبلغ كل ماكينة عند سحب النقد. راجع المبالغ أدناه؛ سيستخدم سناكي مجموعها كإجمالي علبة النقد. لا يلزم إدخال مبلغ مرة ثانية.')}</p>
-                    {box.machines.map((machine, index) => (
-                      <div key={machine.id ?? index} className={styles.machineAmountRow}>
-                        <span><strong>{machine.location || machine.name}</strong>{machine.location ? <span>{machine.name}</span> : null}</span>
-                        <bdi>{Number(machine.removed_amount_lyd).toFixed(2)} LYD</bdi>
-                      </div>
-                    ))}
-                    <div className={styles.machineAmountRow}>
-                      <strong>{text('Cash-box total', 'إجمالي علبة النقد')}</strong>
-                      <bdi>{box.machines.reduce((sum, machine) => sum + Number(machine.removed_amount_lyd ?? 0), 0).toFixed(2)} LYD</bdi>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <label>{text('Total counted · LYD', 'إجمالي النقد المعدود · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
-                    <p className={styles.hint}>{text('This sealed cash box has no declared amount. Count its contents now and enter the physical total once.', 'هذه علبة نقدية بدون مبلغ مسجل عند السحب. عدّ النقد الآن وأدخل الإجمالي الفعلي مرة واحدة.')}</p>
-                  </>
-                )}
+                <p className={styles.notice}>{text('Physically count the cash in this sealed box before submitting. Previous amounts recorded at removal and XY estimates are NOT cash counts.', 'عدّ النقد الموجود في العلبة المختومة فعلياً قبل الحفظ. المبالغ المسجلة وقت السحب وتقديرات XY ليست عداً للنقد.')}</p>
+                <label>{text('Actual cash physically counted · LYD', 'إجمالي النقد المعدود فعلياً · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
+                <p className={styles.hint}>{text('Enter one actual counted box total, even when several machines shared the box. Never invent a per-machine breakdown. Reconcile with removal declarations and XY separately afterward.', 'أدخل إجمالي العلبة الذي عدَدته فعلياً حتى لو احتوت نقداً من عدة ماكينات. لا تخمّن حصة كل ماكينة. تتم المقارنة مع السحب وXY بشكل منفصل لاحقاً.')}</p>
                 <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
-                <p className={styles.hint}>{text('The person who counts the cash records the physical box total here. When amounts were not declared during removal, do not guess machine totals. Reconcile the counted amount against XY later.', 'يتم تسجيل إجمالي النقد الفعلي بعد عدّ محتويات العلبة. إذا لم تُسجّل مبالغ عند السحب، فلا تخمّن مبالغ الماكينات. تتم المطابقة مع XY لاحقاً.')}</p>
               </> : null}
-              <label className={styles.checkbox}><input type="checkbox" required />{text('I confirm this describes what I physically did and checked.', 'أؤكد أن هذا يطابق ما قمت به وتحققت منه فعلياً.')}</label>
+              <label className={styles.checkbox}><input type="checkbox" required />{action === 'count'
+                ? text('I physically counted this box and entered the real total, not a copied removal declaration.', 'أؤكد أنني عددت نقد العلبة فعلياً وأدخلت المبلغ الحقيقي، وليس مبلغاً منقولاً من سجل السحب.')
+                : text('I confirm this describes what I physically did and checked.', 'أؤكد أن هذا يطابق ما قمت به وتحققت منه فعلياً.')}</label>
               <div className={styles.buttons}><button className={styles.primary} type="submit">{action === 'count' ? text('Confirm count & record once', 'تأكيد العد والتسجيل مرة واحدة') : text('Confirm action', 'تأكيد الإجراء')}</button><button type="button" className={styles.secondary} onClick={() => setAction(null)}>{text('Cancel', 'إلغاء')}</button></div>
             </fieldset>
           </form> : null}

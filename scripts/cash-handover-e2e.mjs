@@ -365,7 +365,7 @@ try {
     await p.locator('form input[type=checkbox]').check(); await p.getByRole('button', { name: 'تأكيد الإجراء', exact: true }).click();
     await p.getByRole('status').filter({ hasText: 'تم تسجيل الإجراء' }).waitFor();
     await p.getByRole('button', { name: 'عد النقد وتسجيله', exact: true }).click();
-    await p.getByLabel('إجمالي النقد المعدود · دينار', { exact: true }).fill('91.25');
+    await p.getByLabel('إجمالي النقد المعدود فعلياً · دينار', { exact: true }).fill('91.25');
     await p.getByLabel('أين يوجد النقد بعد العد؟', { exact: true }).fill('خزنة المخزن، قسم النقد المعدود');
     await p.locator('form input[type=checkbox]').check();
     let committed = false;

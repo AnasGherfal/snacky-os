@@ -4,6 +4,18 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getOperatorPurchaseAvailability } from "./availability";
+import { canReadOperatorPurchaseAvailability } from "@/lib/operator-money-availability-auth";
+
+export const dynamic = "force-dynamic";
+
+/** Financial and personal-purchase responses must not be cached on shared devices. */
+function operatorMoneyJson(data: unknown, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "private, no-store, max-age=0");
+  headers.set("Vary", "Cookie");
+  return NextResponse.json(data, { ...init, headers });
+}
+
 
 type ErrorLike = {
   code?: unknown;
@@ -103,17 +115,23 @@ function syntheticLegacyPeriod(personId: string, fullName: unknown, balance: Dat
 export async function GET(request: Request) {
   const { profile, supabase } = await context();
   if (!profile || !supabase) {
-    return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
+    return operatorMoneyJson({ success: false, error: "Session expired." }, { status: 401 });
+  }
+  if (profile.active_status !== "active") {
+    return operatorMoneyJson({ success: false, error: "Inactive team accounts cannot access operator money." }, { status: 403 });
   }
 
   const manager = isOwnerAdminRole(profile);
+  if (!manager && !canReadOperatorPurchaseAvailability(profile)) {
+    return operatorMoneyJson({ success: false, error: "Operator money is available only to active linked Snacky staff." }, { status: 403 });
+  }
   const url = new URL(request.url);
   const requestedPersonId = clean(url.searchParams.get("personId"));
   const requestedPeriodId = clean(url.searchParams.get("periodId"));
   const ownPersonId = clean(profile.team_member_id);
 
   if (!manager && !ownPersonId) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: "Operator profile is not linked." },
       { status: 403 },
     );
@@ -139,7 +157,7 @@ export async function GET(request: Request) {
   const [team, products] = await Promise.all([teamQuery, productsQuery]);
   const initialFailure = [team, products].find((result) => result.error);
   if (initialFailure?.error) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: errorText(initialFailure.error) },
       { status: 500 },
     );
@@ -147,14 +165,14 @@ export async function GET(request: Request) {
 
   const teamRows = (team.data ?? []) as DataRow[];
   if (manager && requestedPersonId && !teamRows.some((row) => clean(row.id) === requestedPersonId)) {
-    return NextResponse.json({ success: false, error: "Operator not found." }, { status: 404 });
+    return operatorMoneyJson({ success: false, error: "Operator not found." }, { status: 404 });
   }
 
   const personId = manager
     ? requestedPersonId || ownPersonId || clean(teamRows[0]?.id)
     : ownPersonId;
   if (!personId) {
-    return NextResponse.json({
+    return operatorMoneyJson({
       success: true,
       manager,
       currentPersonId: ownPersonId || null,
@@ -186,7 +204,7 @@ export async function GET(request: Request) {
   ]);
 
   if (periodsResult.error && !isMissingPeriodSchema(periodsResult.error)) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: errorText(periodsResult.error) },
       { status: 500 },
     );
@@ -194,7 +212,7 @@ export async function GET(request: Request) {
 
   if (!periodsResult.error) {
     if (balancesResult.error) {
-      return NextResponse.json(
+      return operatorMoneyJson(
         { success: false, error: errorText(balancesResult.error) },
         { status: 500 },
       );
@@ -205,7 +223,7 @@ export async function GET(request: Request) {
       ? periods.find((row) => clean(row.period_id) === requestedPeriodId)
       : undefined;
     if (requestedPeriodId && !requestedPeriod) {
-      return NextResponse.json({ success: false, error: "Money period not found." }, { status: 404 });
+      return operatorMoneyJson({ success: false, error: "Money period not found." }, { status: 404 });
     }
 
     const selectedPeriod =
@@ -215,7 +233,7 @@ export async function GET(request: Request) {
     const selectedPeriodId = clean(selectedPeriod?.period_id);
 
     if (!selectedPeriodId) {
-      return NextResponse.json({
+      return operatorMoneyJson({
         success: true,
         manager,
         currentPersonId: ownPersonId || null,
@@ -293,7 +311,7 @@ export async function GET(request: Request) {
       periodEvents,
     ].find((result) => result.error);
     if (periodFailure?.error) {
-      return NextResponse.json(
+      return operatorMoneyJson(
         { success: false, error: errorText(periodFailure.error) },
         { status: 500 },
       );
@@ -305,7 +323,7 @@ export async function GET(request: Request) {
       product: { name: row.product_name },
     }));
 
-    return NextResponse.json({
+    return operatorMoneyJson({
       success: true,
       manager,
       currentPersonId: ownPersonId || null,
@@ -368,7 +386,7 @@ export async function GET(request: Request) {
     (result) => result.error,
   );
   if (legacyFailure?.error) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: errorText(legacyFailure.error) },
       { status: 500 },
     );
@@ -378,7 +396,7 @@ export async function GET(request: Request) {
   const person = teamRows.find((row) => clean(row.id) === personId);
   const legacyPeriod = syntheticLegacyPeriod(personId, person?.full_name, balance);
 
-  return NextResponse.json({
+  return operatorMoneyJson({
     success: true,
     manager,
     currentPersonId: ownPersonId || null,
@@ -404,38 +422,49 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const { profile, supabase } = await context();
   if (!profile || !supabase) {
-    return NextResponse.json({ success: false, error: "Session expired." }, { status: 401 });
+    return operatorMoneyJson({ success: false, error: "Session expired." }, { status: 401 });
+  }
+  if (profile.active_status !== "active") {
+    return operatorMoneyJson({ success: false, error: "Inactive team accounts cannot submit money actions." }, { status: 403 });
   }
 
   let body: Record<string, unknown>;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ success: false, error: "Invalid request." }, { status: 400 });
+    return operatorMoneyJson({ success: false, error: "Invalid request." }, { status: 400 });
   }
 
   const action = clean(body.action);
   const manager = isOwnerAdminRole(profile);
+  if (!manager && !canReadOperatorPurchaseAvailability(profile)) {
+    return operatorMoneyJson({ success: false, error: "Operator money actions require active linked Snacky staff." }, { status: 403 });
+  }
   const requestedPersonId = clean(body.personId);
   const ownPersonId = clean(profile.team_member_id);
   const personId = manager ? requestedPersonId || ownPersonId : ownPersonId;
   const periodId = clean(body.periodId);
 
   if (action === "availability") {
+    // The reader below intentionally uses the service role for available
+    // storage quantities. Authorize the requester BEFORE that privileged read.
+    if (!canReadOperatorPurchaseAvailability(profile)) {
+      return operatorMoneyJson({ success: false, error: "Stock availability is limited to active Snacky team members." }, { status: 403 });
+    }
     const productId = clean(body.productId);
     if (!productId) {
-      return NextResponse.json({ success: false, error: "Product is required." }, { status: 400 });
+      return operatorMoneyJson({ success: false, error: "Product is required." }, { status: 400 });
     }
     try {
       const data = await getOperatorPurchaseAvailability(productId);
-      return NextResponse.json({ success: true, data });
+      return operatorMoneyJson({ success: true, data });
     } catch (error) {
-      return NextResponse.json({ success: false, error: errorText(error) }, { status: 400 });
+      return operatorMoneyJson({ success: false, error: errorText(error) }, { status: 400 });
     }
   }
 
   if (!personId) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: "Operator profile is not linked." },
       { status: 403 },
     );
@@ -452,20 +481,20 @@ export async function POST(request: Request) {
     "reopenPeriod",
   ]);
   if (managerOnlyActions.has(action) && !manager) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: "Only owner/admin can perform this action." },
       { status: 403 },
     );
   }
 
   if (!manager && requestedPersonId && requestedPersonId !== ownPersonId) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: "You can only submit records for yourself." },
       { status: 403 },
     );
   }
   if (action === "expense" && personId !== ownPersonId) {
-    return NextResponse.json(
+    return operatorMoneyJson(
       { success: false, error: "Work expenses must be submitted by the person who paid them." },
       { status: 403 },
     );
@@ -557,7 +586,7 @@ export async function POST(request: Request) {
           : await supabase.rpc("record_operator_advance_return", common);
     } else if (action === "reimbursement") {
       if (!periodId || periodId === "legacy") {
-        return NextResponse.json(
+        return operatorMoneyJson(
           { success: false, error: "Monthly periods must be active before recording reimbursements." },
           { status: 409 },
         );
@@ -573,7 +602,7 @@ export async function POST(request: Request) {
       });
     } else if (action === "closePeriod") {
       if (!periodId || periodId === "legacy") {
-        return NextResponse.json(
+        return operatorMoneyJson(
           { success: false, error: "Monthly periods are not active in the database yet." },
           { status: 409 },
         );
@@ -584,7 +613,7 @@ export async function POST(request: Request) {
       });
     } else if (action === "settlePeriod") {
       if (!periodId || periodId === "legacy") {
-        return NextResponse.json(
+        return operatorMoneyJson(
           { success: false, error: "Monthly periods are not active in the database yet." },
           { status: 409 },
         );
@@ -595,7 +624,7 @@ export async function POST(request: Request) {
       });
     } else if (action === "reopenPeriod") {
       if (!periodId || periodId === "legacy") {
-        return NextResponse.json(
+        return operatorMoneyJson(
           { success: false, error: "Monthly periods are not active in the database yet." },
           { status: 409 },
         );
@@ -605,7 +634,7 @@ export async function POST(request: Request) {
         p_reason: clean(body.note),
       });
     } else {
-      return NextResponse.json({ success: false, error: "Unknown action." }, { status: 400 });
+      return operatorMoneyJson({ success: false, error: "Unknown action." }, { status: 400 });
     }
 
     if (result.error) throw result.error;
@@ -616,7 +645,7 @@ export async function POST(request: Request) {
     revalidatePath("/inventory");
     revalidatePath("/inventory/movements");
 
-    return NextResponse.json({ success: true, data: result.data });
+    return operatorMoneyJson({ success: true, data: result.data });
   } catch (error) {
     const text = errorText(error);
     const lower = text.toLowerCase();
@@ -630,6 +659,6 @@ export async function POST(request: Request) {
         : lower.includes("closed") || lower.includes("settled") || lower.includes("exceeds")
           ? 409
           : 400;
-    return NextResponse.json({ success: false, error: text }, { status });
+    return operatorMoneyJson({ success: false, error: text }, { status });
   }
 }

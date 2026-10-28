@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin, cashReferenceMissing } from '../src/lib/cash-handover.ts';
+import { validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin, cashReferenceMissing, summarizeDeclaredRemoval } from '../src/lib/cash-handover.ts';
 import { canAccessPath, canViewFinancials, canEditFinancialTransactions, canCountCash } from '../src/lib/authz.ts';
 const id = () => randomUUID();
 const command = (action = 'count', payload = { amount: '120.25', cash_location: 'Storage safe A' }) => ({ request_id: id(), collection_id: id(), action, revision: 2, payload });
@@ -128,22 +128,41 @@ test('unidentified records stay visible and never substitute a generated ID for 
   assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
 });
 
-test('cash box detail counts every machine separately while Finance keeps one summed box total', () => {
+test('cash box details retain unverified removal declarations while Finance posts only a physically counted box total', () => {
   const api = read('src/app/api/cash-handling/route.ts');
   const ui = read('src/components/CashHandlingWorkspace.tsx');
   assert.match(groupedCashSql, /cash_collection_machine_lines_v1_impl/);
   assert.match(groupedCashSql, /removed_amount_lyd/);
   assert.match(api, /snacky_cash_collection_machine_lines_v1/);
   assert.match(ui, /Amounts recorded at removal/);
-  assert.match(ui, /machine\.removed_amount_lyd/);
-  assert.match(ui, /machineCountRows/);
-  assert.match(ui, /machine_counts: JSON\.stringify\(machineCountRows\)/);
-  assert.match(ui, /Total counted · LYD/);
+  assert.match(ui, /declaredRemoval\.centsByMachine\[index\]/);
+  assert.match(ui, /summarizeDeclaredRemoval\(box\.machines\)/);
+  assert.match(ui, /Known subtotal · incomplete/);
+  assert.match(ui, /Actual cash physically counted · LYD/);
+  assert.match(ui, /action === 'count' \? \{ amount: get\('amount'\), cash_location: get\('cash_location'\) \}/);
+  assert.doesNotMatch(ui, /machineCountRows|machineCountTotal|machine_counts: JSON\.stringify|No second amount is required/);
   assert.match(perMachineCountSql, /add column if not exists counted_amount_lyd numeric\(12,2\)/);
   assert.match(perMachineCountSql, /Counted machines must exactly match the machines in this cash box/);
   assert.match(perMachineCountSql, /Cash-box total does not match the per-machine count sum/);
   assert.match(perMachineCountSql, /perform public\.confirm_cash_count_auto_period_v1\(v_id,v_amount,v_request\)/);
   assert.doesNotMatch(groupedCashSql, /insert into public\.financial_transactions/);
+});
+
+test('missing or invalid machine declarations remain unknown, including partial mixed boxes and actual zero', () => {
+  const complete = summarizeDeclaredRemoval([{removed_amount_lyd:'100.20'},{removed_amount_lyd:'0.00'}]);
+  assert.equal(complete.complete, true);
+  assert.deepEqual(complete.centsByMachine, [10020, 0]);
+  assert.equal(complete.subtotalCents, 10020);
+
+  const partial = summarizeDeclaredRemoval([
+    {removed_amount_lyd:'5.25'}, {removed_amount_lyd:null}, {removed_amount_lyd:'bogus'},
+  ]);
+  assert.equal(partial.complete, false);
+  assert.equal(partial.knownCount, 1);
+  assert.equal(partial.totalMachines, 3);
+  assert.equal(partial.subtotalCents, 525);
+  assert.deepEqual(partial.centsByMachine, [525,null,null]);
+  assert.equal(summarizeDeclaredRemoval([]).complete, false);
 });
 
 test('operator sees one Cash workflow instead of duplicate cash menus', () => {

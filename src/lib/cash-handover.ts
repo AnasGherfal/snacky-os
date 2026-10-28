@@ -20,6 +20,28 @@ export function cashReferenceMissing(box: Pick<CashBox, 'bag'> & { reference_mis
   return box.reference_missing === true || typeof box.bag !== 'string' || box.bag.trim().length === 0;
 }
 export type CashWorkspace = { me: string; owner: boolean; can_count: boolean; can_transport?: boolean; enabled: boolean; can_remove: boolean; people: CashPerson[]; counters: CashPerson[]; rows: CashBox[]; total: number; offset: number };
+
+/**
+ * Earlier removal declarations are NOT cash counts. Preserve missing/invalid
+ * values as unknown instead of silently converting them to zero or treating a
+ * partial declaration as the total for a sealed box.
+ */
+export function summarizeDeclaredRemoval(machines: readonly Pick<CashBox['machines'][number], 'removed_amount_lyd'>[]) {
+  const centsByMachine = machines.map((machine): number | null => {
+    const value = machine.removed_amount_lyd;
+    if (value === null || value === undefined) return null;
+    try { return cashCents(String(value)); } catch { return null; }
+  });
+  const knownCount = centsByMachine.filter((value) => value !== null).length;
+  const subtotalCents = centsByMachine.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  return {
+    centsByMachine,
+    knownCount,
+    totalMachines: machines.length,
+    subtotalCents,
+    complete: machines.length > 0 && knownCount === machines.length,
+  };
+}
 const actionFields: Record<CashAction, string[]> = {
   enable: ['enabled'], counter: ['user_id', 'enabled'], assign: ['assigned_to'],
   dropoff: ['assigned_to', 'storage_location', 'seal_condition', 'notes'],

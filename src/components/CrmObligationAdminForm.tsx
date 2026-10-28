@@ -1,6 +1,6 @@
 'use client';
 
-import {useState} from 'react';
+import {useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 
 type Person={id:string;name:string;role?:string};
@@ -19,13 +19,14 @@ const monthValue=(value:string)=>/^\d{4}-\d{2}/.test(value)?value.slice(0,7):'';
 export function CrmObligationAdminForm(props:Props){
  const router=useRouter();
  const [busy,setBusy]=useState(false);
+ const inFlight=useRef(false);
+ const lastConfirmedPayload=useRef('');
  const [message,setMessage]=useState('');
  const tr=(en:string,arabic:string)=>props.ar?arabic:en;
  const people=props.directory.filter(person=>person.role!=='operator');
 
  async function submit(formData:FormData){
-  if(busy)return;
-  setBusy(true);setMessage('');
+  if(inFlight.current)return;
   const payload={
    obligation_id:props.obligationId,
    assigned_to:String(formData.get('assigned_to')||''),
@@ -33,18 +34,25 @@ export function CrmObligationAdminForm(props:Props){
    period_end:String(formData.get('period_end')||''),
    version:props.version,
   };
+  const signature=JSON.stringify(payload);
+  if(lastConfirmedPayload.current===signature){
+   setMessage(tr('These changes were already saved. Reload the record to edit again.','تم حفظ هذه التغييرات. أعد تحميل السجل قبل التعديل مرة أخرى.'));
+   return;
+  }
+  inFlight.current=true;setBusy(true);setMessage('');
   try{
    const response=await fetch('/api/crm/obligation-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
    const data=await response.json().catch(()=>({}));
    if(!response.ok||data.ok!==true)throw new Error(data.message||data.code||'save_failed');
+   lastConfirmedPayload.current=signature;
    setMessage(tr('Saved. Responsibility and rent period are updated.','تم الحفظ. تم تحديث المسؤول وفترة الإيجار.'));
    router.refresh();
   }catch(error){
    setMessage(error instanceof Error&&error.message!=='save_failed'?error.message:tr('Could not save. Reload and try again.','تعذر الحفظ. أعد تحميل الصفحة وحاول مرة أخرى.'));
-  }finally{setBusy(false);}
+  }finally{inFlight.current=false;setBusy(false);}
  }
 
- return <form action={submit} className="space-y-4">
+ return <form action={submit} className="space-y-4" aria-busy={busy}>
   {message?<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{message}</p>:null}
   <div className="grid gap-4 sm:grid-cols-3">
    <label className="text-sm">

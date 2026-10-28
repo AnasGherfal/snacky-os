@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
+import { isEligibleCashSourceBatch } from "../src/lib/vms-cash-source.ts";
 import {
-  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey,
+  verifiedSalesCoverage, lastSaleTimestamp, noSalesFor24Hours, xyOperationalAlertEventKey, knownXyNotificationEventKeys, verifiedRecentXySalesEvidence,
 } from "../src/lib/xy-operational-alert-rules.ts";
 
 const now = Date.parse("2026-10-09T10:00:00Z");
@@ -66,4 +67,131 @@ test("protected XY scheduled worker persists owner in-app alerts, not web push",
   assert.match(worker,/error\?\.code === "23505"/);
   assert.doesNotMatch(worker,/sendPush|sendEmail|webpush/);
   assert.match(bell,/Operations alerts and work updates/);
+});
+
+
+test("existing XY notification preflight uses bounded exact-key batches and skips only verified persisted keys", async () => {
+  const keys = Array.from({ length: 45 }, (_, i) => `notice-${i}`);
+  const known = new Set(["notice-0","notice-21","notice-44"]);
+  const requests = [];
+  const result = await knownXyNotificationEventKeys([...keys, "notice-0"], async (chunk) => {
+    requests.push(chunk);
+    return { data: chunk.filter(key => known.has(key)).map(event_key => ({ event_key })), error: null };
+  });
+  assert.equal(result.verified, true);
+  assert.deepEqual([...result.keys].sort(), [...known].sort());
+  assert.deepEqual(requests.map(page => page.length), [20,20,5]);
+  assert.equal(requests.flat().length,45,"Repeated keys must not trigger redundant reads");
+});
+
+test("unreadable or inconsistent notification preflight always falls back to index-protected insertion", async () => {
+  const scenarios = [
+    async () => ({ data: null, error: null }),
+    async () => ({ data: [], error: { message:"temporarily unavailable" } }),
+    async () => { throw new Error("network interrupted"); },
+    async () => ({ data: [{ event_key:"unrelated-key" }], error: null }),
+    async () => ({ data: [{ event_key:null }], error: null }),
+  ];
+  for (const read of scenarios) {
+    const result = await knownXyNotificationEventKeys(["existing-key"], read);
+    assert.equal(result.verified, false);
+    assert.equal(result.keys.size, 0, "A failed lookup cannot hide an undelivered alert");
+  }
+  const empty = await knownXyNotificationEventKeys([], async () => {
+    throw new Error("Empty inputs must not query the database");
+  });
+  assert.equal(empty.verified,true);
+  assert.equal(empty.keys.size,0);
+});
+
+test("XY worker checks existing event keys before insert but retains atomic 23505 fallback", () => {
+  const worker = fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const lookup = worker.indexOf("await knownXyNotificationEventKeys(");
+  const insert = worker.indexOf('from("notifications").insert(');
+  assert.ok(lookup >= 0 && insert > lookup);
+  assert.match(worker,/if \(existingKeys\.has\(eventKey\)\) \{ existing\+\+; continue; \}/);
+  assert.match(worker,/if \(error\?\.code === "23505"\) \{ existingKeys\.add\(eventKey\); existing\+\+; continue; \}/);
+  assert.match(worker,/if \(!lookup\.verified\)/);
+  assert.doesNotMatch(worker,/\.upsert\(/,"Partial event_key unique index is not a safe PostgREST upsert target");
+});
+
+test("no-sales alerts consult only active cash-eligible transaction import batches", () => {
+  const worker = fs.readFileSync("src/lib/xy-operational-alerts.ts", "utf8");
+  const segment = worker.slice(worker.indexOf("const [payment,delivery]"), worker.indexOf("const latestAt ="));
+  assert.match(segment, /vms_import_batches!inner\(id\)/);
+  assert.equal((segment.match(/\.in\("batch\.status",\[\.\.\.CASH_ELIGIBLE_VMS_BATCH_STATUSES\]\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.is\("batch\.deleted_at",null\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.eq\("transaction_status","successful_sale"\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.eq\("mapped_machine_id",machine\.id\)/g) ?? []).length, 2);
+  assert.equal((segment.match(/\.not\("(payment_time|delivery_time)","is",null\)/g) ?? []).length, 2);
+  assert.match(worker,/if \(payment\.error \|\| delivery\.error\)/);
+  assert.match(worker,/machineSalesReadIncomplete=true/);
+  assert.match(worker,/xy_sales_machine_query_unavailable/);
+});
+
+test("deleted, failed and unknown XY transaction batches cannot suppress no-sales monitoring", () => {
+  assert.equal(isEligibleCashSourceBatch({ status: "imported", deleted_at: null }), true);
+  assert.equal(isEligibleCashSourceBatch({ status: "partially_imported", deleted_at: null }), true);
+  assert.equal(isEligibleCashSourceBatch({ status: "imported_with_warnings", deleted_at: null }), true);
+  for (const b of [
+    { status: "imported", deleted_at: "2026-07-01T00:00:00Z" },
+    { status: "failed", deleted_at: null },
+    { status: "draft", deleted_at: null },
+    { status: "deleted", deleted_at: null },
+    { status: null, deleted_at: null },
+    { status: "imported" },
+  ]) assert.equal(isEligibleCashSourceBatch(b), false);
+});
+
+
+test("recent eligible XY sale evidence must be real, timely and parseable", () => {
+  const now=Date.parse("2026-10-28T10:00:00Z");
+  const recent={payment_time:"2026-10-28T09:51:00Z",delivery_time:null};
+  assert.equal(verifiedRecentXySalesEvidence([recent],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:null,delivery_time:"2026-10-28T09:50:00Z"}],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([null,recent],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"2026-10-27T10:00:00Z"}],now),true);
+  assert.equal(verifiedRecentXySalesEvidence([],now),false,"Vendor summary alone is not database evidence");
+  assert.equal(verifiedRecentXySalesEvidence([null],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:null,delivery_time:null}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"garbage"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:"2026-10-27T09:59:59Z"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([{delivery_time:"2026-10-28T10:00:01Z"}],now),false);
+  assert.equal(verifiedRecentXySalesEvidence([recent],NaN),false);
+  // Either timestamp can verify real activity; an invalid future delivery
+  // timestamp must not hide a genuine recent payment.
+  assert.equal(verifiedRecentXySalesEvidence([{payment_time:recent.payment_time,delivery_time:"2027-01-01T10:00:00Z"}],now),true);
+});
+
+test("no-sales worker verifies persisted eligible network evidence, not just sync metadata",()=>{
+  const worker=fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const start=worker.indexOf("if (salesReady) {");
+  const end=worker.indexOf("if (!salesReady) {",start);
+  const gate=worker.slice(start,end);
+  assert.ok(start>0&&end>start);
+  assert.match(gate,/verifiedRecentXySalesEvidence/);
+  assert.match(gate,/payment_time/);
+  assert.match(gate,/delivery_time/);
+  assert.equal((gate.match(/vms_import_batches!inner\(id\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.in\("batch\.status",\[\.\.\.CASH_ELIGIBLE_VMS_BATCH_STATUSES\]\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.is\("batch\.deleted_at",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.not\("mapped_machine_id","is",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.not\("mapped_product_id","is",null\)/g)??[]).length,2);
+  assert.equal((gate.match(/\.eq\("transaction_status","successful_sale"\)/g)??[]).length,2);
+  assert.match(gate,/salesReady=false/);
+  assert.match(worker,/if \(!salesReady\)/);
+});
+
+test("one unavailable machine sales query never prevents independent stock or status notices",()=>{
+  const worker=fs.readFileSync("src/lib/xy-operational-alerts.ts","utf8");
+  const perMachineStart=worker.indexOf("let machineSalesReadIncomplete=false;");
+  const independentStart=worker.indexOf("const activityAlerts=await getXyStockActivityNotices");
+  assert.ok(independentStart>perMachineStart&&perMachineStart>0);
+  const segment=worker.slice(perMachineStart,independentStart);
+  assert.match(segment,/if \(payment\.error \|\| delivery\.error\)/);
+  assert.match(segment,/machineSalesReadIncomplete=true/);
+  assert.match(segment,/continue;/);
+  assert.doesNotMatch(segment,/reportError\(payment\.error/);
+  assert.doesNotMatch(segment,/reportError\(delivery\.error/);
+  assert.match(segment,/xy_sales_machine_query_unavailable/);
 });

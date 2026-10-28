@@ -4,11 +4,31 @@ on:
     branches: [master]
     paths:
       - "src/components/ModuleTabs.tsx"
+      - "src/components/ModuleTabsLayout.tsx"
       - "src/components/module-tabs-config.ts"
       - "src/components/app-navigation.ts"
       - "src/components/Sidebar.tsx"
+      - "src/components/FormSubmitButton.tsx"
+      - "src/components/LocalDraft.tsx"
+      - "src/components/CrmObligationAdminForm.tsx"
+      - "src/components/CrmLocationPaymentScheduleForm.tsx"
+      - "src/components/BuyingSourceEditor.tsx"
+      - "src/components/TeamMemberForm.tsx"
+      - "src/components/TeamCreateRequestIdentity.tsx"
+      - "src/app/team/new/page.tsx"
+      - "src/app/team/page.tsx"
+      - "src/lib/team-actions.ts"
+      - "src/lib/team-create-request.ts"
+      - "src/app/dashboard/page.tsx"
       - "src/app/inventory/page.tsx"
       - "scripts/test-navigation-organization.mjs"
+      - "scripts/test-focused-form-navigation.mjs"
+      - "scripts/test-simplified-operational-navigation.mjs"
+      - "scripts/test-owner-dashboard-shortcuts.mjs"
+      - "scripts/test-form-submission-guards.mjs"
+      - "scripts/test-nonduplicate-workflow-buttons.mjs"
+      - "scripts/test-save-interactions.mjs"
+      - "scripts/test-team-create-safe-retry.mjs"
       - ".github/workflows/navigation-organization.yml"
   workflow_dispatch:
 jobs:
@@ -25,10 +45,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Navigation regression tests
-        run: node --test scripts/test-navigation-organization.mjs
+        run: node --test scripts/test-navigation-organization.mjs scripts/test-simplified-operational-navigation.mjs scripts/test-focused-form-navigation.mjs scripts/test-owner-dashboard-shortcuts.mjs scripts/test-form-submission-guards.mjs scripts/test-nonduplicate-workflow-buttons.mjs scripts/test-save-interactions.mjs scripts/test-team-create-safe-retry.mjs
       - name: Lint navigation components
-        run: npx eslint src/components/ModuleTabs.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts src/components/Sidebar.tsx
+        run: npx eslint src/components/ModuleTabs.tsx src/components/ModuleTabsLayout.tsx src/components/module-tabs-config.ts src/components/app-navigation.ts src/components/Sidebar.tsx src/components/FormSubmitButton.tsx src/components/LocalDraft.tsx
       - name: Lint Storage UI (existing any types are tracked separately)
-        run: npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
+        run: >-
+          npx eslint src/app/inventory/page.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Typecheck
         run: npm run typecheck

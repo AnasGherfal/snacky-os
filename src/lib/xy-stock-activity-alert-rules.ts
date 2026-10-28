@@ -209,3 +209,53 @@ export function assessXyMachineActivity(input: {
   }
   return {outcome:"skip",reason:insufficient?"insufficient_history":"normal_quiet_period"};
 }
+
+
+/**
+ * Counts comparable DAYS with independently verified hourly stock coverage,
+ * not arbitrary old timestamps or single sampled readouts. XY Free-tier
+ * retention may keep only one historical snapshot every six hours, which
+ * cannot support the two-batch minimum for a dependable inactivity signal.
+ *
+ * This is an availability diagnostic only; it never turns sparse data into
+ * fabricated purchases or relaxes assessXyMachineActivity's safety gates.
+ */
+export function comparableXyActivityBaselineDays(
+  profile: XyActivityProfile,
+  history: XyActivityHistory,
+  nowMs: number,
+): number {
+  const today=localTime(nowMs).day;
+  const todayWeekday=weekday(today);
+  const seen=new Set<string>();
+  for (const hour of history.hourly) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(hour.day)
+      || !Number.isSafeInteger(hour.hour) || hour.hour<0 || hour.hour>23
+      || !reliable(hour)
+      || hour.day>=today
+      || profile.closedDates?.includes(hour.day)
+      || (profile.compareSameWeekday && weekday(hour.day)!==todayWeekday)
+      || !scheduled(profile,{day:hour.day,hour:hour.hour})) continue;
+    const dayMs=utcDateMs(hour.day);
+    if (!Number.isFinite(dayMs)
+      || dayMs < utcDateMs(today) - profile.historyDays*DAY) continue;
+    seen.add(hour.day);
+  }
+  return seen.size;
+}
+
+export function missingReliableXyActivityBaseline(
+  profile: XyActivityProfile | undefined,
+  history: XyActivityHistory | undefined,
+  nowMs: number,
+): boolean {
+  if (!profile || !history || !Number.isFinite(nowMs)
+    || (profile.pausedUntil && Date.parse(profile.pausedUntil)>nowMs)
+    || (profile.pausedThrough && localTime(nowMs).day<=profile.pausedThrough)
+    || !scheduled(profile,localTime(nowMs))) return false;
+  const latest=Date.parse(String(history.last_observed_at??""));
+  if (!Number.isFinite(latest) || latest>nowMs+5*60*1000
+    || nowMs-latest>25*60*1000
+    || history.recent_slots<8 || history.recent_stocked_slots<4) return false;
+  return comparableXyActivityBaselineDays(profile,history,nowMs)<profile.minComparableDays;
+}

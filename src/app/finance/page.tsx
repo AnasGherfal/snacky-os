@@ -33,7 +33,7 @@ import {
   FINANCE_TRANSACTIONS_TABLE,
   applyVisibleFinanceLedgerFilter,
   isVisibleFinanceLedgerRow,
-  loadFinanceLedgerRows,
+  loadCompleteFinanceLedgerRows,
   supabaseErrorDetails,
 } from "@/lib/finance-ledger";
 
@@ -248,25 +248,32 @@ export default async function FinancePage({
         .from("finance_opening_balances")
         .select("account_id, currency, balance_date, opening_balance")
         .eq("balance_date", FINANCE_RECONCILIATION_CUTOFF_DATE),
-      loadFinanceLedgerRows({
+      loadCompleteFinanceLedgerRows({
         label: "finance overview",
-        buildQuery: (columns, level) => {
+        buildQuery: (columns, level, from, to) => {
           const query = supabase
             .from(FINANCE_TRANSACTIONS_TABLE)
-            .select(columns.join(", "))
-            .order("transaction_date", { ascending: false })
-            .limit(10000);
+            .select(columns.join(", "), { count: "exact" })
+            // Stable deterministic order is essential across pagination.
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
           return applyVisibleFinanceLedgerFilter(query, level);
         },
       }),
     ]);
 
   if (transactionsResult.error) {
-    console.error("[finance] Overview fell back to empty ledger rows", {
+    console.error("[finance] Overview blocked because the full ledger could not be verified", {
       table: FINANCE_TRANSACTIONS_TABLE,
       selected_columns: transactionsResult.selectedColumns,
       supabase_error: supabaseErrorDetails(transactionsResult.error),
     });
+    return <ErrorState
+      title="Finance totals unavailable"
+      body="The complete finance ledger could not be verified. No partial or opening-balance-only total will be shown. Review the ledger connection and retry."
+      action={<SecondaryButton href="/finance">Retry</SecondaryButton>}
+    />;
   }
 
   const settings = settingsResult.error ? null : (settingsResult.data as any);

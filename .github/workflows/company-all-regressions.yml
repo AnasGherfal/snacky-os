@@ -41,7 +41,7 @@ jobs:
               if (!line.startsWith('not ok ')) return;
               console.error('\\n--- failing regression ---\\n' + rows.slice(Math.max(0,index-4),Math.min(rows.length,index+32)).join('\n'));
             });
-            console.error('\\n--- Full failed test output (last 35000 chars) ---\\n' + (result.stdout||'').slice(-35000));
+            console.error('\n--- Full failed test output (last 35000 chars) ---\n' + (result.stdout||'').slice(-35000));
             console.error((result.stderr||'').slice(-3000));
           } else console.log((result.stdout||'').slice(-2000));
           process.exit(result.status??1);

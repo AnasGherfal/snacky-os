@@ -100,6 +100,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800" role="alert">{error}</div> : null}
 
         <StockMovementForm
+          userId={profile.id}
           initialClientSubmissionId={randomUUID()}
           products={productOptions}
           recentProductIds={recentProductIds}
