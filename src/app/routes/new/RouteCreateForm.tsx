@@ -335,6 +335,10 @@ export function RouteCreateForm({
   const [stockErrors, setStockErrors] = useState<StockValidationIssue[]>([]);
   const [scrollErrorIntoView, setScrollErrorIntoView] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uncertainRouteSave, setUncertainRouteSave] = useState(false);
+  const routeSaveInFlightRef = useRef(false);
+  const routeCreateRequestIdRef = useRef("");
+  const frozenRouteRequestRef = useRef<Record<string, unknown> | null>(null);
   const [xyRefreshStatus, setXyRefreshStatus] = useState<"refreshing" | "fresh" | "warning">("refreshing");
   const [xyRefreshMessage, setXyRefreshMessage] = useState(tr(locale, "Refreshing XY lane quantities automatically…", "يتم تحديث كميات فتحات XY تلقائيًا…"));
   const xyRefreshStarted = useRef(false);
@@ -1283,19 +1287,24 @@ export function RouteCreateForm({
       return;
     }
 
+    // React state updates are asynchronous. This synchronous lock prevents
+    // rapid taps/Enter from dispatching a second POST before "saving" paints.
+    if (routeSaveInFlightRef.current) return;
     setStockErrors([]);
-    const validationError = validate();
-    if (validationError) {
-      const localStockIssues = validateStock();
-      if (localStockIssues.length) {
-        console.warn("[routes:new] Stock validation failed", localStockIssues);
-        setStockErrors(localStockIssues);
+    if (!frozenRouteRequestRef.current) {
+      const validationError = validate();
+      if (validationError) {
+        const localStockIssues = validateStock();
+        if (localStockIssues.length) {
+          console.warn("[routes:new] Stock validation failed", localStockIssues);
+          setStockErrors(localStockIssues);
+        }
+        setScrollErrorIntoView(true);
+        setError(validationError);
+        return;
       }
-      setScrollErrorIntoView(true);
-      setError(validationError);
-      return;
     }
-
+    routeSaveInFlightRef.current = true;
     setSaving(true);
     setError("");
 
@@ -1305,10 +1314,21 @@ export function RouteCreateForm({
         productId: group.productId,
         finalTakeQty: finalTakeForGroup(group),
       }));
-      const response = await fetch("/api/routes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (!frozenRouteRequestRef.current) {
+        // Preserve the same UUID and immutable payload after a lost response.
+        // The server uses this UUID as the route PK, then checks a final receipt
+        // before reporting a replay as successful; a second route cannot arise.
+        const storageKey = "snacky:route-create-id:v1";
+        if (!routeCreateRequestIdRef.current) {
+          let storedId = "";
+          try { storedId = window.sessionStorage.getItem(storageKey) ?? ""; } catch { /* private browsing */ }
+          const validId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          routeCreateRequestIdRef.current = validId.test(storedId)
+            ? storedId : crypto.randomUUID();
+          try { window.sessionStorage.setItem(storageKey, routeCreateRequestIdRef.current); } catch { /* use in-memory UUID */ }
+        }
+        frozenRouteRequestRef.current = {
+          clientRouteId: routeCreateRequestIdRef.current,
           routeDate,
           creationMode,
           assignmentMode,
@@ -1318,11 +1338,25 @@ export function RouteCreateForm({
           recommendationFinalTakeQty: creationMode === "full" ? recommendationFinalTakeQty : [],
           manualStopItems: creationMode === "full" ? manualStopItems : [],
           adminOverride: creationMode === "full" ? adminOverride : false,
-        }),
+        };
+      }
+      const response = await fetch("/api/routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(frozenRouteRequestRef.current),
       });
       const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
       if (!response.ok || !result.routeId) {
+        // A definitive bad-request response means no route was created; allow
+        // editing. For ambiguous 409/5xx/network failures, retry EXACTLY the
+        // original frozen payload, never a second route-create operation.
+        if (response.status === 400) {
+          frozenRouteRequestRef.current = null;
+          setUncertainRouteSave(false);
+        } else {
+          setUncertainRouteSave(true);
+        }
         const serverStockIssues = Array.isArray(result.stockErrors) ? result.stockErrors as StockValidationIssue[] : [];
         if (serverStockIssues.length) {
           console.warn("[routes:new] Server stock validation failed", serverStockIssues);
@@ -1338,11 +1372,18 @@ export function RouteCreateForm({
           : "Route created successfully.",
       );
       localDraft.clearDraft();
+      frozenRouteRequestRef.current = null;
+      routeCreateRequestIdRef.current = "";
+      setUncertainRouteSave(false);
+      try { window.sessionStorage.removeItem("snacky:route-create-id:v1"); } catch { /* storage unavailable */ }
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
       setScrollErrorIntoView(true);
       setError(err instanceof Error ? err.message : "Could not create the route.");
+      if (frozenRouteRequestRef.current) setUncertainRouteSave(true);
       setSaving(false);
+    } finally {
+      routeSaveInFlightRef.current = false;
     }
   };
 
@@ -1379,7 +1420,7 @@ export function RouteCreateForm({
   ]));
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6" aria-busy={saving}>
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
       {planningWarnings.length ? (
@@ -2642,9 +2683,17 @@ export function RouteCreateForm({
         {builderStep === "machines" ? <button type="button" className="btn-primary justify-center" onClick={continueFromMachines} disabled={saving}>{creationMode === "full" ? tr(locale, "Review XY calculation", "راجع حساب XY") : tr(locale, "Review route", "راجع الجولة")}</button> : null}
         {builderStep === "products" ? <button type="button" className="btn-primary justify-center" onClick={continueFromProducts} disabled={saving}>{tr(locale, "Review route", "راجع الجولة")}</button> : null}
         {builderStep === "review" ? (
-          <button type="submit" className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
-            {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : creationMode === "stops_only" ? tr(locale, "Plan route stops", "تخطيط مواقع الجولة") : tr(locale, "Create route", "إنشاء جولة")}
-          </button>
+          <div className="flex flex-col gap-1">
+            <button type="submit" className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
+              {saving ? tr(locale, "Saving route — do not click again...", "جارٍ حفظ الجولة — لا تضغط مرة ثانية...")
+                : uncertainRouteSave ? tr(locale, "Check previous save safely", "التحقق من الحفظ السابق بأمان")
+                : creationMode === "stops_only" ? tr(locale, "Plan route stops", "تخطيط مواقع الجولة")
+                : tr(locale, "Create route", "إنشاء جولة")}
+            </button>
+            {uncertainRouteSave ? <span role="status" className="text-xs text-amber-800">
+              {tr(locale, "The previous save is not confirmed. This retries the SAME request and will not create a second route; check Routes before starting another.", "لم يتأكد الحفظ السابق. سيُعاد نفس الطلب دون إنشاء جولة ثانية؛ راجع الجولات قبل بدء طلب جديد.")}
+            </span> : null}
+          </div>
         ) : null}
         <SecondaryButton href="/routes">{tr(locale, "Cancel", "إلغاء")}</SecondaryButton>
       </div>
