@@ -13,6 +13,7 @@ import {
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { notifyRouteAssigned } from "@/lib/notification-delivery";
 import { autoPlanRouteProducts, type AutoPlanRouteProductsResult } from "@/lib/route-auto-plan";
+import { isClientRouteCreateId, routeCreateFingerprint, routeReplayState } from "@/lib/route-create-request";
 
 type SmartRouteSlotAllocationPayload = {
   machine_slot_id?: string | null;
@@ -32,6 +33,7 @@ type SmartRouteSlotAllocationPayload = {
 };
 
 type CreateRoutePayload = {
+  clientRouteId?: string;
   routeDate?: string;
   creationMode?: "full" | "stops_only";
   assignmentMode?: "assigned" | "unassigned";
@@ -448,6 +450,13 @@ export async function POST(request: Request) {
     return jsonError("Invalid route request.");
   }
 
+  const clientRouteId = payload.clientRouteId === undefined ? null : String(payload.clientRouteId ?? "").trim();
+  if (clientRouteId !== null && !isClientRouteCreateId(clientRouteId)) {
+    return jsonError("Invalid route creation request ID. Reload the form before retrying.", 400);
+  }
+  const routeRequestFingerprint = clientRouteId
+    ? routeCreateFingerprint(payload as unknown as Record<string, unknown>)
+    : null;
   const routeDate = String(payload.routeDate ?? "").trim();
   const creationMode = payload.creationMode === "stops_only" ? "stops_only" : "full";
   const stopsOnly = creationMode === "stops_only";
@@ -499,6 +508,56 @@ export async function POST(request: Request) {
   if (adminOverride && !isOwnerAdminRole(profile)) return jsonError("Only owner or admin can override the VMS recommendation.", 403);
   if (stopsOnly && !manualMachineIds.length) return jsonError("Choose at least one machine stop for this route plan.");
   if (!stopsOnly && !recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
+
+  // A lost HTTP response must NEVER create a second route. The UUID route
+  // primary key is the operation identity, so no schema change is necessary.
+  // A completed operation has a persisted final activity receipt; checking it
+  // before stock validation is important because the original route itself
+  // now reserves stock and a repeat calculation may otherwise fail.
+  const findExistingSubmission = async (): Promise<NextResponse | null> => {
+    if (!clientRouteId || !routeRequestFingerprint) return null;
+    const existing = await supabase.from("routes")
+      .select("id,created_by,route_date,operator_id")
+      .eq("id",clientRouteId).maybeSingle();
+    if (existing.error) {
+      return jsonError("Could not check the earlier route save. Do not create another request until it is verified.", 503, {code:"route_receipt_unavailable"});
+    }
+    if (!existing.data) return null;
+    const audit = await (getSupabaseAdminClient() ?? supabase)
+      .from("system_activity_logs").select("actor_user_id,metadata")
+      .eq("entity_type","route").eq("entity_id",clientRouteId)
+      .eq("action","create_route").eq("actor_user_id",profile.id)
+      .limit(1).maybeSingle();
+    if (audit.error) {
+      return jsonError("The route exists, but its saved receipt cannot be verified. Check Routes before retrying.", 503, {code:"route_receipt_unavailable"});
+    }
+    const state = routeReplayState({
+      route: existing.data,
+      audit: audit.data ? {
+        actor_user_id: audit.data.actor_user_id,
+        metadata: audit.data.metadata && typeof audit.data.metadata === "object"
+          && !Array.isArray(audit.data.metadata)
+          ? audit.data.metadata as Record<string, unknown> : null,
+      } : null,
+      actorUserId: profile.id,
+      teamMemberId: profile.team_member_id,
+      requestId:clientRouteId,
+      requestDate:routeDate,
+      operatorId:operatorId,
+      requestFingerprint:routeRequestFingerprint,
+    });
+    if(state==="complete") {
+      return NextResponse.json({routeId:clientRouteId,productsDeferred:stopsOnly,replayed:true}, {headers:{"Cache-Control":"no-store"}});
+    }
+    return jsonError(state==="in_progress"
+      ? "This route is still being saved or needs review. Open Routes before attempting a new request."
+      : "This request ID belongs to another route or different details. Open Routes before submitting again.",
+      409, {code:state==="in_progress"?"route_save_pending":"route_request_conflict"});
+  };
+  if (clientRouteId) {
+    const saved = await findExistingSubmission();
+    if (saved) return saved;
+  }
 
   const recommendationsResult = recommendationKeys.length
     ? await planningReadClient
@@ -617,7 +676,7 @@ export async function POST(request: Request) {
   let routeStatus: RouteStatus = routeStatusForNewRoute(operatorId || null);
   let routeInsert = await supabase
     .from("routes")
-    .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
+    .insert({ ...(clientRouteId ? { id: clientRouteId } : {}), route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
     .select("id")
     .single();
 
@@ -633,12 +692,17 @@ export async function POST(request: Request) {
       routeStatus = fallbackStatus;
       routeInsert = await supabase
         .from("routes")
-        .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
+        .insert({ ...(clientRouteId ? { id: clientRouteId } : {}), route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
         .select("id")
         .single();
     }
   }
 
+  if (routeInsert.error?.code === "23505" && clientRouteId) {
+    const replay = await findExistingSubmission();
+    if (replay) return replay;
+    return jsonError("Route creation ID already exists, but cannot be verified. Do not submit a different request.",409,{code:"route_request_conflict"});
+  }
   if (routeInsert.error || !routeInsert.data?.id) {
     console.error("[routes:create] Failed to insert route", { routeDate, operatorId, error: routeInsert.error });
     return jsonError("Could not create the route. Check database permissions and try again.", 500);
@@ -886,6 +950,7 @@ export async function POST(request: Request) {
 
   await logActivity({
     profile,
+    idempotencyKey: clientRouteId ? `create-route:${clientRouteId}` : null,
     action: "create_route",
     entityType: "route",
     entityId: routeId,
@@ -906,6 +971,7 @@ export async function POST(request: Request) {
       admin_override: adminOverride,
       assignment_mode: assignmentMode,
       creation_mode: creationMode,
+      route_create_request_fingerprint: routeRequestFingerprint,
       products_deferred_until_storage: stopsOnly && !autoPlanResult?.prepared,
       automatic_pickup_plan: autoPlanResult,
     },
