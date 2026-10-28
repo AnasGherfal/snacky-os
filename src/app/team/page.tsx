@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
+import { TeamCreateReceiptClear } from "@/components/TeamCreateRequestIdentity";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import type { AppPermission } from "@/lib/authz";
@@ -32,6 +33,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
   const params = cleanSearchParams(await searchParams);
+  const createdMemberId = typeof params.created_member === "string" ? params.created_member : "";
   const { page, pageSize, from, to } = getPagination(params);
   const cookieStore = await cookies();
   const tempPassword = parseTempPasswordCookie(cookieStore.get(tempPasswordCookie)?.value);
@@ -74,6 +76,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
 
   return (
     <>
+      {createdMemberId ? <TeamCreateReceiptClear ownerUserId={profile?.id ?? ""} createdMemberId={createdMemberId} /> : null}
       <PageHeader
         title="Team"
         subtitle="Manage Snacky OS users, roles, login links, and operational access."
