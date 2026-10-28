@@ -125,5 +125,17 @@ export function isFocusedWorkFormPath(pathname: string): boolean {
     /^\/cash-collections\/[^/]+\/edit(?:\/|$)/,
     /^\/locations-pipeline\/new(?:\/|$)/,
     /^\/locations-pipeline\/[^/]+\/edit(?:\/|$)/,
+    /^\/inventory\/movements\/new(?:\/|$)/,
+    /^\/team\/new(?:\/|$)/,
+    /^\/team\/[^/]+\/edit(?:\/|$)/,
+    /^\/suppliers\/new(?:\/|$)/,
+    /^\/storage-locations\/new(?:\/|$)/,
+    /^\/storage-locations\/[^/]+\/edit(?:\/|$)/,
+    /^\/locations\/new(?:\/|$)/,
+    /^\/machine-slots\/new(?:\/|$)/,
+    /^\/machine-slots\/[^/]+\/edit(?:\/|$)/,
+    /^\/contacts\/new(?:\/|$)/,
+    /^\/follow-ups\/new(?:\/|$)/,
+    /^\/relationships\/obligations\/new(?:\/|$)/,
   ].some((pattern) => pattern.test(pathname));
 }
