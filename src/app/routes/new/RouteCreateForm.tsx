@@ -336,6 +336,7 @@ export function RouteCreateForm({
   const [scrollErrorIntoView, setScrollErrorIntoView] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uncertainRouteSave, setUncertainRouteSave] = useState(false);
+  const [storedRouteRecovery, setStoredRouteRecovery] = useState<"none" | "ready" | "id_only">("none");
   const routeSaveInFlightRef = useRef(false);
   const routeSaveCompletedRef = useRef(false);
   const routeCreateRequestIdRef = useRef("");
@@ -346,6 +347,36 @@ export function RouteCreateForm({
   const deferredSearch = useDeferredValue(search);
   const deferredRecommendationSearch = useDeferredValue(recommendationSearch);
   const draftKey = useDraftKey("route", ["new"]);
+
+  // A lost network response can be followed by a browser refresh. Restore
+  // the exact original request, not merely the UUID; otherwise a new draft
+  // could accidentally be submitted using an old route ID.
+  useEffect(() => {
+    let id = "";
+    let raw = "";
+    try {
+      id = window.sessionStorage.getItem("snacky:route-create-id:v1") ?? "";
+      raw = window.sessionStorage.getItem("snacky:route-create-payload:v1") ?? "";
+    } catch { return; }
+    const validId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!validId.test(id)) return;
+    routeCreateRequestIdRef.current = id;
+    let recovery: "ready" | "id_only" = "id_only";
+    try {
+      const record = JSON.parse(raw) as Record<string, unknown>;
+      if (record && record.clientRouteId === id && typeof record.routeDate === "string"
+        && ["full","stops_only"].includes(String(record.creationMode ?? ""))
+        && Array.isArray(record.machineIds)) {
+        frozenRouteRequestRef.current = record;
+        recovery = "ready";
+      }
+    } catch { /* A partial saved request is never silently reused. */ }
+    const timer = window.setTimeout(() => {
+      setStoredRouteRecovery(recovery);
+      setUncertainRouteSave(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (xyRefreshStarted.current) return;
@@ -1280,6 +1311,13 @@ export function RouteCreateForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (storedRouteRecovery !== "none") {
+      setError(tr(locale,
+        "An earlier route save needs review. Use the recovery action above or check Routes before starting a different request.",
+        "هناك حفظ سابق لجولة يحتاج للتحقق. استخدم زر استكمال الحفظ بالأعلى أو راجع الجولات قبل بدء طلب مختلف."));
+      setScrollErrorIntoView(true);
+      return;
+    }
 
     if (builderStep !== "review") {
       if (builderStep === "details") continueFromDetails();
@@ -1340,6 +1378,9 @@ export function RouteCreateForm({
           manualStopItems: creationMode === "full" ? manualStopItems : [],
           adminOverride: creationMode === "full" ? adminOverride : false,
         };
+        try {
+          window.sessionStorage.setItem("snacky:route-create-payload:v1", JSON.stringify(frozenRouteRequestRef.current));
+        } catch { /* In-memory frozen request remains safe in this tab. */ }
       }
       const response = await fetch("/api/routes", {
         method: "POST",
@@ -1354,7 +1395,13 @@ export function RouteCreateForm({
         // original frozen payload, never a second route-create operation.
         if (response.status === 400) {
           frozenRouteRequestRef.current = null;
+          routeCreateRequestIdRef.current = "";
           setUncertainRouteSave(false);
+          setStoredRouteRecovery("none");
+          try {
+            window.sessionStorage.removeItem("snacky:route-create-payload:v1");
+            window.sessionStorage.removeItem("snacky:route-create-id:v1");
+          } catch { /* Browser storage unavailable. */ }
         } else {
           setUncertainRouteSave(true);
         }
@@ -1377,7 +1424,10 @@ export function RouteCreateForm({
       frozenRouteRequestRef.current = null;
       routeCreateRequestIdRef.current = "";
       setUncertainRouteSave(false);
-      try { window.sessionStorage.removeItem("snacky:route-create-id:v1"); } catch { /* storage unavailable */ }
+      try {
+        window.sessionStorage.removeItem("snacky:route-create-id:v1");
+        window.sessionStorage.removeItem("snacky:route-create-payload:v1");
+      } catch { /* storage unavailable */ }
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
       setScrollErrorIntoView(true);
