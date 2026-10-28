@@ -48,7 +48,7 @@ test("server checks existing UUID before generating SKU and uses database PK for
 
 test("stock adjustment and product Add forms use synchronous locks and frozen request on retry",()=>{
   const ui=readFileSync("src/components/StockMovementForm.tsx","utf8");
-  assert.match(ui,/if \(quickAddInFlightRef\.current\) return/);
+  assert.match(ui,/if \(quickAddInFlightRef\.current \|\| quickAddRecoveryBlocked\) return/);
   assert.match(ui,/quickAddInFlightRef\.current = true/);
   assert.match(ui,/quickAddInFlightRef\.current = false/);
   assert.match(ui,/quickAddFrozenRequestRef\.current = formData/);
