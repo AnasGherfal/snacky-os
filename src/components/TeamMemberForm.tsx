@@ -7,6 +7,7 @@ import { roleDescriptions } from "@/lib/team";
 type TeamMemberFormProps = {
   action: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
+  createRequestId?: string;
   backHref?: string;
   member?: {
     id: string; full_name: string; email: string | null; phone: string | null;
@@ -16,13 +17,13 @@ type TeamMemberFormProps = {
   };
 };
 
-export function TeamMemberForm({ action, submitLabel, backHref = "/team", member }: TeamMemberFormProps) {
+export function TeamMemberForm({ action, submitLabel, createRequestId, backHref = "/team", member }: TeamMemberFormProps) {
   const selectedRoles = new Set(member?.roles?.length ? member.roles : [member?.role ?? "operator"]);
   // Access always starts from the saved server record. A browser draft must not
   // restore removed permissions, and the previous primary role is not submitted.
   return (
     <form action={action} className="space-y-6">
-      {member ? <input type="hidden" name="id" value={member.id} /> : null}
+      {member ? <input type="hidden" name="id" value={member.id} /> : <input type="hidden" name="client_create_id" value={createRequestId ?? ""} /> }
       <FormSection title="Team member" description="Identity and contact details used for assignments and activity history.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Full name" required><input name="full_name" defaultValue={member?.full_name ?? ""} required className="field-input" autoComplete="name" /></FormField>
