@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, isOwnerAdminRole } from "@/lib/authz";
-import { resolveProductSku } from "@/lib/product-sku";
+import { resolveProductSku, sanitizeProductSku } from "@/lib/product-sku";
+import { sameQuickProductRequest } from "@/lib/quick-product-retry";
 
 type SimpleAdjustmentType = "set_exact" | "add" | "remove";
 
@@ -48,17 +49,51 @@ export async function createQuickProduct(formData: FormData) {
 
   const name = String(formData.get("name") || "").trim();
   if (!name) throw new Error("Product name is required.");
-  const sku = await resolveProductSku({ supabase, manualSku: formData.get("sku") });
 
+  const clientProductId = clean(formData.get("client_product_id"));
+  if (clientProductId && !isUuid(clientProductId)) {
+    throw new Error("The product save ID is invalid. Reload the form before creating another product.");
+  }
+  const barcode = clean(formData.get("barcode")) || null;
+  const brand = clean(formData.get("brand")) || null;
+  const category = clean(formData.get("category")) || "snack";
+  const requestedSku = sanitizeProductSku(formData.get("sku")) || null;
+  const sellingPrice = Number(formData.get("selling_price") || 0);
+  if (!Number.isFinite(sellingPrice) || sellingPrice < 0) throw new Error("Invalid selling price.");
+
+  // The existing products UUID primary key guarantees that two requests with
+  // the same creation ID cannot make two products, even if the first response
+  // never reached the phone. A replay is accepted only when every input matches.
+  const findCommittedQuickProduct = async () => {
+    if (!clientProductId) return false;
+    const { data: existing, error: readError } = await supabase.from("products")
+      .select("id,sku,name,barcode,brand,category,selling_price")
+      .eq("id", clientProductId).maybeSingle();
+    if (readError) throw new Error("Product save status could not be verified. Check Products before retrying.");
+    if (!existing) return false;
+    if (!sameQuickProductRequest(existing, {
+      id: clientProductId, name, requestedSku, barcode, brand, category, sellingPrice,
+    })) {
+      throw new Error("A product with this save ID already exists with different details. Check Products before trying again.");
+    }
+    return true;
+  };
+  if (await findCommittedQuickProduct()) {
+    revalidatePath("/inventory/movements/new");
+    return;
+  }
+
+  const sku = await resolveProductSku({ supabase, manualSku: formData.get("sku") });
   const { data, error } = await supabase.from("products").insert({
+    ...(clientProductId ? { id: clientProductId } : {}),
     sku,
-    barcode: String(formData.get("barcode") || "").trim() || null,
+    barcode,
     name,
-    category: String(formData.get("category") || "snack").trim() || "snack",
-    brand: String(formData.get("brand") || "").trim() || null,
-    selling_price: Number(formData.get("selling_price") || 0),
-    current_selling_price_lyd: Number(formData.get("selling_price") || 0),
-    selling_price_source: Number(formData.get("selling_price") || 0) > 0 ? "manual" : "initial_import",
+    category,
+    brand,
+    selling_price: sellingPrice,
+    current_selling_price_lyd: sellingPrice,
+    selling_price_source: sellingPrice > 0 ? "manual" : "initial_import",
     cost_price: 0,
     current_cost_price_lyd: 0,
     cost_price_source: "initial_import",
@@ -66,6 +101,10 @@ export async function createQuickProduct(formData: FormData) {
     active: true,
   }).select("id, sku, name, category, brand, active").single();
 
+  if (error?.code === "23505" && await findCommittedQuickProduct()) {
+    revalidatePath("/inventory/movements/new");
+    return;
+  }
   if (error) throw error;
   if (data) {
     await logActivity({
@@ -76,6 +115,7 @@ export async function createQuickProduct(formData: FormData) {
       entityLabel: data.name,
       afterData: data,
       summary: `Quick-created product ${data.name}`,
+      idempotencyKey: clientProductId ? `quick-product:${clientProductId}` : null,
     });
   }
   revalidatePath("/inventory/movements/new");
