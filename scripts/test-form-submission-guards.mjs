@@ -36,6 +36,9 @@ test("critical purchase and CRM forms preserve their own submission IDs and lock
   const purchase=readFileSync("src/components/PurchaseForm.tsx","utf8");
   const crm=readFileSync("src/components/CrmForm.tsx","utf8");
   assert.match(purchase,/if \(submittingRef\.current\) return/);
+  assert.match(purchase,/if \(supplierSaveInFlightRef\.current\) return/);
+  assert.match(purchase,/supplierSaveInFlightRef\.current = true/);
+  assert.match(purchase,/supplierSaveInFlightRef\.current = false/);
   assert.match(purchase,/formData\.set\("client_submission_id", clientSubmissionId\)/);
   assert.match(crm,/if \(lock\.current \|\| !ready \|\| blocked \|\| done \|\| stale \|\| duplicateBlocked\) return/);
   assert.match(crm,/Retry this same request to avoid duplicates/);
