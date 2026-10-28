@@ -3,7 +3,7 @@ export type TeamCreatePayload = {
   email: string | null;
   phone: string | null;
   role: string;
-  roles: string[];
+  roles: string[] | null;
   crm_focus: string | null;
   can_add_products: boolean;
   active_status: string;
