@@ -83,3 +83,21 @@ test("route creation UI has immediate synchronous lock, frozen payload and stabl
   assert.match(ui,/Check previous save safely/);
   assert.match(ui,/aria-busy=\{saving\}/);
 });
+
+
+test("a reloaded route form recovers the exact original UUID and frozen request",()=>{
+  const ui=readFileSync("src/app/routes/new/RouteCreateForm.tsx","utf8");
+  assert.match(ui,/sessionStorage\.getItem\("snacky:route-create-id:v1"\)/);
+  assert.match(ui,/sessionStorage\.getItem\("snacky:route-create-payload:v1"\)/);
+  assert.match(ui,/sessionStorage\.setItem\("snacky:route-create-payload:v1", JSON\.stringify\(frozenRouteRequestRef\.current\)\)/);
+  assert.match(ui,/record\.clientRouteId === id/);
+  assert.match(ui,/const recoverSavedRouteRequest = async/);
+  assert.match(ui,/body: JSON\.stringify\(original\)/);
+  assert.match(ui,/if \(storedRouteRecovery !== "none"\)/);
+  assert.match(ui,/Resume the SAME saved route/);
+  assert.match(ui,/Check existing routes/);
+  assert.match(ui,/const discardSavedRouteRequest/);
+  assert.match(ui,/window\.confirm\(tr\(locale,/);
+  assert.match(ui,/sessionStorage\.removeItem\("snacky:route-create-payload:v1"\)/);
+  assert.match(ui,/storedRouteRecovery === "id_only"/);
+});
