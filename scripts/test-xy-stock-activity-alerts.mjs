@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {assessXyMachineActivity,XY_MACHINE_ACTIVITY_PROFILES} from "../src/lib/xy-stock-activity-alert-rules.ts";
+import {assessXyMachineActivity,comparableXyActivityBaselineDays,missingReliableXyActivityBaseline,XY_MACHINE_ACTIVITY_PROFILES} from "../src/lib/xy-stock-activity-alert-rules.ts";
 import fs from "node:fs";
 
 const DAY=86400000;
@@ -147,4 +147,58 @@ test("XY owner settings are server-authorized, provider-linked and RLS protected
   assert.match(admin,/Save activity warning rules/);
   assert.match(ddl,/enable row level security/);
   assert.match(ddl,/revoke all on public\.xy_stock_activity_site_overrides from public,anon,authenticated/);
+});
+
+
+test("Free-tier sampled XY stock history is marked insufficient, never treated as zero sales",()=>{
+  const now=Date.parse("2026-10-09T13:05:00Z");
+  const profile=XY_MACHINE_ACTIVITY_PROFILES["2509000369"];
+  const full=buildHistory(now);
+  const current=iso(now+2*3600000);
+  assert.equal(comparableXyActivityBaselineDays(profile,full,now),14);
+  assert.equal(missingReliableXyActivityBaseline(profile,full,now),false);
+  const sparse={
+    ...full,
+    hourly:full.hourly.map(hour => hour.day===current ? hour
+      : {...hour,batches:1}),
+  };
+  assert.equal(comparableXyActivityBaselineDays(profile,sparse,now),0);
+  assert.equal(missingReliableXyActivityBaseline(profile,sparse,now),true);
+  assert.equal(assessXyMachineActivity({nowMs:now,profile,history:sparse}).outcome,"skip");
+  assert.equal(missingReliableXyActivityBaseline(profile,{...sparse,recent_stocked_slots:0},now),false,
+    "Unreliable current telemetry cannot support even the missing-history diagnosis");
+  assert.equal(missingReliableXyActivityBaseline(profile,{...sparse,last_observed_at:"2026-10-08T01:00:00Z"},now),false);
+});
+
+test("historical warning availability respects same weekdays and site closures",()=>{
+  const now=Date.parse("2026-10-12T10:05:00Z");
+  const profile=XY_MACHINE_ACTIVITY_PROFILES["2509000370"];
+  const full=buildHistory(now,{hours:[9,10,11],days:28,weekdayOnly:true,usualUnits:4});
+  assert.equal(comparableXyActivityBaselineDays(profile,full,now),4);
+  assert.equal(missingReliableXyActivityBaseline(profile,full,now),false);
+  const onlyTwoWeekdays={
+    ...full,
+    hourly:full.hourly.filter(row => row.day===iso(now+2*3600000)
+      || row.day===shift(iso(now+2*3600000),-7)
+      || row.day===shift(iso(now+2*3600000),-14)),
+  };
+  assert.equal(comparableXyActivityBaselineDays(profile,onlyTwoWeekdays,now),2);
+  assert.equal(missingReliableXyActivityBaseline(profile,onlyTwoWeekdays,now),false,
+    "Universities require two corroborating same-weekday reference days");
+  const justOne={...full,hourly:full.hourly.filter(row=>row.day===iso(now+2*3600000)
+    || row.day===shift(iso(now+2*3600000),-7))};
+  assert.equal(missingReliableXyActivityBaseline(profile,justOne,now),true);
+  assert.equal(missingReliableXyActivityBaseline({...profile,closedDates:[iso(now+2*3600000)]},justOne,now),false,
+    "Do not issue history warnings when the venue is intentionally closed");
+});
+
+test("owner sees one stable bilingual in-app warning for insufficient post-cleanup stock history",()=>{
+  const alerts=fs.readFileSync("src/lib/xy-stock-activity-alerts.ts","utf8");
+  assert.match(alerts,/missingReliableXyActivityBaseline/);
+  assert.match(alerts,/missingBaselineMachineCount/);
+  assert.match(alerts,/xy_stock_activity_baseline_incomplete/);
+  assert.match(alerts,/stock-retention-limited-history-v1/);
+  assert.match(alerts,/Missing activity history does NOT mean zero sales/);
+  assert.match(alerts,/نقص البيانات لا يعني عدم وجود مبيعات/);
+  assert.doesNotMatch(alerts,/sendPush|sendEmail|webpush/);
 });
