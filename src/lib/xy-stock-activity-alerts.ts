@@ -1,5 +1,5 @@
 import "server-only";
-import { assessXyMachineActivity, XY_MACHINE_ACTIVITY_PROFILES, type XyActivityHistory } from "@/lib/xy-stock-activity-alert-rules";
+import { assessXyMachineActivity, missingReliableXyActivityBaseline, XY_MACHINE_ACTIVITY_PROFILES, type XyActivityHistory } from "@/lib/xy-stock-activity-alert-rules";
 import type { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 type Database = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
@@ -20,7 +20,7 @@ export type XyStockActivityNotice = {
   message: string;
   messageAr: string;
   url: string;
-  sourceId: string;
+  sourceId?: string;
 };
 
 /** Called from the existing secured XY cron. Database history is aggregated
@@ -63,6 +63,7 @@ export async function getXyStockActivityNotices(input: {
     .map(row=>[row.machine_id,row]));
   const byId=new Map(((data??[]) as XyActivityHistory[]).map(row=>[row.machine_id,row]));
   const result:XyStockActivityNotice[]=[];
+  let missingBaselineMachineCount=0;
   for(const machine of machines) {
     if(!machine.vms_machine_id || !activeStockMachineIds.has(machine.id)) continue;
     const base=XY_MACHINE_ACTIVITY_PROFILES[machine.vms_machine_id];
@@ -78,6 +79,9 @@ export async function getXyStockActivityNotices(input: {
     if(!profile || !history || machine.vms_online_status!=="1") continue;
     const statusAt=Date.parse(String(machine.last_vms_status_at??""));
     if(!Number.isFinite(statusAt) || nowMs-statusAt>25*60*1000) continue;
+    if (missingReliableXyActivityBaseline(profile,history,nowMs)) {
+      missingBaselineMachineCount++;
+    }
     const outcome=assessXyMachineActivity({nowMs,profile,history});
     if(outcome.outcome!=="attention") continue;
     const hours=outcome.hours;
@@ -99,6 +103,22 @@ export async function getXyStockActivityNotices(input: {
       messageAr:`لم يرصد سناكي انخفاضاً في مخزون ${siteTypeAr} «${venue}» خلال ${hours} ساعات تشغيل. في الفترات المشابهة تاريخياً كان المخزون ينخفض بنحو ${usualUnits} منتج (${outcome.evidenceDays} أيام مقارنة). قد يكون السبب الدفع أو الماكينة أو بيانات المخزون، وليس دليلاً قاطعاً على عدم وجود مبيعات. يرجى التحقق.`,
       url:`/machines/${machine.id}`,
       sourceId:machine.id,
+    });
+  }
+  if (missingBaselineMachineCount>0) {
+    // A single in-app owner notice makes the limits of post-recovery sampling
+    // explicit. It does not turn incomplete XY history into fake sales or
+    // broaden the no-sales feed. The stable episode prevents repeated alerts.
+    result.push({
+      kind:"xy_stock_activity_baseline_incomplete",
+      type:"xy_stock_activity_baseline_incomplete",
+      scope:"global",
+      episode:"stock-retention-limited-history-v1",
+      title:"XY inactivity monitoring has limited historical evidence",
+      titleAr:"سجل المقارنة التاريخي لحركة منتجات XY غير مكتمل",
+      message:`${missingBaselineMachineCount} active machine(s) have too few verified comparable historical stock hours. Detailed XY history was reduced to stay within the database limit; machine inactivity alerts may be unavailable until sufficient history is rebuilt. Check current XY stock and machine status directly. Missing activity history does NOT mean zero sales.`,
+      messageAr:`عدد ${missingBaselineMachineCount} ماكينة نشطة لا يملك بيانات تاريخية كافية للمقارنة الموثوقة. تم تقليل تفاصيل سجل XY للحفاظ على مساحة قاعدة البيانات، وقد تتوقف تنبيهات ركود حركة المنتجات لحين استعادة سجل كافٍ. تحقق من المخزون وحالة اتصال الماكينات مباشرةً؛ نقص البيانات لا يعني عدم وجود مبيعات.`,
+      url:"/admin/vms-api",
     });
   }
   return result;
