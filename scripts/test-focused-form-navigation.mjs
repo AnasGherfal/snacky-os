@@ -21,6 +21,10 @@ test("new/edit work screens are focused without unrelated module tab chrome",()=
     "/issues/new","/issues/a/edit","/finance/transactions/new",
     "/finance/transactions/a/edit","/cash-collections/new","/cash-collections/a/edit",
     "/locations-pipeline/new","/locations-pipeline/a/edit",
+    "/inventory/movements/new","/team/new","/team/a/edit",
+    "/suppliers/new","/storage-locations/new","/storage-locations/a/edit",
+    "/locations/new","/machine-slots/new","/machine-slots/a/edit",
+    "/contacts/new","/follow-ups/new","/relationships/obligations/new",
   ])assert.equal(isFocusedWorkFormPath(pathname),true,pathname);
   assert.match(layout,/!isFocusedWorkFormPath\(pathname\)/);
 });
