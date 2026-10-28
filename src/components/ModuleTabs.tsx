@@ -12,6 +12,7 @@ export type ModuleTab = {
   match?: string[];
   group?: string;
   groupAr?: string;
+  advanced?: boolean;
 };
 
 function pathnameFromHref(href: string) {
@@ -66,6 +67,7 @@ export function ModuleTabs({
 }) {
   const { locale } = useLanguage();
   const [optimisticNavigation, setOptimisticNavigation] = useState<{ href: string; path: string; search: string } | null>(null);
+  const [moreSearch, setMoreSearch] = useState("");
   const optimisticHref = optimisticNavigation?.path === currentPath && optimisticNavigation.search === currentSearch
     ? optimisticNavigation.href
     : null;
@@ -89,6 +91,44 @@ export function ModuleTabs({
 
   const displayModuleName = locale === "ar" && moduleNameAr ? moduleNameAr : moduleName;
   const extraTabActive = activeIndex >= primaryTabs.length;
+  const needle = moreSearch.trim().toLocaleLowerCase();
+  const matchesMoreSearch = (tab: ModuleTab) =>
+    !needle || [tab.label, tab.labelAr, tab.group, tab.groupAr]
+      .some((label) => String(label ?? "").toLocaleLowerCase().includes(needle));
+  const primaryMoreItems = extraTabs.filter((tab) => !tab.advanced && matchesMoreSearch(tab));
+  const advancedMoreItems = extraTabs.filter((tab) => tab.advanced && matchesMoreSearch(tab));
+  const activeAdvanced = activeIndex >= 0 && Boolean(tabs[activeIndex]?.advanced);
+  const renderMoreItems = (items: ModuleTab[]) => items.map((tab, index) => {
+    const active = tabs[activeIndex] === tab;
+    const group = tab.group ?? "Other tools";
+    const previousGroup = items[index - 1]?.group ?? "Other tools";
+    return (
+      <div key={`${tab.label}-${tab.href}`}>
+        {index === 0 || group !== previousGroup ? (
+          <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {locale === "ar" ? (tab.groupAr ?? "أدوات أخرى") : group}
+          </div>
+        ) : null}
+        <Link
+          href={tab.href}
+          prefetch={false}
+          aria-current={active ? "page" : undefined}
+          onClick={(event) => {
+            if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+            setOptimisticNavigation({ href: tab.href, path: currentPath, search: currentSearch });
+            setMoreSearch("");
+          }}
+          className={`block rounded-lg px-3 py-2.5 text-sm transition ${
+            active
+              ? "bg-emerald-50 font-semibold text-emerald-950"
+              : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+          }`}
+        >
+          {locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}
+        </Link>
+      </div>
+    );
+  });
 
   return (
     <nav
@@ -146,37 +186,35 @@ export function ModuleTabs({
             {locale === "ar" ? "المزيد" : "More"}
             <span aria-hidden="true" className="text-xs">{extraTabActive ? "●" : "⌄"}</span>
           </summary>
-          <div className="absolute end-0 top-full z-40 mt-1 max-h-[min(65vh,28rem)] w-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-            {extraTabs.map((tab, index) => {
-              const active = activeIndex === primaryTabs.length + index;
-              const group = tab.group ?? "Other tools";
-              const previousGroup = extraTabs[index - 1]?.group ?? "Other tools";
-              return (
-                <div key={`${tab.label}-${tab.href}`}>
-                  {index === 0 || group !== previousGroup ? (
-                    <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      {locale === "ar" ? (tab.groupAr ?? "أدوات أخرى") : group}
-                    </div>
-                  ) : null}
-                  <Link
-                  href={tab.href}
-                  prefetch={false}
-                  aria-current={active ? "page" : undefined}
-                  onClick={(event) => {
-                    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                    setOptimisticNavigation({ href: tab.href, path: currentPath, search: currentSearch });
-                  }}
-                  className={`block rounded-lg px-3 py-2.5 text-sm transition ${
-                    active
-                      ? "bg-emerald-50 font-semibold text-emerald-950"
-                      : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
-                  }`}
-                >
-                  {locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}
-                  </Link>
-                </div>
-              );
-            })}
+          <div className="absolute end-0 top-full z-40 mt-1 max-h-[min(70vh,30rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+            {extraTabs.length > 6 ? (
+              <label className="block px-1 pb-2">
+                <span className="sr-only">{locale === "ar" ? "ابحث عن صفحة" : "Find a page"}</span>
+                <input
+                  type="search"
+                  value={moreSearch}
+                  onChange={(event) => setMoreSearch(event.target.value)}
+                  placeholder={locale === "ar" ? "ابحث عن صفحة..." : "Find a page..."}
+                  className="field-input w-full text-sm"
+                  autoComplete="off"
+                />
+              </label>
+            ) : null}
+            {renderMoreItems(primaryMoreItems)}
+            {advancedMoreItems.length ? (
+              needle ? renderMoreItems(advancedMoreItems) : (
+                <details key={activeAdvanced ? "active-advanced" : "closed-advanced"} open={activeAdvanced ? true : undefined}
+                  className="mt-2 rounded-lg border border-slate-100 bg-slate-50/70">
+                  <summary className="cursor-pointer px-3 py-3 text-xs font-semibold text-slate-600">
+                    {locale === "ar" ? `إعدادات ومراجعة متقدمة (${advancedMoreItems.length})` : `Advanced setup & diagnostics (${advancedMoreItems.length})`}
+                  </summary>
+                  <div className="border-t border-slate-100 bg-white pb-1">{renderMoreItems(advancedMoreItems)}</div>
+                </details>
+              )
+            ) : null}
+            {!primaryMoreItems.length && !advancedMoreItems.length ? (
+              <p className="px-3 py-4 text-sm text-slate-500">{locale === "ar" ? "لا توجد صفحات مطابقة" : "No matching pages"}</p>
+            ) : null}
           </div>
         </details>
       ) : null}
