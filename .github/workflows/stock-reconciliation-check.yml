@@ -7,6 +7,10 @@ on:
     paths:
       - "src/app/inventory/reconciliation/page.tsx"
       - "src/lib/stock-reconciliation.ts"
+      - "src/lib/inventory-actions.ts"
+      - "src/lib/quick-product-retry.ts"
+      - "src/components/StockMovementForm.tsx"
+      - "scripts/test-quick-product-retry.mjs"
       - "src/components/module-tabs-config.ts"
       - "supabase/migrations/202607170001_stock_reconciliation_missing_items.sql"
       - "scripts/test-stock-reconciliation.mjs"
@@ -17,6 +21,10 @@ on:
     paths:
       - "src/app/inventory/reconciliation/page.tsx"
       - "src/lib/stock-reconciliation.ts"
+      - "src/lib/inventory-actions.ts"
+      - "src/lib/quick-product-retry.ts"
+      - "src/components/StockMovementForm.tsx"
+      - "scripts/test-quick-product-retry.mjs"
       - "src/components/module-tabs-config.ts"
       - "supabase/migrations/202607170001_stock_reconciliation_missing_items.sql"
       - "scripts/test-stock-reconciliation.mjs"
@@ -35,6 +43,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run stock reconciliation tests
-        run: node --test scripts/test-stock-reconciliation.mjs
+        run: node --experimental-strip-types --test scripts/test-stock-reconciliation.mjs scripts/test-quick-product-retry.mjs
       - name: Build Snacky OS
         run: npm run build
