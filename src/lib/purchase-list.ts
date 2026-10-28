@@ -18,6 +18,32 @@ export type PurchaseListSalesRow = {
   units_sold?: number | string | null;
 };
 
+export type UnmappedPurchaseSale = {
+  product_name?: string | null;
+  product_number?: string | null;
+  transaction_count?: number | string | null;
+};
+
+export type UnmappedPurchaseProduct = { name: string; number: string | null; units: number };
+
+/** Report exact unmapped VMS identities without pretending they are Snacky SKUs. */
+export function groupUnmappedPurchaseSales(rows: UnmappedPurchaseSale[], limit = 5): UnmappedPurchaseProduct[] {
+  const totals = new Map<string, UnmappedPurchaseProduct>();
+  for (const row of rows) {
+    const units = Number(row.transaction_count);
+    if (!Number.isSafeInteger(units) || units <= 0) continue;
+    const name = (row.product_name ?? "").trim().slice(0, 160) || "Unknown VMS product";
+    const number = (row.product_number ?? "").trim().slice(0, 60) || null;
+    const key = `${number ?? ""}\u0000${name.toLocaleLowerCase("en")}`;
+    const existing = totals.get(key);
+    if (existing) existing.units += units;
+    else totals.set(key, { name, number, units });
+  }
+  return [...totals.values()]
+    .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name) || String(a.number).localeCompare(String(b.number)))
+    .slice(0, Math.max(0, Math.min(limit, 20)));
+}
+
 export type PurchaseListScheduledDemandRow = {
   product_id: string | null;
   site_name: string;

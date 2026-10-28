@@ -4,7 +4,7 @@ import test from "node:test";
 import { register } from "node:module";
 
 register("./ts-alias-loader.mjs", import.meta.url);
-const { computePurchaseList } = await import("../src/lib/purchase-list.ts");
+const { computePurchaseList, groupUnmappedPurchaseSales } = await import("../src/lib/purchase-list.ts");
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const eliteRpcMigration = read("supabase/migrations/20261001110000_purchase_list_elite_demand_rpc.sql");
 
@@ -129,9 +129,26 @@ test("coverage selector changes buy quantity without changing recent-demand elig
   assert.deepEqual([...seven.keys()], [...fourteen.keys()]);
 });
 
+test("unmapped monthly sales name the products preventing complete purchase recommendations", () => {
+  const rows = groupUnmappedPurchaseSales([
+    {product_name:"Brioche Dinar",product_number:"0200",transaction_count:170},
+    {product_name:"Brioche Dinar",product_number:"0200",transaction_count:10},
+    {product_name:"未设置",product_number:"0000",transaction_count:3},
+    {product_name:"未设置",product_number:"0000",transaction_count:1},
+    {product_name:"",product_number:null,transaction_count:0},
+  ]);
+  assert.deepEqual(rows, [
+    {name:"Brioche Dinar",number:"0200",units:180},
+    {name:"未设置",number:"0000",units:4},
+  ]);
+  assert.equal(groupUnmappedPurchaseSales([{product_name:"Other",product_number:"01",transaction_count:5}],0).length,0);
+});
+
 test("purchase list reads active monthly product imports and live storage, not the empty legacy KPI", () => {
   const source = read("src/lib/purchase-list-data.ts");
   assert.match(source, /from\("vms_monthly_product_profit"\)/);
+  assert.match(source, /transaction_count, product_name, product_number/);
+  assert.match(source, /groupUnmappedPurchaseSales/);
   assert.match(source, /from\("vms_import_batches"\)/);
   assert.match(source, /eq\("report_type", "monthly_product_profit"\)/);
   assert.match(source, /eq\("is_active", true\)/);

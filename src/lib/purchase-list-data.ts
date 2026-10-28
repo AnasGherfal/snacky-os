@@ -1,7 +1,7 @@
 import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
-import { computePurchaseList, type PurchaseListPeriod, type PurchaseListSalesRow, type PurchaseListScheduledDemandRow, type PurchaseListStorageRow } from "@/lib/purchase-list";
+import { computePurchaseList, groupUnmappedPurchaseSales, type UnmappedPurchaseProduct, type PurchaseListPeriod, type PurchaseListSalesRow, type PurchaseListScheduledDemandRow, type PurchaseListStorageRow } from "@/lib/purchase-list";
 import { boxPurchaseRecommendations, type BoxProduct, type BoxPurchaseListItem } from "@/lib/purchase-boxes";
 import { supabaseQueryErrorMessage } from "@/lib/safe-supabase-query";
 
@@ -11,7 +11,7 @@ type SupabaseLike = {
   rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<SupabaseRpcResult>;
 };
 type BatchRow = { id: string; report_start_date: string | null; report_end_date: string | null; uploaded_at: string | null; is_active?: boolean | null; status?: string | null };
-type ProfitRow = { id: string; import_batch_id?: string | null; internal_product_id?: string | null; business_month?: string | null; transaction_count?: number | string | null };
+type ProfitRow = { id: string; import_batch_id?: string | null; internal_product_id?: string | null; business_month?: string | null; transaction_count?: number | string | null; product_name?: string | null; product_number?: string | null };
 type ScheduledDemandRpc = {
   machine_id?: string | null;
   vms_machine_id?: string | null;
@@ -27,7 +27,7 @@ type ScheduledDemandRpc = {
 export type PurchaseListLoadResult = {
   items: BoxPurchaseListItem[]; previousPeriod: PurchaseListPeriod | null; currentPeriod: PurchaseListPeriod | null;
   previousBatch: BatchRow | null; currentBatch: BatchRow | null; errors: Record<string,string>;
-  unmappedSalesRows: number; unmappedSalesUnits: number; productCount: number; storageLoaded: boolean;
+  unmappedSalesRows: number; unmappedSalesUnits: number; unmappedSalesProducts: UnmappedPurchaseProduct[]; productCount: number; storageLoaded: boolean;
   scheduledSiteDemand: {
     siteName: string;
     observedOperatingDays: number;
@@ -88,7 +88,7 @@ export async function loadPurchaseListData(supabase: SupabaseLike, coverageTarge
     readAll<PurchaseListStorageRow>("purchase-list.storage", (from,to) => readClient.from("current_inventory_by_location")
       .select("product_id, quantity_on_hand").eq("location_type", "storage").order("product_id").order("location_id").range(from,to)),
     ids.length ? readAll<ProfitRow>("purchase-list.sales", (from,to) => readClient.from("vms_monthly_product_profit")
-      .select("id, import_batch_id, internal_product_id, business_month, transaction_count").in("import_batch_id",ids).order("id").range(from,to))
+      .select("id, import_batch_id, internal_product_id, business_month, transaction_count, product_name, product_number").in("import_batch_id",ids).order("id").range(from,to))
       : Promise.resolve({data:[] as ProfitRow[],error:null}),
   ]);
   if (products.error) errors.products = products.error;
@@ -97,10 +97,11 @@ export async function loadPurchaseListData(supabase: SupabaseLike, coverageTarge
   if (!ids.length && !batches.error) errors.sales = "No active sales report is available for the previous or current month.";
   const salesRows: PurchaseListSalesRow[] = [];
   let unmappedSalesRows = 0, unmappedSalesUnits = 0;
+  const unmappedRows: ProfitRow[] = [];
   for (const row of sales.data) {
     const units = Number(row.transaction_count);
     if (!Number.isSafeInteger(units) || units < 0) { errors.sales = "A sales quantity is invalid; review the source report."; continue; }
-    if (!row.internal_product_id) { if (units > 0) { unmappedSalesRows++; unmappedSalesUnits += units; } continue; }
+    if (!row.internal_product_id) { if (units > 0) { unmappedSalesRows++; unmappedSalesUnits += units; unmappedRows.push(row); } continue; }
     const which = row.import_batch_id === currentBatch?.id ? "current" : "previous";
     const expectedMonth = which === "current" ? current.start : previous.start;
     if (row.business_month !== expectedMonth) { errors.sales = "A sales row does not match its report month."; continue; }
@@ -149,7 +150,7 @@ export async function loadPurchaseListData(supabase: SupabaseLike, coverageTarge
     coverageTargetDays,
   });
   return {items:boxPurchaseRecommendations(items,products.data),previousPeriod,currentPeriod,previousBatch,currentBatch,errors,
-    unmappedSalesRows,unmappedSalesUnits,productCount:products.data.length,storageLoaded:!storage.error,scheduledSiteDemand};
+    unmappedSalesRows,unmappedSalesUnits,unmappedSalesProducts:groupUnmappedPurchaseSales(unmappedRows),productCount:products.data.length,storageLoaded:!storage.error,scheduledSiteDemand};
 }
 export function purchaseListLoadErrorMessage(result: PurchaseListLoadResult) {
   return Object.values(result.errors).filter(Boolean).join(" ") || null;

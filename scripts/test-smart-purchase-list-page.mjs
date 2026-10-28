@@ -13,7 +13,7 @@ const item = {productId:"fast",name:"Fast",sku:"F",previousMonthUnits:310,curren
   storageQty:5,stockCoverageDays:0.3,coverageTargetDays:7,targetStockQty:105,suggestedBuyQty:100,
   lastPurchaseCost:2,estimatedBuyCost:240,demandBasis:"current",caseQuantity:24,suggestedBoxesQty:5,purchaseUnits:120,boxSizeMissing:false};
 async function render(overrides={},locale="en",authorize=true) {
-  const result={items:[item],previousPeriod,currentPeriod,errors:{},storageLoaded:true,unmappedSalesRows:0,unmappedSalesUnits:0,productCount:1,...overrides};
+  const result={items:[item],previousPeriod,currentPeriod,errors:{},storageLoaded:true,unmappedSalesRows:0,unmappedSalesUnits:0,unmappedSalesProducts:[],productCount:1,...overrides};
   const events=[];
   const jsx=(type,props)=>typeof type==="function"?type(props):({type,props});
   const widgets=Object.fromEntries(["DataTable","EmptyState","ErrorState","MobileCardList","MobileField","MobileRecordCard","PageHeader"].map(name=>[name,name]));
@@ -43,6 +43,17 @@ test("absent current report is not zero sales or a slowing trend",async()=>{
 });
 test("unmapped or absent eligible sellers never imply adequate storage",async()=>{
   const {text}=await render({items:[],unmappedSalesUnits:80,unmappedSalesRows:2});assert.match(text,/No mapped recent sellers/);assert.doesNotMatch(text,/Nothing to buy|already covers/);
+});
+test("unmapped sales display actual source products with a mapping review link, not guessed SKUs",async()=>{
+  const {nodes,text}=await render({unmappedSalesRows:3,unmappedSalesUnits:184,unmappedSalesProducts:[
+    {name:"Brioche Dinar",number:"0200",units:180},
+    {name:"未设置",number:"0000",units:4},
+  ]});
+  assert.match(text,/Brioche Dinar/);
+  assert.match(text,/180/);
+  assert.match(text,/184/);
+  assert.match(text,/has not guessed/);
+  assert.ok(nodes.some(node=>node.type==="a"&&node.props.href==="/vms-mappings"));
 });
 test("verified empty buying gap is distinct from loading failure",async()=>{
   const {text}=await render({items:[{...item,suggestedBuyQty:0,suggestedBoxesQty:0,purchaseUnits:0,estimatedBuyCost:0}]});assert.match(text,/Nothing to buy for this coverage window/);assert.doesNotMatch(text,/could not be verified/);
