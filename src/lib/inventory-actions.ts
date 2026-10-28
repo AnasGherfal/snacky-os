@@ -83,7 +83,19 @@ export async function createQuickProduct(formData: FormData) {
     return;
   }
 
-  const sku = await resolveProductSku({ supabase, manualSku: formData.get("sku") });
+  let sku: string;
+  try {
+    sku = await resolveProductSku({ supabase, manualSku: formData.get("sku") });
+  } catch (error) {
+    // A concurrent retry may have created the exact same product and SKU
+    // between the first ID check and SKU generation. Confirm by its UUID
+    // rather than showing a misleading duplicate-code error.
+    if (await findCommittedQuickProduct()) {
+      revalidatePath("/inventory/movements/new");
+      return;
+    }
+    throw error;
+  }
   const { data, error } = await supabase.from("products").insert({
     ...(clientProductId ? { id: clientProductId } : {}),
     sku,
