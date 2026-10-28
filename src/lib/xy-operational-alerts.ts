@@ -3,7 +3,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyLiveSalesConfig } from "@/lib/xy-live-sales-sync";
 import { getXyStockActivityNotices } from "@/lib/xy-stock-activity-alerts";
 import { CASH_ELIGIBLE_VMS_BATCH_STATUSES } from "@/lib/vms-cash-source";
-import { knownXyNotificationEventKeys, lastSaleTimestamp, noSalesFor24Hours, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
+import { knownXyNotificationEventKeys, lastSaleTimestamp, noSalesFor24Hours, verifiedRecentXySalesEvidence, verifiedSalesCoverage, xyOperationalAlertEventKey } from "@/lib/xy-operational-alert-rules";
 
 type Db = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type Notice = {
@@ -171,7 +171,7 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
   const salesConfig = getXyLiveSalesConfig();
   const latestSales = salesRunResult.data;
   const summary = (latestSales?.response_summary ?? {}) as Record<string, unknown>;
-  const salesReady = salesConfig.ready && verifiedSalesCoverage({
+  let salesReady = salesConfig.ready && verifiedSalesCoverage({
     status: latestSales?.status ?? null,
     completed_at: latestSales?.completed_at ?? null,
     range_start: typeof summary.range_start === "string" ? summary.range_start : null,
@@ -180,6 +180,49 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     mapped_machine_rows: Number(summary.mapped_machine_rows ?? 0),
     coverage_complete: summary.coverage_complete === true,
   }, nowMs);
+
+  if (salesReady) {
+    // A plausible sync summary alone cannot establish persisted XY source
+    // coverage. Require at least one actual successful, product+machine-mapped
+    // transaction from an eligible, non-deleted batch in the last 24 hours.
+    // Otherwise an empty/archived feed could make every stocked machine appear
+    // to have made zero sales. This check is read-only and never invents money.
+    const since = new Date(nowMs - 24 * HOUR).toISOString();
+    const nowIso = now.toISOString();
+    const [recentPayment,recentDelivery] = await Promise.all([
+      db.from("vms_transactions_raw")
+        .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+        .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+        .is("batch.deleted_at",null)
+        .eq("transaction_status","successful_sale")
+        .not("mapped_machine_id","is",null)
+        .not("mapped_product_id","is",null)
+        .gte("payment_time",since).lte("payment_time",nowIso)
+        .order("payment_time",{ascending:false}).limit(1).maybeSingle(),
+      db.from("vms_transactions_raw")
+        .select("payment_time,delivery_time,batch:vms_import_batches!inner(id)")
+        .in("batch.status",[...CASH_ELIGIBLE_VMS_BATCH_STATUSES])
+        .is("batch.deleted_at",null)
+        .eq("transaction_status","successful_sale")
+        .not("mapped_machine_id","is",null)
+        .not("mapped_product_id","is",null)
+        .gte("delivery_time",since).lte("delivery_time",nowIso)
+        .order("delivery_time",{ascending:false}).limit(1).maybeSingle(),
+    ]);
+    if (recentPayment.error || recentDelivery.error) {
+      // This signal can fail independently. Keep machine-status and stock
+      // alerts working instead of letting a sales query abort the entire scan.
+      console.warn("[xy-alerts] Unable to verify recent eligible XY sale evidence", {
+        paymentError:recentPayment.error?.message??null,
+        deliveryError:recentDelivery.error?.message??null,
+      });
+      salesReady=false;
+    } else {
+      salesReady=verifiedRecentXySalesEvidence(
+        [recentPayment.data,recentDelivery.data],nowMs,
+      );
+    }
+  }
 
   if (!salesReady) {
     notices.push(simpleNotice(
@@ -195,6 +238,7 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
     // non-deleted imported-batch provenance as cash reconciliation and XY
     // sales health. Archived, failed and orphan raw rows are not evidence
     // of recent successful transactions or machine activity.
+    let machineSalesReadIncomplete=false;
     for (const machine of machines) {
       if (!stockedMachineIds.has(machine.id)) continue;
       if (machine.vms_online_status !== "1") continue;
@@ -214,8 +258,15 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
           .not("delivery_time","is",null)
           .order("delivery_time",{ascending:false,nullsFirst:false}).limit(1).maybeSingle(),
       ]);
-      reportError(payment.error,"payment-time sales");
-      reportError(delivery.error,"delivery-time sales");
+      if (payment.error || delivery.error) {
+        machineSalesReadIncomplete=true;
+        console.warn("[xy-alerts] Could not verify XY machine sales",{
+          machineId:machine.id,
+          paymentError:payment.error?.message??null,
+          deliveryError:delivery.error?.message??null,
+        });
+        continue;
+      }
       const latestAt = Math.max(
         lastSaleTimestamp(payment.data) ?? 0,
         lastSaleTimestamp(delivery.data) ?? 0,
@@ -229,6 +280,16 @@ export async function scanXyOperationalAlerts(options: { now?: Date } = {}) {
         `لا توجد مبيعات منذ 24 ساعة: ${machine.name}`,
         "لم تُسجّل بيانات XY المؤكدة أي عملية بيع ناجحة لهذه الماكينة خلال آخر 24 ساعة. يرجى فحص الماكينة ونظام الدفع.",
         "/sales", machine.id,
+      ));
+    }
+    if (machineSalesReadIncomplete) {
+      notices.push(simpleNotice(
+        "xy_sales_machine_query_unavailable", "global",
+        String(lastSalesSuccessResult.data?.id ?? "unknown"),
+        "Some XY machine sales checks are unavailable",
+        "One or more XY machine transaction reads failed. Snacky skipped their no-sales warnings rather than treating missing records as zero sales.",
+        "تعذر التحقق من مبيعات بعض الماكينات",
+        "فشل التحقق من معاملات بعض الماكينات. لم يصدر سناكي تنبيه عدم المبيعات لها لأن البيانات غير المؤكدة لا تعني صفر مبيعات.",
       ));
     }
   }
