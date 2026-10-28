@@ -33,8 +33,9 @@ export function FormSubmitButton({
 
   useEffect(() => {
     if (!activePending || !slowLabel) {
-      setShowSlowLabel(false);
-      return;
+      // Reset after the effect rather than synchronously cascading renders.
+      const reset = setTimeout(() => setShowSlowLabel(false), 0);
+      return () => clearTimeout(reset);
     }
     const timer = setTimeout(() => setShowSlowLabel(true), slowAfterMs);
     return () => clearTimeout(timer);
@@ -52,17 +53,20 @@ export function FormSubmitButton({
   useEffect(() => {
     if (!pending) {
       if (!optimisticPending) duplicateGuardRef.current = false;
-      setTimedOut(false);
-      return;
+      const reset = setTimeout(() => setTimedOut(false), 0);
+      return () => clearTimeout(reset);
     }
     duplicateGuardRef.current = true;
-    setOptimisticPending(false);
+    const resetOptimistic = setTimeout(() => setOptimisticPending(false), 0);
     const timer = setTimeout(() => {
       // Slow network is NOT a failed write. Never unlock while the server
       // action is still pending: a second click could create a duplicate.
       setTimedOut(true);
     }, timeoutMs);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(resetOptimistic);
+    };
   }, [optimisticPending, pending, timeoutMs]);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
