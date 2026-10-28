@@ -385,15 +385,31 @@ export function StockMovementForm({
               <button type="button" className="btn-secondary" onClick={() => setShowQuickAdd(false)}>Close</button>
             </div>
             <div className="space-y-4">
-              <form action={quickAddAction} className="space-y-4">
+              <form action={quickAddAction} className="space-y-4" aria-busy={isPending}>
+                <fieldset disabled={isPending || Boolean(quickAddFrozenRequestRef.current)} className="min-w-0 space-y-4 border-0 p-0">
                 <FormField label="SKU" hint="Product code will be generated automatically if left blank. SKU is the internal/VMS product code used for matching and reports."><input name="sku" className="field-input" placeholder="Auto if blank" /></FormField>
                 <FormField label="Product name" required><input name="name" required className="field-input" /></FormField>
                 <FormField label="Barcode"><input name="barcode" className="field-input" /></FormField>
                 <FormField label="Category"><select name="category" className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>
                 <FormField label="Brand"><input name="brand" className="field-input" /></FormField>
                 <FormField label="Selling price"><input name="selling_price" type="number" step="0.01" className="field-input" /></FormField>
+                </fieldset>
+                {quickAddFrozenRequestRef.current ? (
+                  <p role="status" className="text-sm text-amber-900">
+                    This retry uses your original product details and request ID. Check Products before starting a different item.
+                  </p>
+                ) : null}
                 {quickAddError ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{quickAddError}</p> : null}
                 <button className="btn-primary" disabled={isPending || quickAddInFlightRef.current}>{isPending ? "Adding…" : quickAddFrozenRequestRef.current ? "Retry saved product request" : "Add product"}</button>
+                {quickAddFrozenRequestRef.current && !isPending ? (
+                  <button type="button" className="btn-secondary" onClick={() => {
+                    if (!window.confirm("Check Products for the earlier item before starting a different request. Have you confirmed no duplicate will be created?")) return;
+                    quickAddFrozenRequestRef.current = null;
+                    setQuickAddError("");
+                  }}>
+                    Start a different product request
+                  </button>
+                ) : null}
               </form>
             </div>
           </div>
