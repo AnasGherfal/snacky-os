@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
 import { claimDurableClientOperation, completeDurableClientOperation } from "@/lib/durable-client-operation";
 import { uploadRefillProofPhoto } from "@/lib/operator-actions";
+import { prepareRefillPhoto } from "@/lib/refill-photo";
 
 function openSection(eventName: string, targetId: string, detail?: Record<string, unknown>) {
   window.dispatchEvent(new CustomEvent(eventName, { detail }));
@@ -124,7 +125,7 @@ export function RouteStopQuickActions() {
       form.append("routeId", scope.routeId);
       form.append("stopId", scope.stopId);
       form.append("machineId", machineId);
-      form.append("photo", photoFile);
+      form.append("photo", await prepareRefillPhoto(photoFile, locale === "ar"));
       const uploaded = await uploadRefillProofPhoto(form);
       if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error(tr("The photo could not be uploaded.", "تعذر رفع الصورة."));
       const response = await fetch(`/api/operator/routes/${scope.routeId}/stops/${scope.stopId}/completion-photo`, {
