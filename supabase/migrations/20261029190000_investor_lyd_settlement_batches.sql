@@ -178,8 +178,8 @@ begin
    raise exception 'Active or completed USD-ceiling investment agreement required' using errcode='23514';
  end if;
  -- Prior LYD payments without an audited conversion cannot be silently turned into USD credits.
- if exists(select 1 from public.investor_payments p join public.investor_monthly_statements s on s.id=p.statement_id
-   where s.agreement_id=a.id and p.finance_posting_status='posted') then
+ if exists(select 1 from public.investor_payments legacy_pay join public.investor_monthly_statements prior_statement on prior_statement.id=legacy_pay.statement_id
+   where prior_statement.agreement_id=a.id and legacy_pay.finance_posting_status='posted') then
    raise exception 'Reconcile legacy LYD distributions before a new capped batch' using errcode='23514';
  end if;
  foreach v_month in array v_seen loop
