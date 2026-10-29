@@ -140,7 +140,7 @@ export async function InvestorYearOverview({
       <p className="mt-2 text-sm text-slate-600">{tr("Enter a real dated rate for the selected month. Saving a rate never moves or records money.", "أدخل سعر الصرف الفعلي للشهر. حفظ السعر لا يحرّك الأموال ولا يسجل دفعة.")}</p>
       <form action={saveInvestorMonthlyFxRate} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <input type="hidden" name="agreement_id" value={agreementId} />
-        <label className="text-sm">{tr("Month", "الشهر")}<input className="field-input mt-1" name="month_start" type="date" defaultValue={tripoliToday().slice(0, 7) + "-01"} required /></label>
+        <label className="text-sm">{tr("Month", "الشهر")}<input className="field-input mt-1" name="month_start" type="month" defaultValue={tripoliToday().slice(0, 7)} required /></label>
         <label className="text-sm">{tr("LYD per USD", "د.ل لكل دولار")}<input className="field-input mt-1" name="lyd_per_usd" type="number" min="0.000001" step="0.000001" required /></label>
         <label className="text-sm">{tr("Evidence / source", "المصدر أو الإثبات")}<input className="field-input mt-1" name="rate_source" maxLength={500} /></label>
         <button type="submit" className="btn-secondary self-end">{tr("Save rate", "حفظ السعر")}</button>
