@@ -27,7 +27,7 @@ function fileAgeEligible(info: {updatedAt?:string|null;createdAt?:string|null}, 
 }
 async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabaseAdminClient>>, job:Job) {
   const path=validatePath(job.path);
-  if(!/\\.(jpg|jpeg|png|webp)$/i.test(path)) throw Error("not_supported_image");
+  if(!/\.(jpg|jpeg|png|webp)$/i.test(path)) throw Error("not_supported_image");
   const [history,safety,quantity]=await Promise.all([
     supabase.from("machine_refill_history").select("id,route_id,route_stop_id,machine_id,machine_photo_url,issues_found,linked_issue_id").eq("machine_photo_path",path).limit(10),
     supabase.from("route_stop_safety_checks").select("id,route_id,route_stop_id,machine_id,proof_photo_url").eq("proof_photo_path",path).limit(10),
