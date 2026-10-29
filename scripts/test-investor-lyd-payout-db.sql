@@ -136,7 +136,7 @@ end $$;
 create trigger snacky_investor_usd_cap_and_loss_guard
  before update of calculation_status on public.investor_monthly_statements
  for each row execute function public.snacky_investor_usd_cap_and_loss_guard_2026();
-do $
+do $lyd_guard$
 declare blocked boolean:=false;
 begin
  begin
@@ -152,7 +152,7 @@ begin
   raise exception 'LYD-only month could not finalize without FX';
  end if;
  raise notice 'PASS: monthly LYD profit finalization does not require USD exchange rate';
-end $;
+end $lyd_guard$;
 
 -- The investor has SELECT only; they may not post money or read another investor.
 select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
