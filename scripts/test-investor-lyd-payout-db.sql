@@ -131,6 +131,29 @@ begin
  if not blocked then raise exception 'Legacy payout bypass accepted';end if;
  raise notice 'PASS: LYD multi-month payout, payment-day FX, goal accumulation, no initial payout, no duplicate posting, no draft payment, cap, immutability';
 end $$;
+-- The existing production finalization trigger calls the replaced guard. Test that
+-- a correct LYD statement can finalize without any monthly FX or USD share.
+create trigger snacky_investor_usd_cap_and_loss_guard
+ before update of calculation_status on public.investor_monthly_statements
+ for each row execute function public.snacky_investor_usd_cap_and_loss_guard_2026();
+do $
+declare blocked boolean:=false;
+begin
+ begin
+  update public.investor_monthly_statements set investor_share_due_lyd=251,
+   calculation_status='finalized' where month_start='2026-04-01';
+ exception when others then blocked:=true;end;
+ if not blocked then raise exception 'Accepted incorrect LYD finalization';end if;
+ update public.investor_monthly_statements set calculation_status='finalized'
+ where month_start='2026-04-01';
+ if not exists(select 1 from public.investor_monthly_statements
+  where month_start='2026-04-01' and calculation_status='finalized'
+  and investor_share_due_lyd=250 and investor_share_due_usd is null) then
+  raise exception 'LYD-only month could not finalize without FX';
+ end if;
+ raise notice 'PASS: monthly LYD profit finalization does not require USD exchange rate';
+end $;
+
 -- The investor has SELECT only; they may not post money or read another investor.
 select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
 set local role authenticated;
