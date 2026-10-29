@@ -17,7 +17,8 @@ const back=(id:string,message:string,isError=false)=>{
 export async function saveInvestorMonthlyFxRate(formData:FormData) {
  const profile=await getCurrentProfile();
  if(!profile||profile.active_status!=="active"||!isOwnerAdminRole(profile)) redirect("/unauthorized");
- const agreementId=val(formData,"agreement_id"),month=val(formData,"month_start");
+ const agreementId=val(formData,"agreement_id"),inputMonth=val(formData,"month_start");
+ const month=/^\\d{4}-(0[1-9]|1[0-2])$/.test(inputMonth)?inputMonth+"-01":inputMonth;
  if(!validUuid.test(agreementId)||!validMonth(month)) redirect("/finance/investors?error=Invalid%20investor%20month");
  const rate=Number(val(formData,"lyd_per_usd"));
  const source=val(formData,"rate_source");

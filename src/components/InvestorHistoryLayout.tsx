@@ -19,7 +19,9 @@ export async function InvestorHistoryLayout({ children, ownerOnly = false }: {
   const ar = locale === 'ar';
   const tr = (en: string, arabic: string) => ar ? arabic : en;
   const db = await getAuthenticatedSupabaseServerClient();
-  const admin = isOwnerAdminRole(profile);
+  // Owner viewing /investor is a read-only preview, not a list of every investor's archive.
+  // Only the management route may load all investors' historical source records.
+  const admin = ownerOnly && isOwnerAdminRole(profile);
   let records: InvestorHistoricalMonth[] = [];
   const names = new Map<string, string>([[profile.id, profile.full_name]]);
   let failed = !db;
@@ -55,23 +57,22 @@ export async function InvestorHistoryLayout({ children, ownerOnly = false }: {
   const groups = groupInvestorHistory(records);
   return (
     <>
-      {!failed && records.length > 0 ? <div className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
-        <a className="font-semibold text-sky-800 underline underline-offset-4" href="#historical-investor-records">
-          {tr('View imported historical months', 'عرض الأشهر التاريخية المستوردة')} ({records.length})
-        </a>
-        <span className="ms-2 text-slate-600">{tr('Separate from new monthly calculations and payouts.', 'منفصلة عن الحسابات والدفعات الشهرية الجديدة.')}</span>
-      </div> : null}
       {children}
       {failed ? <section id="historical-investor-records" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="alert">
         {tr('Historical investor records could not load. This does not mean the history is empty; refresh after the connection or database setup is restored.', 'تعذر تحميل السجل التاريخي للمستثمر. هذا لا يعني أن السجل فارغ؛ أعد التحميل بعد استعادة الاتصال أو إعداد قاعدة البيانات.')}
-      </section> : records.length > 0 ? <section id="historical-investor-records" className="mt-8 scroll-mt-24 space-y-4" aria-labelledby="investor-history-heading">
-        <div>
+      </section> : records.length > 0 ? <section id="historical-investor-records" className="mt-8 scroll-mt-24" aria-labelledby="investor-history-heading">
+        <details className="surface-card">
+          <summary className="cursor-pointer text-lg font-semibold text-slate-950">
+            {tr('Imported historical archive', 'أرشيف الأشهر التاريخية المستوردة')} · {records.length} {tr('months', 'شهر')}
+          </summary>
+        <div className="mt-4">
           <h2 id="investor-history-heading" className="text-xl font-semibold text-slate-950">{tr('Historical months · supplied figures', 'الأشهر التاريخية · الأرقام المقدّمة')}</h2>
           <p className="mt-1 text-sm text-slate-600">{tr('The original records remain visible here, even while the ongoing agreement is not set up. They are included in the 2026 year overview using their recorded historical LYD rates, but not counted twice in the new monthly ledger.', 'تبقى السجلات الأصلية ظاهرة هنا حتى لو لم تُجهّز الاتفاقية المستمرة بعد. تدخل هذه المبالغ في كشف سنة 2026 بسعر صرفها التاريخي، ولا تُحسب مرة أخرى في دفتر الأشهر الجديد.')}</p>
         </div>
-        {[...groups].map(([investorId, rows]) => <InvestorHistoryTable
+        <div className="mt-4 space-y-4">{[...groups].map(([investorId, rows]) => <InvestorHistoryTable
           key={investorId} rows={rows} investorName={names.get(investorId) || tr('Investor', 'المستثمر')} ar={ar}
-        />)}
+        />)}</div>
+        </details>
       </section> : null}
     </>
   );
