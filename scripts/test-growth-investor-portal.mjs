@@ -64,3 +64,38 @@ test('owner pages connect agreement creation, monthly review and atomic payout f
  const tabs=read('src/components/module-tabs-config.ts'),team=read('src/lib/team.ts'),owner=read('src/app/finance/investors/page.tsx'),card=read('src/components/InvestorStatementCard.tsx');
  assert.match(tabs,/Growth Decisions/);assert.match(tabs,/Investors/);assert.match(team,/investor:/);assert.match(owner,/Create investor login/);assert.match(owner,/generateInvestorStatement/);assert.match(owner,/InvestorStatementCard/);assert.match(card,/InvestorMoneyForm kind="payout"/);
 });
+
+test('investor USD ledger has no hard-coded identity, exchange rate or profit forecasts',()=>{
+ const ledger=read('src/components/InvestorYearOverview.tsx');
+ for(const name of ['Tayseer','Anas salary','150%','7.5','8,280','salary_crm_oct','projectedMonthly','owner_salary_proposed']) assert.doesNotMatch(ledger,new RegExp(name.replace(/[.*+?^$()|[\]{}]/g,'\\$&'),'i'));
+ assert.match(ledger,/admin \?\s*db\.from\("investor_monthly_statements"\)/);
+ assert.match(ledger,/\.eq\("calculation_status", "finalized"\)/);
+ assert.match(ledger,/confirmed_payable_usd/);
+ assert.match(ledger,/confirmed_paid_usd/);
+ assert.match(ledger,/historyByMonth\.has\(p\.month_start\)/);
+ assert.match(ledger,/admin && verified/);
+ assert.match(ledger,/recordActualInvestorUsdPayout/);
+ assert.doesNotMatch(ledger,/investor_cost_policies/);
+});
+test('investor portal is a genuine read-only view, and USD contracts do not invent LYD balances',()=>{
+ const owner=read('src/app/finance/investors/page.tsx');
+ const portal=read('src/app/investor/page.tsx');
+ const card=read('src/components/InvestorStatementCard.tsx');
+ for(const s of [owner,portal]){
+  assert.doesNotMatch(s,/investment_amount_usd\)\*7\.5/);
+  assert.match(s,/selected\.payout_cap_usd == null/);
+  assert.match(s,/investorName=\{selected\.investor_name\}/);
+  assert.match(s,/InvestorYearOverview/);
+ }
+ assert.match(portal,/admin=\{false\}/);
+ assert.match(portal,/eq\('investor_user_id',profile\.id\)/);
+ assert.match(portal,/eq\('calculation_status','finalized'\)/);
+ assert.doesNotMatch(portal,/adminUserId=/);
+ assert.match(card,/usdCapped\s*\?/);
+ assert.match(card,/fmtUsd/);
+ const fx=read('src/lib/investor-portal-actions.ts');
+ assert.match(fx,/inputMonth\+"-01"/);
+ const migration=read('supabase/migrations/20261029183000_investor_cost_policy_owner_only.sql');
+ assert.match(migration,/snacky_is_owner_admin\(\)/);
+ assert.doesNotMatch(migration,/snacky_can_view_investor_agreement/);
+});
