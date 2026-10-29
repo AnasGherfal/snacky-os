@@ -65,17 +65,19 @@ test('owner pages connect agreement creation, monthly review and atomic payout f
  assert.match(tabs,/Growth Decisions/);assert.match(tabs,/Investors/);assert.match(team,/investor:/);assert.match(owner,/Create investor login/);assert.match(owner,/generateInvestorStatement/);assert.match(owner,/InvestorStatementCard/);assert.match(card,/InvestorMoneyForm kind="payout"/);
 });
 
-test('investor USD ledger has no hard-coded identity, exchange rate or profit forecasts',()=>{
+test('the investor earns LYD and no monthly USD share is invented',()=>{
  const ledger=read('src/components/InvestorYearOverview.tsx');
- for(const name of ['Tayseer','Anas salary','150%','7.5','8,280','salary_crm_oct','projectedMonthly','owner_salary_proposed']) assert.equal(ledger.includes(name),false,`Unexpected hard-coded investor copy: ${name}`);
- assert.match(ledger,/admin\s*\?\s*db\.from\("investor_monthly_statements"\)/);
- assert.match(ledger,/\.eq\("calculation_status", "finalized"\)/);
+ const actions=read('src/lib/investor-actions.ts');
+ for(const term of ['Tayseer','Anas salary','8,280','salary_crm_oct','projectedMonthly']) assert.doesNotMatch(ledger,new RegExp(term,'i'));
  assert.match(ledger,/confirmed_payable_usd/);
  assert.match(ledger,/confirmed_paid_usd/);
- assert.match(ledger,/historyByMonth\.has\(p\.month_start\)/);
- assert.match(ledger,/admin && verified/);
- assert.match(ledger,/recordActualInvestorUsdPayout/);
- assert.doesNotMatch(ledger,/investor_cost_policies/);
+ assert.match(ledger,/investor_lyd_payout_batches/);
+ assert.match(ledger,/investor_lyd_payout_allocations/);
+ assert.match(ledger,/InvestorLydBatchForm/);
+ assert.doesNotMatch(ledger,/recordActualInvestorUsdPayout|saveInvestorMonthlyFxRate/);
+ assert.match(actions,/usd_rate_lyd_per_usd:null,investor_share_due_usd:null/);
+ assert.match(actions,/settlement_currency=LYD/);
+ assert.doesNotMatch(actions,/shareUsd=Math/);
 });
 test('investor portal is a genuine read-only view, and USD contracts do not invent LYD balances',()=>{
  const owner=read('src/app/finance/investors/page.tsx');
@@ -92,7 +94,7 @@ test('investor portal is a genuine read-only view, and USD contracts do not inve
  assert.match(portal,/eq\('calculation_status','finalized'\)/);
  assert.doesNotMatch(portal,/adminUserId=/);
  assert.match(card,/usdCapped\s*\?/);
- assert.match(card,/fmtUsd/);
+ assert.match(card,/Finalized LYD share/);
  const fx=read('src/lib/investor-portal-actions.ts');
  assert.match(fx,/inputMonth\+"-01"/);
  const migration=read('supabase/migrations/20261029183000_investor_cost_policy_owner_only.sql');
