@@ -1,194 +1,211 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { randomUUID } from 'node:crypto';
-import { getAuthenticatedSupabaseServerClient } from '@/lib/auth';
-import { recordActualInvestorUsdPayout, saveInvestorMonthlyFxRate } from '@/lib/investor-portal-actions';
+import { randomUUID } from "node:crypto";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { recordActualInvestorUsdPayout, saveInvestorMonthlyFxRate } from "@/lib/investor-portal-actions";
 
-const money=(value:number)=>new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value)+' LYD';
-const dollars=(value:number)=>'$'+new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value);
-const n=(value:unknown)=>value==null?0:Number(value);
-const monthName=(value:string,ar:boolean)=>new Intl.DateTimeFormat(ar?'ar-LY':'en-US',{year:'numeric',month:'long',timeZone:'UTC'}).format(new Date(value+'T12:00:00Z'));
-type Props={agreementId:string;investorUserId:string;investmentUsd?:number|string|null;capUsd?:number|string|null;ar:boolean;admin?:boolean};
-type Fx={lyd_per_usd:number|string;rate_source:string|null};
-type Historic={month_start:string;profit_lyd:number|string|null;other_opex_lyd:number|string|null;previous_month_lyd:number|string|null;net_profit_lyd:number|string|null;exchange_rate_lyd_per_usd:number|string|null;confirmed_payable_usd:number|string|null;confirmed_paid_usd:number|string|null;payment_confirmed_at:string|null};
-type Statement={month_start:string;revenue_lyd:number|string;cogs_lyd:number|string;operating_expenses_lyd:number|string;operating_profit_lyd:number|string;investor_share_due_lyd:number|string;investor_share_due_usd:number|string|null;loss_carried_in_lyd:number|string;loss_carried_out_lyd:number|string;calculation_status:string;expense_breakdown:any[]|null;source_complete:boolean};
-const ownerMoney=(value:unknown)=>value==null?'—':money(n(value));
-const dateToday=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Tripoli',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+type Props = {
+  agreementId: string;
+  investorUserId: string;
+  investorName?: string;
+  sharePercent?: number | string;
+  startDate?: string;
+  endDate?: string | null;
+  investmentUsd?: number | string | null;
+  capUsd?: number | string | null;
+  ar: boolean;
+  admin?: boolean;
+};
+type Historical = {
+  month_start: string;
+  profit_lyd: number | string | null;
+  other_opex_lyd: number | string | null;
+  net_profit_lyd: number | string | null;
+  exchange_rate_lyd_per_usd: number | string | null;
+  confirmed_payable_usd: number | string | null;
+  confirmed_paid_usd: number | string | null;
+  payment_confirmed_at: string | null;
+};
+type Statement = {
+  month_start: string;
+  revenue_lyd: number | string;
+  cogs_lyd: number | string;
+  operating_expenses_lyd: number | string;
+  operating_profit_lyd: number | string;
+  investor_share_due_usd: number | string | null;
+  investor_share_due_lyd: number | string;
+  calculation_status: string;
+  source_complete: boolean;
+  expense_breakdown: Array<{ key: string; label: string; amount: number }> | null;
+};
+type Payout = { id: string; month_start: string; payout_date: string; amount_usd: number | string; payment_reference: string; finance_transaction_id: string };
+type Fx = { month_start: string; lyd_per_usd: number | string; rate_source: string | null };
+const amount = (value: number) => new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+const usd = (value: number) => "$" + amount(value);
+const lyd = (value: number) => amount(value) + " LYD";
+const asNumber = (value: number | string | null | undefined) => Number(value ?? 0);
+const monthLabel = (month: string, ar: boolean) =>
+  new Intl.DateTimeFormat(ar ? "ar-LY" : "en-US", { year: "numeric", month: "long", timeZone: "UTC" })
+    .format(new Date(month + "T12:00:00Z"));
+const tripoliToday = () => {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const part = (name: string) => parts.find(p => p.type === name)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
 
-export async function InvestorYearOverview({agreementId,investorUserId,investmentUsd,capUsd,ar,admin=false}:Props){
- const db=await getAuthenticatedSupabaseServerClient();
- const tr=(en:string,arabic:string)=>ar?arabic:en;
- if(!db)return <p role="alert">{tr('Investor records unavailable','سجل المستثمر غير متاح')}</p>;
- const [historicResult,monthlyResult,payoutResult,fxResult,policyResult]=await Promise.all([
-  db.from('investor_historical_months').select('month_start,profit_lyd,other_opex_lyd,previous_month_lyd,net_profit_lyd,exchange_rate_lyd_per_usd,confirmed_payable_usd,confirmed_paid_usd,payment_confirmed_at').eq('investor_user_id',investorUserId).gte('month_start','2026-01-01').order('month_start'),
-  db.from('investor_monthly_statements').select('month_start,revenue_lyd,cogs_lyd,operating_expenses_lyd,operating_profit_lyd,investor_share_due_lyd,investor_share_due_usd,loss_carried_in_lyd,loss_carried_out_lyd,calculation_status,expense_breakdown,source_complete').eq('agreement_id',agreementId).gte('month_start','2026-01-01').order('month_start'),
-  db.from('investor_usd_payouts').select('month_start,payout_date,amount_usd,lyd_equivalent,exchange_rate_lyd_per_usd,payment_reference').eq('agreement_id',agreementId).order('payout_date'),
-  db.from('investor_monthly_fx_rates').select('month_start,lyd_per_usd,rate_source').eq('agreement_id',agreementId),
-  db.from('investor_cost_policies').select('item_key,item_type,label,monthly_amount_lyd,effective_from,effective_through').eq('agreement_id',agreementId),
- ]);
- if(historicResult.error||monthlyResult.error||payoutResult.error||fxResult.error||policyResult.error)
-  return <p role="alert" className="rounded-lg border border-rose-200 p-3">{tr('Investor schedule could not be verified; no amounts were assumed.','تعذر التحقق من كشف المستثمر، ولم تُفترض أي مبالغ.')}</p>;
- const history=(historicResult.data??[]) as Historic[];
- const statements=(monthlyResult.data??[]) as Statement[];
- const payouts=payoutResult.data??[];
- const rateMap=new Map((fxResult.data??[]).map(r=>[r.month_start,r as Fx]));
- const historyMap=new Map(history.map(h=>[h.month_start,h]));
- const statementMap=new Map(statements.map(s=>[s.month_start,s]));
- const policies=policyResult.data??[];
- const paidByMonth=new Map<string,number>();
- const paidLydByMonth=new Map<string,number>();
- for(const pay of payouts){paidByMonth.set(pay.month_start,(paidByMonth.get(pay.month_start)??0)+n(pay.amount_usd));paidLydByMonth.set(pay.month_start,(paidLydByMonth.get(pay.month_start)??0)+n(pay.lyd_equivalent));}
- const rateMonth=[...rateMap.entries()].sort(([a],[b])=>b.localeCompare(a))[0];
- const currentRate=rateMonth?Number(rateMonth[1].lyd_per_usd):null;
- const cap=capUsd==null?null:n(capUsd),capital=n(investmentUsd);
- const confirmedHistoric=history.filter(h=>h.payment_confirmed_at&&h.confirmed_payable_usd!=null&&h.confirmed_paid_usd!=null);
- const historicalEarnedUSD=confirmedHistoric.reduce((v,h)=>v+n(h.confirmed_payable_usd),0);
- const historicalPaidUSD=confirmedHistoric.reduce((v,h)=>v+n(h.confirmed_paid_usd),0);
- const historicalEarnedLYD=confirmedHistoric.reduce((v,h)=>v+n(h.confirmed_payable_usd)*n(h.exchange_rate_lyd_per_usd),0);
- const historicPaidLYD=confirmedHistoric.reduce((v,h)=>v+n(h.confirmed_paid_usd)*n(h.exchange_rate_lyd_per_usd),0);
- const finalized=statements.filter(s=>s.calculation_status==='finalized');
- const finalizedEarnedUSD=finalized.reduce((v,s)=>v+n(s.investor_share_due_usd),0);
- const postedUsd=payouts.filter(p=>!historyMap.has(p.month_start)).reduce((v,p)=>v+n(p.amount_usd),0);
- const paidUSD=historicalPaidUSD+postedUsd;
- const paidLYD=historicPaidLYD+payouts.filter(p=>!historyMap.has(p.month_start)).reduce((v,p)=>v+n(p.lyd_equivalent),0);
- const confirmedUSD=historicalEarnedUSD+finalizedEarnedUSD;
- const confirmedLYD=historicalEarnedLYD+finalized.reduce((v,s)=>v+n(s.investor_share_due_lyd),0);
- const draft=statements.filter(s=>s.calculation_status!=='finalized');
- const estimateLYD=draft.reduce((v,s)=>v+n(s.investor_share_due_lyd),0);
- const remainingCapUSD=cap==null?null:Math.max(0,cap-confirmedUSD);
- const capUnpaidUSD=Math.max(0,confirmedUSD-paidUSD);
- const rateReference=currentRate??7.5;
- const projected=draft.filter(s=>s.month_start<dateToday().slice(0,7)+'-01').slice(-3);
- const avgLYD=projected.length===3?projected.reduce((v,s)=>v+n(s.investor_share_due_lyd),0)/3:0;
- const crmMonthly=policies.filter(p=>p.item_key==='salary_crm_oct').reduce((v,p)=>v+n(p.monthly_amount_lyd),0);
- // The October CRM expense is an incremental monthly cost that recent 3-month history does not contain.
- const projectedMonthlyLYD=Math.max(0,avgLYD-crmMonthly*.3);
- const projectedMonthlyUSD=currentRate&&currentRate>0?projectedMonthlyLYD/currentRate:null;
- const estimatedMonths=projectedMonthlyUSD&&projectedMonthlyUSD>0&&remainingCapUSD!=null?Math.ceil(remainingCapUSD/projectedMonthlyUSD):null;
- const thisYear=Number(dateToday().slice(0,4)),thisMonth=Number(dateToday().slice(5,7));
- const countMonths=Math.min(180,Math.max(0,(thisYear-2026)*12+thisMonth));
- const allMonths=Array.from({length:countMonths},(_,i)=>new Date(Date.UTC(2026,i,1)).toISOString().slice(0,10));
- const progress=cap&&cap>0?Math.min(100,Math.round(100*confirmedUSD/cap)):0;
- const status=(eligible:number,paid:number,draftMonth:boolean)=>draftMonth?tr('Estimate · not payable','تقديري · غير مستحق'):eligible<=0?tr('No payout due','لا يوجد مستحق'):paid>=eligible-0.005?tr('Paid','مدفوع'):paid>0?tr('Partially paid','مدفوع جزئياً'):tr('Unpaid','غير مدفوع');
- const payoutForm=(month:string,remaining:number)=>{
-  const fx=rateMap.get(month),historical=historyMap.get(month);
-  return <details className="mt-2 rounded-lg border border-slate-200 p-2" key={'pay-'+month}>
-   <summary className="cursor-pointer font-medium text-sky-800">{tr('Record payment / Mark paid','تسجيل الدفع / تعديل الحالة إلى مدفوع')}</summary>
-   <form action={recordActualInvestorUsdPayout} className="mt-3 grid gap-2 sm:grid-cols-2">
-    <input type="hidden" name="agreement_id" value={agreementId}/>
-    <input type="hidden" name="month_start" value={month}/>
-    <input type="hidden" name="client_submission_id" value={randomUUID()}/>
-    <label className="text-xs">{tr('Actual USD paid','المبلغ المدفوع فعلياً بالدولار')}
-     <input className="field-input mt-1" name="amount_usd" type="number" required min="0.01" max={remaining.toFixed(2)} step="0.01" defaultValue={remaining.toFixed(2)}/></label>
-    <label className="text-xs">{tr('Date of actual payment','تاريخ الدفع الفعلي')}
-     <input className="field-input mt-1" name="payout_date" type="date" defaultValue={dateToday()} required/></label>
-    <label className="text-xs">{tr('LYD for 1 USD at payment','د.ل مقابل دولار عند الدفع')}
-     <input className="field-input mt-1" name="lyd_per_usd" type="number" required min="0.000001" step="0.000001"
-       placeholder={historical?tr('Actual payment-day rate (not old 7.5)','سعر يوم الدفع (وليس 7.5 القديم)'):tr('Actual payment-day rate','سعر يوم الدفع الفعلي')}
-       defaultValue={fx?String(fx.lyd_per_usd):''}/></label>
-    <label className="text-xs">{tr('Payment reference / receipt','رقم الحوالة / مرجع الدفع')}
-     <input className="field-input mt-1" name="payment_reference" minLength={3} required placeholder={tr('Reference to actual completed transfer','مرجع تحويل تم بالفعل')}/></label>
-    <label className="text-xs">{tr('Account actually used','الحساب الذي تم الدفع منه')}
-     <select className="field-input mt-1" name="payment_account"><option value="snacky_usd">Snacky USD</option><option value="owner_usd">{tr('Owner USD','المالك دولار')}</option></select></label>
-    <label className="text-xs">{tr('Method','طريقة الدفع')}<select className="field-input mt-1" name="payment_method">
-     <option value="bank_transfer">{tr('Bank transfer','حوالة مصرفية')}</option><option value="cash">{tr('Cash USD','دولار نقداً')}</option><option value="other">{tr('Other','أخرى')}</option>
-    </select></label>
-    <label className="text-xs sm:col-span-2">{tr('Note (optional)','ملاحظة (اختياري)')}<textarea name="notes" className="field-input mt-1" rows={2}/></label>
-    <label className="flex gap-2 text-xs sm:col-span-2"><input name="confirm_actual_paid" value="yes" type="checkbox" required/>{tr('I confirm this USD money was ACTUALLY paid. This records a Finance cash-out; it does NOT send money.','أؤكد أن المبلغ دُفع فعلياً بالدولار. يسجل النظام خروج المال ولا يحوّل أي مبلغ بنفسه.')}</label>
-    <button className="btn-primary sm:col-span-2" type="submit">{tr('Record actual USD payout and update status','تسجيل دفع الدولار الفعلي وتحديث الحالة')}</button>
-   </form>
-  </details>;
- };
- return <section className="surface-card space-y-4" dir={ar?'rtl':'ltr'}>
-  <div>
-   <h2 className="text-xl font-bold">{tr('Tayseer · Profit Ledger since January 2026','تيسير · كشف الأرباح منذ يناير 2026')}</h2>
-   <p className="mt-1 text-sm text-slate-600">{tr('30% of net monthly operating profit after products, monthly location/storage rent, salaries and verified running costs. Losses roll forward. All operating figures are LYD; actual distributions are recorded in USD.','30% من صافي أرباح التشغيل بعد المنتجات، إيجارات المواقع والمخزن، الرواتب والمصاريف التشغيلية. تُرحّل الخسائر للأشهر التالية. جميع أرقام التشغيل بالدينار، وتُسجّل التوزيعات الفعلية بالدولار.')}</p>
-  </div>
-  {policies.some(p=>p.item_key==='owner_salary_proposed')?<div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm">
-    <strong>{tr('Owner-manager salary proposal · not yet deducted','مقترح مرتب مدير الشركة · لم يُخصم بعد')}</strong>
-    <p className="mt-1">{tr('Proposed Anas salary: 2,500 LYD per month starting October 2026. This is not yet approved as a deductible investor-profit expense. Previously withdrawn cash is recorded separately and must not also be counted as salary.','المرتب المقترح لأنس: 2,500 د.ل شهرياً ابتداءً من أكتوبر 2026. لم يعتمد بعد كخصم من أرباح المستثمر. المبالغ التي سحبها المالك سابقاً منفصلة ولا يجوز احتسابها مرة أخرى كمرتب.')}</p>
-   </div>:null}
-  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-   {[
-    [tr('Original contract investment (LYD reference)','الاستثمار الأصلي (ما يعادله بالدينار)'),money(capital*rateReference)],
-    [tr('Maximum distributions, 150% (LYD reference)','سقف التوزيعات 150% (ما يعادله بالدينار)'),cap==null?'—':money(cap*rateReference)],
-    [tr('Approved historical / finalized shares','المستحقات التاريخية والمعتمدة'),money(confirmedLYD)],
-    [tr('Provisional monthly shares (not payable)','الحصص الشهرية التقديرية (غير مستحقة بعد)'),money(estimateLYD)]
-   ].map(([label,value])=><div className="rounded-xl border p-3" key={label}><p className="text-xs text-slate-600">{label}</p><strong className="mt-2 block text-lg">{value}</strong></div>)}
-  </div>
-  <div className="grid gap-3 sm:grid-cols-3">
-   <div className="rounded-lg border p-3"><p className="text-xs">{tr('Payment status','حالة الدفع')}</p><strong>{paidUSD<=0?tr('No payments made · Unpaid','لم يتم دفع أي مبلغ · غير مدفوع'):tr('Partly paid · check each month','دُفع جزء · راجع كل شهر')}</strong></div>
-   <div className="rounded-lg border p-3"><p className="text-xs">{tr('Paid to date, USD payments (LYD equivalent)','المدفوع فعلياً بالدولار (القيمة بالدينار)')}</p><strong>{money(paidLYD)}</strong></div>
-   <div className="rounded-lg border p-3"><p className="text-xs">{tr('Confirmed but still unpaid (USD-denominated)','المستحق المعتمد وغير المدفوع (أصله بالدولار)')}</p><strong>{dollars(capUnpaidUSD)}</strong></div>
-  </div>
-  {admin?<form action={saveInvestorMonthlyFxRate} className="rounded-xl border border-sky-200 p-4">
-    <h3 className="font-semibold">{tr('Current LYD → USD exchange rate','سعر الصرف الحالي من الدينار إلى الدولار')}</h3>
-    <p className="mt-1 text-xs text-slate-600">{tr('Enter how many LYD buy one USD. This is for monthly USD estimates and the timeline; it does not itself mark anything paid.','اكتب كم دينار يساوي دولاراً واحداً. يستخدم للتقدير ومدة الوصول للسقف، ولا يُسجل أي مبلغ كمدفوع.')}</p>
-    <input type="hidden" name="agreement_id" value={agreementId}/>
-    <input type="hidden" name="month_start" value={dateToday().slice(0,7)+'-01'}/>
-    <div className="mt-3 flex flex-wrap items-end gap-3">
-     <label className="text-sm">1 USD = <input className="field-input mt-1 w-40" name="lyd_per_usd" type="number" required min="0.000001" step="0.000001" defaultValue={rateMap.get(dateToday().slice(0,7)+'-01')?.lyd_per_usd??''} placeholder="LYD"/></label>
-     <label className="text-sm">{tr('FX source / date (optional for estimate)','المصدر / التاريخ (اختياري للتقدير)')}<input className="field-input mt-1" name="rate_source" maxLength={500} defaultValue={rateMap.get(dateToday().slice(0,7)+'-01')?.rate_source??''}/></label>
-     <button type="submit" className="btn-primary">{tr('Save exchange rate','حفظ سعر الصرف')}</button>
+export async function InvestorYearOverview({
+  agreementId, investorUserId, investorName, sharePercent, startDate = "2026-01-01",
+  endDate, investmentUsd, capUsd, ar, admin = false,
+}: Props) {
+  const tr = (en: string, arabic: string) => ar ? arabic : en;
+  const db = await getAuthenticatedSupabaseServerClient();
+  if (!db) return <p role="alert" className="surface-card text-rose-800">{tr("Investor records are temporarily unavailable.", "سجل المستثمر غير متاح حالياً.")}</p>;
+
+  // This component is for USD-denominated agreements only. Never invent an FX conversion.
+  if (capUsd == null) return null;
+  const [historyResult, statementResult, payoutResult, fxResult] = await Promise.all([
+    db.from("investor_historical_months")
+      .select("month_start,profit_lyd,other_opex_lyd,net_profit_lyd,exchange_rate_lyd_per_usd,confirmed_payable_usd,confirmed_paid_usd,payment_confirmed_at")
+      .eq("investor_user_id", investorUserId).gte("month_start", startDate).order("month_start", { ascending: false }),
+    (admin
+      ? db.from("investor_monthly_statements").select("month_start,revenue_lyd,cogs_lyd,operating_expenses_lyd,operating_profit_lyd,investor_share_due_usd,investor_share_due_lyd,calculation_status,source_complete,expense_breakdown")
+      : db.from("investor_monthly_statements").select("month_start,revenue_lyd,cogs_lyd,operating_expenses_lyd,operating_profit_lyd,investor_share_due_usd,investor_share_due_lyd,calculation_status,source_complete,expense_breakdown").eq("calculation_status", "finalized"))
+      .eq("agreement_id", agreementId).gte("month_start", startDate).order("month_start", { ascending: false }),
+    db.from("investor_usd_payouts").select("id,month_start,payout_date,amount_usd,payment_reference,finance_transaction_id")
+      .eq("agreement_id", agreementId).order("payout_date", { ascending: false }),
+    admin
+      ? db.from("investor_monthly_fx_rates").select("month_start,lyd_per_usd,rate_source").eq("agreement_id", agreementId)
+      : Promise.resolve({ data: [] as Fx[], error: null }),
+  ]);
+  if (historyResult.error || statementResult.error || payoutResult.error || fxResult.error)
+    return <p role="alert" className="surface-card text-rose-800">{tr("The USD ledger could not be verified. No amounts have been assumed. Reload or contact Snacky management.", "تعذر التحقق من كشف الدولار. لم نفترض أي مبالغ. أعد التحميل أو تواصل مع إدارة سناكي.")}</p>;
+
+  const historic = (historyResult.data ?? [] as Historical[]).filter(h => !endDate || h.month_start <= endDate) as Historical[];
+  const statements = (statementResult.data ?? [] as Statement[]).filter(s => !endDate || s.month_start <= endDate) as Statement[];
+  const payouts = (payoutResult.data ?? []) as Payout[];
+  const rates = new Map(((fxResult.data ?? []) as Fx[]).map(r => [r.month_start, r]));
+  const historyByMonth = new Map(historic.map(row => [row.month_start, row]));
+  const statementByMonth = new Map(statements.map(row => [row.month_start, row]));
+  const payoutByMonth = new Map<string, number>();
+  for (const p of payouts) payoutByMonth.set(p.month_start, (payoutByMonth.get(p.month_start) ?? 0) + asNumber(p.amount_usd));
+  const overlap = historic.some(h => statementByMonth.has(h.month_start));
+  const unconfirmedHistory = historic.some(h => !h.payment_confirmed_at || h.confirmed_payable_usd == null || h.confirmed_paid_usd == null);
+  const invalidFinal = statements.some(s => s.calculation_status === "finalized" && s.investor_share_due_usd == null);
+  // Historical paid balances are updated by the atomic USD payout RPC. Counting the payout rows again would double-count them.
+  const verifiedHistoric = historic.filter(h => h.payment_confirmed_at && h.confirmed_payable_usd != null && h.confirmed_paid_usd != null);
+  const dueHistoric = verifiedHistoric.reduce((sum, h) => sum + asNumber(h.confirmed_payable_usd), 0);
+  const paidHistoric = verifiedHistoric.reduce((sum, h) => sum + asNumber(h.confirmed_paid_usd), 0);
+  const finalized = statements.filter(s => s.calculation_status === "finalized" && !historyByMonth.has(s.month_start) && s.investor_share_due_usd != null);
+  const dueCurrent = finalized.reduce((sum, s) => sum + asNumber(s.investor_share_due_usd), 0);
+  const paidCurrent = payouts.filter(p => !historyByMonth.has(p.month_start)).reduce((sum, p) => sum + asNumber(p.amount_usd), 0);
+  const earned = dueHistoric + dueCurrent;
+  const paid = paidHistoric + paidCurrent;
+  const cap = asNumber(capUsd), incomplete = unconfirmedHistory || invalidFinal || overlap;
+  const months = [...new Set([...historic.map(h => h.month_start), ...statements.map(s => s.month_start)])].sort().reverse();
+  const status = (due: number, paidValue: number, draft: boolean, verified: boolean) =>
+    !verified ? tr("Not verified", "غير معتمد")
+    : draft ? tr("Draft · not payable", "مسودة · غير مستحقة")
+    : due <= 0 ? tr("No payout due", "لا يوجد مستحق")
+    : paidValue >= due - .005 ? tr("Paid", "مدفوع")
+    : paidValue > 0 ? tr("Partly paid", "مدفوع جزئياً")
+    : tr("Unpaid", "غير مدفوع");
+
+  return <section className="surface-card space-y-5" dir={ar ? "rtl" : "ltr"} aria-label={tr("USD investment ledger", "كشف الاستثمار بالدولار")}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">{tr("USD profit-sharing ledger", "كشف تقاسم الأرباح بالدولار")}</p>
+        <h2 className="mt-1 text-xl font-bold text-slate-950">{investorName || tr("Investment overview", "نظرة عامة على الاستثمار")}</h2>
+        <p className="mt-1 text-sm text-slate-600">{tr("Only confirmed historical shares and finalized months are payable. Recorded USD transfers are shown separately from operating results.", "المستحقات التاريخية المؤكدة والأشهر المعتمدة فقط قابلة للدفع. تظهر دفعات الدولار الفعلية منفصلة عن نتائج التشغيل.")}</p>
+      </div>
+      {sharePercent != null ? <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-900">{sharePercent}% {tr("agreed share", "نسبة الاتفاق")}</span> : null}
     </div>
-   </form>:null}
-  <div className="rounded-xl border p-4">
-   <div className="flex flex-wrap justify-between gap-3"><strong>{tr('Progress to 150% earned cap','نسبة الوصول لسقف الاستحقاق 150%')}</strong><span>{progress}%</span></div>
-   <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-700" style={{width:progress+'%'}}/></div>
-   <p className="mt-2 text-sm">{tr('Current rate used for LYD equivalent and forecast','سعر الصرف المستخدم للعرض والتوقعات')}: {currentRate?currentRate.toFixed(3)+' LYD / USD':tr('No current rate saved (historic 7.5 is only a display reference)','لم يُسجل سعر حالي (7.5 سعر تاريخي للعرض فقط)')}</p>
-   <p className="mt-2 text-sm">{tr('Estimated months to EARN full capped share','الأشهر المتوقعة للوصول إلى كامل الاستحقاق')}:
-     <strong className="ms-2">{estimatedMonths!=null?`${estimatedMonths} ${tr('months (rough estimate)','شهر (تقدير تقريبي)')}`:tr('Enter a current exchange rate to estimate','أدخل سعر الصرف الحالي لحساب التوقع')}</strong>
-   </p>
-   <p className="mt-1 text-xs text-slate-600">{tr('Forecast uses the average of the last three provisional months, adjusts for the 2,500 LYD CRM salary from October, and assumes a stable chosen FX rate. It does not predict when you will physically pay Tayseer; that requires a payment schedule.','التوقع مبني على متوسط آخر ثلاثة أشهر تقديرية بعد خصم أثر مرتب علاقات العملاء 2,500 د.ل من أكتوبر، وافتراض ثبات سعر الصرف المُدخل. لا يتنبأ بموعد سدادك الفعلي لتيسير؛ ذلك يحتاج خطة دفع.')}</p>
-   <p className="mt-2 text-xs text-amber-900">{tr('USD contractual cap stays $8,280. Any LYD-equivalent cap above changes with the entered rate and is NOT a fixed LYD settlement obligation.','سقف العقد بالدولار ثابت عند 8,280 دولار. معادله بالدينار يتغير بسعر الصرف ولا يعتبر سقفاً ثابتاً بالدينار.')}</p>
-  </div>
-  <div className="overflow-x-auto">
-   <table className="w-full min-w-[1050px] text-sm">
-    <thead><tr className="border-b bg-slate-50">{[
-     tr('Month','الشهر'),tr('Sales / historical profit','المبيعات / الربح التاريخي'),tr('Product costs','تكلفة المنتجات'),tr('Operating expenses','مصاريف التشغيل'),tr('Net profit','صافي الربح'),tr('Loss carry','الخسارة المرحلة'),tr('30% LYD share','حصة 30% بالدينار'),tr('Payment status','حالة الدفع'),tr('Details','التفاصيل')
-    ].map(label=><th className="p-3 text-start" key={label}>{label}</th>)}</tr></thead>
-    <tbody>{allMonths.map(month=>{
-     const h=historyMap.get(month),s=statementMap.get(month);
-     const eligibleUSD=h?n(h.confirmed_payable_usd):s?.calculation_status==='finalized'?n(s.investor_share_due_usd):0;
-     const paidUSDForMonth=h?n(h.confirmed_paid_usd):paidByMonth.get(month)??0;
-     const isDraft=!h&&s?.calculation_status!=='finalized';
-     const ownerMonthRate=rateMap.get(month);
-     const impliedUSD=ownerMonthRate&&s?n(s.investor_share_due_lyd)/n(ownerMonthRate.lyd_per_usd):null;
-     const eligibleLYD=h?n(h.confirmed_payable_usd)*n(h.exchange_rate_lyd_per_usd):n(s?.investor_share_due_lyd);
-     const currentPolicy=policies.filter(p=>p.effective_from<=month&&(!p.effective_through||p.effective_through>=month));
-     const scheduledRent=currentPolicy.filter(p=>p.item_type==='rent').reduce((sum,p)=>sum+n(p.monthly_amount_lyd),0);
-     const scheduledSalary=currentPolicy.filter(p=>p.item_type==='salary_adjustment').reduce((sum,p)=>sum+n(p.monthly_amount_lyd),0);
-     return <tr key={month} className="border-b align-top">
-      <td className="whitespace-nowrap p-3 font-semibold">{monthName(month,ar)}</td>
-      <td className="whitespace-nowrap p-3">{h?ownerMoney(h.profit_lyd):s?money(n(s.revenue_lyd)):'—'}</td>
-      <td className="whitespace-nowrap p-3">{h?'—':s?money(n(s.cogs_lyd)):'—'}</td>
-      <td className="whitespace-nowrap p-3">{h?ownerMoney(h.other_opex_lyd):s?money(n(s.operating_expenses_lyd)):money(scheduledRent+scheduledSalary)+'*'}</td>
-      <td className="whitespace-nowrap p-3">{h?ownerMoney(h.net_profit_lyd):s?money(n(s.operating_profit_lyd)):'—'}</td>
-      <td className="whitespace-nowrap p-3">{h?ownerMoney(h.previous_month_lyd):s?money(n(s.loss_carried_out_lyd)):'—'}</td>
-      <td className="whitespace-nowrap p-3 font-semibold">{h||s?money(eligibleLYD):'—'}</td>
-      <td className="p-3"><span className={eligibleUSD>0&&paidUSDForMonth<=0&&!isDraft?'font-semibold text-amber-800':'text-slate-600'}>
-       {status(eligibleUSD,paidUSDForMonth,isDraft)}</span>{h||s?.calculation_status==='finalized'?<p className="text-xs">{tr('Actually paid','مدفوع فعلياً')}: {money(h?n(h.confirmed_paid_usd)*n(h.exchange_rate_lyd_per_usd):paidLydByMonth.get(month)??0)}</p>:null}</td>
-      <td className="min-w-[230px] p-3">
-       {s?<details><summary className="cursor-pointer font-medium text-sky-800">{tr('Cost breakdown','تفصيل المصاريف')}</summary>
-        <div className="mt-2 space-y-1 text-xs">{(s.expense_breakdown??[]).map((x:any,i:number)=><div className="flex justify-between gap-2 border-b py-1" key={i}><span>{String(x.label??x.key)}</span><strong>{money(n(x.amount))}</strong></div>)}
-        {!s.expense_breakdown?.length?<p>{tr('No expense lines verified','لا توجد مصاريف تفصيلية معتمدة')}</p>:null}</div></details>:null}
-       {!h&&!s&&scheduledRent+scheduledSalary>0?<div className="text-xs text-amber-800">{tr('Planned only, sales not yet checked','تكاليف متوقعة فقط، المبيعات لم تُراجع')}:
-       <p>{tr('Rent','إيجار')}: {money(scheduledRent)}</p><p>{tr('Salaries','مرتبات')}: {money(scheduledSalary)}</p></div>:null}
-       {s&&ownerMonthRate?<p className="mt-1 text-xs">{tr('Estimate only at entered FX','تقدير فقط بسعر الصرف المدخل')}: {impliedUSD!=null?dollars(impliedUSD):'—'}</p>:null}
-       {admin&&!h?<details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-sky-800">{tr('Set LYD / USD rate','تعديل سعر الصرف')}</summary>
-        <form action={saveInvestorMonthlyFxRate} className="mt-2 space-y-2">
-         <input type="hidden" name="agreement_id" value={agreementId}/><input type="hidden" name="month_start" value={month}/>
-         <label className="block text-xs">1 USD = <input className="field-input mt-1" name="lyd_per_usd" type="number" min=".000001" step=".000001" required defaultValue={ownerMonthRate?String(ownerMonthRate.lyd_per_usd):''} placeholder="LYD"/></label>
-         <label className="block text-xs">{tr('Source (optional for estimate)','المصدر (اختياري للتقدير)')}<input className="field-input mt-1" name="rate_source" maxLength={500} defaultValue={ownerMonthRate?.rate_source??''}/></label>
-         <button type="submit" className="btn-secondary">{tr('Save exchange rate','حفظ سعر الصرف')}</button>
-        </form>
-       </details>:null}
-       {admin&&eligibleUSD-paidUSDForMonth>0.005&&!isDraft?payoutForm(month,eligibleUSD-paidUSDForMonth):null}
-      </td>
-     </tr>;
-    })}</tbody>
-   </table>
-  </div>
-  <p className="text-xs text-slate-600">{tr('January–March reflects owner-confirmed history (the January loss was already applied in February). From April, rent schedules were applied provisionally because historical start dates for HT Land and the increased HT Mall rent were not established. September includes 640 LYD for Basheer and 250 LYD for Ahmed; October includes planned 2,500 LYD CRM salary. No historical owner salary was invented. Shipping for new machines and owner drawings are excluded from operating costs.','يناير–مارس أرقام تاريخية أكدها المالك (خسارة يناير خُصمت بالفعل في فبراير). من أبريل أُدرجت الإيجارات كتقديرات لعدم توثيق بداية HT Land وزيادة HT Mall. سبتمبر يشمل 640 د.ل لبشير و250 د.ل لأحمد، وأكتوبر يشمل مرتب CRM المخطط له 2,500 د.ل. لم نفترض أي مرتب تاريخي للمالك. شحن الماكينات الجديدة والسحوبات الشخصية للمالك ليست مصاريف تشغيلية.')}</p>
-  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">{tr('April–September are UNFINALIZED estimates. Earlier rent start dates, manual-sale product costs, missing historical payroll and suspicious Finance entries need reconciliation. “Paid” is only recorded through the actual USD payment form and matching Finance cash-out. Changing an FX estimate does not record a payment.','أبريل–سبتمبر ما زالت تقديرات غير معتمدة. يجب مراجعة تواريخ الإيجارات وتكلفة المبيعات اليدوية والمرتبات التاريخية والحركات المالية المريبة. لا تصبح الحالة «مدفوع» إلا بعد تسجيل دفع دولار فعلي وربطه بحركة صرف مالية. تعديل سعر الصرف لا يسجل أي دفع.')}</p>
- </section>;
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {[
+        [tr("Agreed investment", "الاستثمار المتفق عليه"), investmentUsd == null ? "—" : usd(asNumber(investmentUsd))],
+        [tr("Contractual payout cap", "سقف التوزيعات بالعقد"), usd(cap)],
+        [tr("Confirmed entitlement", "المستحق المعتمد"), incomplete ? usd(earned) + " *" : usd(earned)],
+        [tr("Confirmed unpaid", "المستحق غير المدفوع"), incomplete ? "—" : usd(Math.max(0, earned - paid))],
+      ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+        <p className="text-xs text-slate-600">{label}</p><strong className="mt-2 block text-xl tabular-nums text-slate-950">{value}</strong>
+      </div>)}
+    </div>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4 text-sm">
+      <span className="text-slate-600">{tr("Recorded actual USD payouts", "توزيعات الدولار المدفوعة فعلياً")}</span>
+      <strong className="text-lg tabular-nums">{usd(paid)}</strong>
+      <span className="w-full text-xs text-slate-500">{tr("Contract amounts are in USD. No arbitrary LYD exchange rate is applied.", "المبالغ التعاقدية بالدولار. لا نستخدم سعر صرف افتراضياً للتحويل إلى الدينار.")}</span>
+    </div>
+    {incomplete ? <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+      {tr("Some historical payment confirmations or USD statement values are missing, or a month overlaps two sources. Confirm them before relying on the total unpaid position. Displayed earnings include verified records only.", "تنقص بعض تأكيدات الدفع التاريخية أو قيم الدولار، أو يوجد شهر مكرر بين مصدرين. راجعها قبل الاعتماد على إجمالي غير المدفوع. المبالغ الظاهرة تشمل السجلات المتحقق منها فقط.")}
+    </p> : null}
+    {admin ? <details className="rounded-xl border border-slate-200 p-4">
+      <summary className="cursor-pointer font-semibold">{tr("Manage documented monthly FX rates", "إدارة أسعار الصرف الشهرية الموثقة")}</summary>
+      <p className="mt-2 text-sm text-slate-600">{tr("Enter a real dated rate for the selected month. Saving a rate never moves or records money.", "أدخل سعر الصرف الفعلي للشهر. حفظ السعر لا يحرّك الأموال ولا يسجل دفعة.")}</p>
+      <form action={saveInvestorMonthlyFxRate} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <input type="hidden" name="agreement_id" value={agreementId} />
+        <label className="text-sm">{tr("Month", "الشهر")}<input className="field-input mt-1" name="month_start" type="date" defaultValue={tripoliToday().slice(0, 7) + "-01"} required /></label>
+        <label className="text-sm">{tr("LYD per USD", "د.ل لكل دولار")}<input className="field-input mt-1" name="lyd_per_usd" type="number" min="0.000001" step="0.000001" required /></label>
+        <label className="text-sm">{tr("Evidence / source", "المصدر أو الإثبات")}<input className="field-input mt-1" name="rate_source" maxLength={500} /></label>
+        <button type="submit" className="btn-secondary self-end">{tr("Save rate", "حفظ السعر")}</button>
+      </form>
+    </details> : null}
+    <div>
+      <h3 className="text-lg font-semibold">{tr("Monthly statements", "الكشوف الشهرية")}</h3>
+      <p className="mt-1 text-sm text-slate-600">{tr("Open a month for its accounting breakdown and actual transfer records.", "افتح أي شهر لمراجعة الحسابات وحركات الدفع المسجلة.")}</p>
+    </div>
+    {months.length ? <div className="space-y-3">
+      {months.map(month => {
+        const h = historyByMonth.get(month), s = statementByMonth.get(month);
+        const verified = h ? Boolean(h.payment_confirmed_at && h.confirmed_payable_usd != null && h.confirmed_paid_usd != null)
+          : Boolean(s && s.calculation_status === "finalized" && s.investor_share_due_usd != null);
+        const draft = Boolean(!h && s?.calculation_status !== "finalized");
+        const monthDue = h ? asNumber(h.confirmed_payable_usd) : asNumber(s?.investor_share_due_usd);
+        const monthPaid = h ? asNumber(h.confirmed_paid_usd) : payoutByMonth.get(month) ?? 0;
+        const monthPayouts = payouts.filter(p => p.month_start === month);
+        const canPay = admin && verified && !draft && monthDue - monthPaid > .005 && month >= startDate && (!endDate || month <= endDate) && !overlap;
+        const currentRate = rates.get(month);
+        return <details key={month} className="rounded-xl border border-slate-200 bg-white p-4">
+          <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3">
+            <span className="font-semibold text-slate-900">{monthLabel(month, ar)} <span className="ms-2 text-xs font-normal text-slate-500">{h ? tr("Imported history", "سجل تاريخي") : s?.calculation_status === "finalized" ? tr("Finalized", "معتمد") : tr("Owner draft", "مسودة الإدارة")}</span></span>
+            <span className="text-sm text-slate-600">{status(monthDue, monthPaid, draft, verified)} · <strong className="tabular-nums text-slate-900">{verified ? usd(monthDue) : "—"}</strong></span>
+          </summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              [tr("Net operating result (LYD)", "نتيجة التشغيل (د.ل)"), h?.net_profit_lyd ?? s?.operating_profit_lyd, "LYD"],
+              [tr("Approved share (USD)", "الحصة المعتمدة ($)"), verified ? monthDue : null, "USD"],
+              [tr("Paid to date (USD)", "المدفوع حتى الآن ($)"), verified ? monthPaid : null, "USD"],
+            ].map(([label, value, currency]) => <div key={String(label)} className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-600">{label}</p><strong className="mt-1 block tabular-nums">{value == null ? "—" : currency === "USD" ? usd(Number(value)) : lyd(Number(value))}</strong>
+            </div>)}
+          </div>
+          {s ? <div className="mt-3 text-sm text-slate-600">
+            <p>{tr("Sales", "المبيعات")}: {lyd(asNumber(s.revenue_lyd))} · {tr("Product cost", "تكلفة المنتجات")}: {lyd(asNumber(s.cogs_lyd))} · {tr("Operating expenses", "مصاريف التشغيل")}: {lyd(asNumber(s.operating_expenses_lyd))}</p>
+            {s.expense_breakdown?.length ? <details className="mt-3 rounded-lg border border-slate-100 p-3"><summary className="cursor-pointer font-medium">{tr("Recorded expense breakdown", "تفاصيل المصاريف المسجلة")}</summary>
+              <div className="mt-2 space-y-2">{s.expense_breakdown.map((row, i) => <div key={i} className="flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-2"><span>{row.label}</span><span>{lyd(asNumber(row.amount))}</span></div>)}</div>
+            </details> : null}
+            {admin && s.calculation_status !== "finalized" ? <p className="mt-2 text-amber-800">{tr("Owner draft — review and finalize in Monthly profit review before it becomes payable.", "مسودة إدارة — راجعها واعتمدها من مراجعة الأرباح الشهرية قبل استحقاق الدفع.")}</p> : null}
+          </div> : null}
+          {h && !verified ? <p className="mt-3 text-sm text-amber-800">{tr("Historical entitlement or settlement has not been confirmed.", "لم يُعتمد المستحق التاريخي أو حالة دفعه.")}</p> : null}
+          {monthPayouts.length ? <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs text-slate-600">{monthPayouts.map(p =>
+            <p key={p.id}>{p.payout_date} · {usd(asNumber(p.amount_usd))} · {p.payment_reference}</p>)}</div> : null}
+          {canPay ? <details className="mt-4 rounded-lg border border-emerald-200 p-3">
+            <summary className="cursor-pointer font-semibold text-emerald-800">{tr("Record an already completed USD payout", "تسجيل دفعة دولار تمت بالفعل")}</summary>
+            <p className="mt-2 text-xs text-slate-600">{tr("This does not initiate a bank transfer. It posts a real past payout to Finance.", "هذا الإجراء لا ينفذ حوالة مصرفية؛ بل يسجل دفعة تمت سابقاً في المالية.")}</p>
+            <form action={recordActualInvestorUsdPayout} className="mt-3 grid gap-3 sm:grid-cols-2">
+              <input type="hidden" name="agreement_id" value={agreementId} />
+              <input type="hidden" name="month_start" value={month} />
+              <input type="hidden" name="client_submission_id" value={randomUUID()} />
+              <label className="text-sm">{tr("USD amount actually paid", "المبلغ المدفوع فعلياً بالدولار")}<input className="field-input mt-1" name="amount_usd" type="number" min="0.01" step="0.01" max={(monthDue - monthPaid).toFixed(2)} defaultValue={(monthDue - monthPaid).toFixed(2)} required /></label>
+              <label className="text-sm">{tr("Actual payment date", "تاريخ الدفع الفعلي")}<input className="field-input mt-1" name="payout_date" type="date" max={tripoliToday()} defaultValue={tripoliToday()} required /></label>
+              <label className="text-sm">{tr("LYD per USD on payment date", "سعر الدينار للدولار يوم الدفع")}<input className="field-input mt-1" name="lyd_per_usd" type="number" min="0.000001" step="0.000001" defaultValue={currentRate ? String(currentRate.lyd_per_usd) : ""} required /></label>
+              <label className="text-sm">{tr("Transfer / cash receipt reference", "مرجع الحوالة أو وصل الدفع")}<input className="field-input mt-1" name="payment_reference" minLength={3} maxLength={200} required /></label>
+              <label className="text-sm">{tr("Account used", "الحساب المستخدم")}<select className="field-input mt-1" name="payment_account"><option value="snacky_usd">Snacky USD</option><option value="owner_usd">{tr("Owner USD", "دولار المالك")}</option></select></label>
+              <label className="text-sm">{tr("Method", "طريقة الدفع")}<select className="field-input mt-1" name="payment_method"><option value="bank_transfer">{tr("Bank transfer", "حوالة مصرفية")}</option><option value="cash">{tr("Cash", "نقداً")}</option><option value="other">{tr("Other", "أخرى")}</option></select></label>
+              <label className="text-sm sm:col-span-2">{tr("Note (optional)", "ملاحظة (اختياري)")}<textarea className="field-input mt-1" name="notes" maxLength={2000} rows={2} /></label>
+              <label className="flex items-start gap-2 text-sm sm:col-span-2"><input type="checkbox" name="confirm_actual_paid" value="yes" required /><span>{tr("I confirm that this money was actually paid, and I have checked the payment history to avoid duplication.", "أؤكد أن هذا المبلغ دُفع فعلياً وأنني راجعت السجل لمنع تكراره.")}</span></label>
+              <button className="btn-primary sm:col-span-2" type="submit">{tr("Record verified USD payout", "تسجيل دفعة الدولار المؤكدة")}</button>
+            </form>
+          </details> : null}
+        </details>;
+      })}
+    </div> : <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm text-slate-600">{tr("No confirmed monthly statements are available for this agreement yet.", "لا توجد كشوف شهرية معتمدة لهذه الاتفاقية بعد.")}</p>}
+    <p className="text-xs text-slate-500">{tr("This ledger is based on saved records only. Drafts, missing historical confirmations and unentered expenses are not treated as payable profit. Historical records outside the agreement period remain in the separate archive below.", "يعتمد هذا الكشف على السجلات المحفوظة فقط. المسودات والتأكيدات الناقصة والمصاريف غير المسجلة لا تُعد أرباحاً مستحقة. السجل التاريخي خارج فترة الاتفاق يبقى في الأرشيف المنفصل أدناه.")}</p>
+  </section>;
 }
