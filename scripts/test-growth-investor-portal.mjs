@@ -67,7 +67,7 @@ test('owner pages connect agreement creation, monthly review and atomic payout f
 
 test('investor USD ledger has no hard-coded identity, exchange rate or profit forecasts',()=>{
  const ledger=read('src/components/InvestorYearOverview.tsx');
- for(const name of ['Tayseer','Anas salary','150%','7.5','8,280','salary_crm_oct','projectedMonthly','owner_salary_proposed']) assert.doesNotMatch(ledger,new RegExp(name.replace(/[.*+?^$()|[\]{}]/g,'\\$&'),'i'));
+ for(const name of ['Tayseer','Anas salary','150%','7.5','8,280','salary_crm_oct','projectedMonthly','owner_salary_proposed']) assert.equal(ledger.includes(name),false,`Unexpected hard-coded investor copy: ${name}`);
  assert.match(ledger,/admin \?\s*db\.from\("investor_monthly_statements"\)/);
  assert.match(ledger,/\.eq\("calculation_status", "finalized"\)/);
  assert.match(ledger,/confirmed_payable_usd/);
