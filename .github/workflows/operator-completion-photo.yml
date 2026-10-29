@@ -6,6 +6,10 @@ on:
       - '.github/workflows/operator-completion-photo.yml'
       - 'src/lib/operator-actions.ts'
       - 'src/lib/refill-photo.ts'
+      - 'src/lib/photo-archive-*.ts'
+      - 'src/app/api/storage/**'
+      - 'scripts/photo-archive-copy.mjs'
+      - 'scripts/test-photo-archive.mjs'
       - 'src/components/operator/RouteStopQuickActions.tsx'
       - 'scripts/test-refill-photo-optimization.mjs'
       - 'scripts/refill-photo-browser.mjs'
@@ -39,7 +43,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Photo persistence and stop completion regressions
-        run: node --experimental-strip-types --test scripts/test-refill-photo-optimization.mjs scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs scripts/test-route-photo-evidence-audit.mjs
+        run: node --experimental-strip-types --test scripts/test-photo-archive.mjs scripts/test-refill-photo-optimization.mjs scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs scripts/test-route-photo-evidence-audit.mjs
       - name: Type check
         run: npx tsc --noEmit
       - name: Install isolated browser acceptance tooling

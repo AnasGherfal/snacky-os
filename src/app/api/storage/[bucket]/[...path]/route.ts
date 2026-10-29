@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { archivedPhotoResponse } from "@/lib/photo-archive-server";
+import { isMissingStorageObject } from "@/lib/photo-archive-core";
+
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, canAccessOperatorRoute, canViewVmsImports, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
@@ -12,6 +15,9 @@ import {
   REFILL_PHOTO_BUCKET,
   VMS_IMPORT_BUCKET,
 } from "@/lib/storage-buckets";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const receiptReaderRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse", "purchasing", "finance"]);
 const cashEvidenceManagerRoles = new Set<AppRole>(["owner", "admin", "supervisor", "finance"]);
@@ -89,7 +95,7 @@ async function canReadPrivateObject(bucket: string, objectPath: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ bucket: string; path: string[] }> },
 ) {
   const { bucket, path } = await params;
@@ -108,7 +114,28 @@ export async function GET(
     return NextResponse.json({ error: "Private storage is not configured" }, { status: 503 });
   }
 
+  // A read-only rehearsal exercises the real access checks BEFORE any original is removed.
+  // It cannot bypass authentication and has no write/delete behavior.
+  const archiveCheck = new URL(request.url).searchParams.get("archive") === "verify";
+  if (archiveCheck && bucket === REFILL_PHOTO_BUCKET) {
+    try {
+      const archived = await archivedPhotoResponse(bucket, objectPath);
+      return archived ?? NextResponse.json({ error: "Verified archive copy not found" }, { status: 404 });
+    } catch {
+      return NextResponse.json({ error: "Archive could not be verified" }, { status: 503 });
+    }
+  }
+
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(objectPath, 60);
+  if (error && bucket === REFILL_PHOTO_BUCKET && isMissingStorageObject(error)) {
+    try {
+      const archived = await archivedPhotoResponse(bucket, objectPath);
+      if (archived) return archived;
+    } catch {
+      // Missing/corrupt archive evidence must not be mislabeled as a successful read.
+      return NextResponse.json({ error: "Archive is temporarily unavailable" }, { status: 503 });
+    }
+  }
   if (error || !data?.signedUrl) {
     return NextResponse.json({ error: "Storage object not found" }, { status: 404 });
   }
