@@ -33,7 +33,14 @@ async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabase
     supabase.from("route_stop_safety_checks").select("id,route_id,route_stop_id,machine_id,proof_photo_url").eq("proof_photo_path",path).limit(10),
     supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files",[{photoPath:path}]).limit(1),
   ]);
-  if(history.error||safety.error||quantity.error)throw Error("photo_reference_check_failed");
+  if(history.error||safety.error||quantity.error){
+    console.warn("[photo-storage] Reference lookup failed",{
+      history:history.error?.code??null,
+      safety:safety.error?.code??null,
+      quantity:quantity.error?.code??null,
+    });
+    throw Error("photo_reference_check_failed");
+  }
   const h=history.data??[],s=safety.data??[];
   if(h.length+s.length<1||h.length+s.length>=10)throw Error("photo_reference_ambiguous");
   if(quantity.data?.length)throw Error("quantity_screenshot_protected");
