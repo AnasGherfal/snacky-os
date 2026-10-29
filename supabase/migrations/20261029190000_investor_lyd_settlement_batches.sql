@@ -174,7 +174,7 @@ begin
    return pg_catalog.to_jsonb(old_record);
  end if;
  select * into a from public.investor_agreements where id=p_agreement_id for update;
- if a.id is null or a.investor_user_id is null or a.payout_cap_usd is null or a.status='cancelled' then
+ if a.id is null or a.investor_user_id is null or a.payout_cap_usd is null or a.status not in ('active','completed') then
    raise exception 'Active or completed USD-ceiling investment agreement required' using errcode='23514';
  end if;
  -- Prior LYD payments without an audited conversion cannot be silently turned into USD credits.
@@ -222,8 +222,8 @@ begin
    and payment_confirmed_at is not null;
  select v_prior_usd+coalesce(sum(p.amount_usd),0) into v_prior_usd
  from public.investor_usd_payouts p where p.agreement_id=a.id
- and not exists(select 1 from public.investor_historical_months h
-  where h.investor_user_id=a.investor_user_id and h.month_start=p.month_start);
+ and not exists(select 1 from public.investor_historical_months old_historical
+  where old_historical.investor_user_id=a.investor_user_id and old_historical.month_start=p.month_start);
  select v_prior_usd+coalesce(sum(credited_usd),0) into v_prior_usd
  from public.investor_lyd_payout_batches where agreement_id=a.id;
  if v_prior_usd+v_usd>a.payout_cap_usd+0.005 then
