@@ -19,7 +19,9 @@ export async function InvestorHistoryLayout({ children, ownerOnly = false }: {
   const ar = locale === 'ar';
   const tr = (en: string, arabic: string) => ar ? arabic : en;
   const db = await getAuthenticatedSupabaseServerClient();
-  const admin = isOwnerAdminRole(profile);
+  // Owner viewing /investor is a read-only preview, not a list of every investor's archive.
+  // Only the management route may load all investors' historical source records.
+  const admin = ownerOnly && isOwnerAdminRole(profile);
   let records: InvestorHistoricalMonth[] = [];
   const names = new Map<string, string>([[profile.id, profile.full_name]]);
   let failed = !db;
