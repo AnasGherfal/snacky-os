@@ -52,21 +52,21 @@ function PurchaseCard({item,ar,previousAvailable,currentAvailable}: {item:BoxPur
 }
 
 export default async function PurchaseListPage({searchParams}: {searchParams:Promise<{days?:string|string[]}>}) {
-  await requireCurrentProfileForPath("/restock-priority/purchase-list");
+  const profile = await requireCurrentProfileForPath("/restock-priority/purchase-list");
   const params = await searchParams;
   const requested = Number(Array.isArray(params.days) ? params.days[0] : params.days ?? 22);
   const days = coverageChoices.includes(requested as 7|14|22|30) ? requested : 22;
   const db = await getAuthenticatedSupabaseServerClient();
   const {locale,direction} = await getServerI18n(), ar = locale === "ar";
   const tr = (en:string,arabic:string) => ar ? arabic : en;
-  if (!db) return <ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not connect to the database.","تعذر الاتصال بقاعدة البيانات.")}/>;
+  if (!db) return <div className="space-y-3"><ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={tr("Could not connect to the database.","تعذر الاتصال بقاعدة البيانات.")}/><Link href="/restock-priority/shopping-list" className="btn-secondary">{tr("Open shopping checklist / add your own items","فتح قائمة السوق / إضافة احتياجاتك")}</Link></div>;
   const result = await loadPurchaseListData(db,days);
   const sourceFailed = Boolean(result.errors.sales || result.errors.salesBatches || result.errors.products || result.errors.scheduledSiteDemand);
   if (sourceFailed) {
     const eliteFailed = Boolean(result.errors.scheduledSiteDemand);
     return <div dir={direction}><ErrorState title={tr("Purchase list unavailable","قائمة الشراء غير متاحة")} body={eliteFailed
       ? tr("Elite Future School demand could not be verified, so Snacky stopped the automatic purchase recommendation instead of under-buying. Reload to retry.","تعذر التحقق من طلب مدرسة إيليت للمستقبل، لذلك أوقف سناكي توصية الشراء التلقائية بدلاً من تقليل الكمية المطلوبة. أعد التحميل للمحاولة.")
-      : tr("Could not verify sales or products. No zero sales or covered stock has been assumed. Reload to retry.","تعذر التحقق من المبيعات أو المنتجات. لم يتم افتراض مبيعات صفرية أو مخزون كافٍ. أعد التحميل.")}/><Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Retry","إعادة المحاولة")}</Link></div>;
+      : tr("Could not verify sales or products. No zero sales or covered stock has been assumed. Reload to retry.","تعذر التحقق من المبيعات أو المنتجات. لم يتم افتراض مبيعات صفرية أو مخزون كافٍ. أعد التحميل.")}/><div className="mt-3 flex flex-wrap gap-3"><Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Retry","إعادة المحاولة")}</Link><Link href="/restock-priority/shopping-list" className="btn-secondary">{tr("Open shopping checklist / add your own items","فتح قائمة السوق / إضافة احتياجاتك")}</Link></div></div>;
   }
   const salesUnavailable = !result.previousPeriod && !result.currentPeriod;
   const buyItems = result.items.filter(item => item.suggestedBuyQty > 0);
@@ -78,7 +78,7 @@ export default async function PurchaseListPage({searchParams}: {searchParams:Pro
   const totalUnits = readyItems.reduce((sum,item) => sum + Number(item.purchaseUnits),0);
   const knownCosts = readyItems.filter(item => item.estimatedBuyCost !== null);
   const estimatedCost = knownCosts.reduce((sum,item) => sum + Number(item.estimatedBuyCost),0);
-  const action = result.storageLoaded && !salesUnavailable && draftItems.length ? <CreatePurchaseListButton items={draftItems} destination="review"/> : undefined;
+  const action = result.storageLoaded && !salesUnavailable && draftItems.length ? <CreatePurchaseListButton items={draftItems} destination="review" userId={profile?.id}/> : undefined;
   return <div className="space-y-5" dir={direction}>
     <PageHeader title={tr("Purchase List","قائمة الشراء")} subtitle={tr("22-day stock cover by default, using recent sales, current Storage, and Elite School operating-day demand.","تغطية مخزون افتراضية لمدة 22 يوماً باستخدام المبيعات الحديثة والمخزون الحالي وطلب مدرسة إيليت حسب أيام عملها.")} action={action}/>
     <section className="surface-card space-y-3">
@@ -86,7 +86,7 @@ export default async function PurchaseListPage({searchParams}: {searchParams:Pro
       <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{tr("Stock coverage:","تغطية المخزون:")}</span>{coverageChoices.map(value => <Link key={value} href={`/restock-priority/purchase-list?days=${value}`} className={value===days ? "btn-primary" : "btn-secondary"}>{value} {tr("days","أيام")}</Link>)}</div>
       <div className="grid gap-2 text-sm sm:grid-cols-2"><p>{tr("Last month:","الشهر الماضي:")} {formatPeriod(result.previousPeriod)}</p><p>{tr("This month:","هذا الشهر:")} {formatPeriod(result.currentPeriod)}</p></div>
       <p className="text-xs text-slate-500">{tr("Base demand uses the higher of the two monthly daily rates. Elite School demand is added using completed operating days only (Monday-Friday); any overlapping Elite demand is removed from the aggregate report first to avoid double-counting. Storage is then subtracted. Pending orders and machine stock are not deducted.","يستخدم الطلب الأساسي الأعلى من معدلي التقريرين الشهريين. يُضاف طلب مدرسة إيليت اعتماداً على أيام العمل المكتملة فقط (الإثنين–الجمعة)، ويُزال أي طلب متداخل لإيليت من التقرير الإجمالي أولاً لتجنب التكرار، ثم يُخصم المخزون. لا تُخصم الطلبات المنتظرة أو مخزون الماكينات.")}</p>
-      <Link href="/restock-priority/shopping-list" className="text-sm font-medium underline">{tr("Open saved Buying List","فتح قائمة الشراء المحفوظة")}</Link>
+      <Link href="/restock-priority/shopping-list" className="text-sm font-medium underline">{tr("Open shopping checklist / add your own items","فتح قائمة السوق / إضافة احتياجاتك")}</Link>
     </section>
     {result.scheduledSiteDemand ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><strong>{tr("Elite Future School demand is included","تم احتساب طلب مدرسة إيليت للمستقبل")}</strong><p className="mt-1">{tr(
       `Snacky learned from ${result.scheduledSiteDemand.observedOperatingDays} completed school days and is projecting ${result.scheduledSiteDemand.coverageOperatingDays} Monday-Friday operating days inside this ${days}-day purchase window. The product-level Elite forecast adds ${integer(result.scheduledSiteDemand.projectedUnits)} units before current Storage is subtracted.`,
@@ -96,7 +96,12 @@ export default async function PurchaseListPage({searchParams}: {searchParams:Pro
     {!result.previousPeriod && result.currentPeriod ? <p className="rounded-lg bg-amber-50 p-3 text-sm">{tr("Last month is unavailable; using this month’s report only.","الشهر الماضي غير متاح؛ نستخدم تقرير هذا الشهر فقط.")}</p> : null}
     {!result.storageLoaded ? <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{tr("Current storage could not be verified. Buying quantities and draft actions are hidden; reload before purchasing.","تعذر التحقق من المخزون الحالي. تم إخفاء كميات الشراء والمسودة؛ أعد التحميل قبل الشراء.")}</p> : null}
     {salesUnavailable ? <ErrorState title={tr("Recent sales unavailable","المبيعات الحديثة غير متاحة")} body={tr("Activate a report for last month or this month.","فعّل تقريراً للشهر الماضي أو الحالي.")}/> : null}
-    {result.unmappedSalesUnits > 0 ? <p className="rounded-lg bg-amber-50 p-3 text-sm">{integer(result.unmappedSalesUnits)} {tr("sold units cannot be matched to Storage until their products are mapped.","وحدة مباعة لا يمكن مطابقتها بالمخزون حتى يتم ربط منتجاتها.")}</p> : null}
+    {result.unmappedSalesUnits > 0 ? <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm" role="alert">
+      <p className="font-semibold">{integer(result.unmappedSalesUnits)} {tr("sold units are missing from these mapped-product buying recommendations.","وحدة مباعة لا تدخل في توصيات الشراء للمنتجات المربوطة.")}</p>
+      <p className="mt-1">{tr("Review these VMS products before relying on the list; Snacky has not guessed which catalogue items they are.","راجع منتجات نظام الماكينات هذه قبل الاعتماد على القائمة؛ لم يفترض سناكي أنها تطابق منتجات محددة في المخزون.")}</p>
+      {result.unmappedSalesProducts?.length ? <div className="mt-2 flex flex-wrap gap-2">{result.unmappedSalesProducts.map(product => <span key={`${product.number ?? ""}:${product.name}`} className="rounded-md border border-amber-200 bg-white px-2 py-1">{product.name}{product.number ? ` (#${product.number})` : ""}: <strong>{integer(product.units)} {tr("units","وحدة")}</strong></span>)}</div> : null}
+      <Link className="mt-2 inline-block font-semibold underline" href="/vms-mappings">{tr("Review VMS product mappings","مراجعة ربط منتجات الماكينات")}</Link>
+    </section> : null}
     {!salesUnavailable && !result.items.length ? <EmptyState title={tr("No mapped recent sellers","لا توجد منتجات حديثة مربوطة")} body={tr("Check product mappings and active products. This is not proof of adequate storage.","راجع ربط المنتجات والمنتجات النشطة. هذا لا يعني أن المخزون كافٍ.")}/> : null}
     {result.storageLoaded && !salesUnavailable && result.items.length > 0 ? <>
       <div className="grid gap-3 sm:grid-cols-3"><div className="surface-card"><div className="text-sm">{tr("Boxes to buy","صناديق للشراء")}</div><strong className="text-3xl">{integer(totalBoxes)}</strong></div><div className="surface-card"><div className="text-sm">{tr("Units in those boxes","الوحدات داخل الصناديق")}</div><strong className="text-3xl">{integer(totalUnits)}</strong></div><div className="surface-card"><div className="text-sm">{tr("Estimated cost","التكلفة التقديرية")}</div><strong className="text-xl">{knownCosts.length ? `${estimatedCost.toFixed(2)} LYD` : "—"}</strong>{knownCosts.length < readyItems.length ? <p className="text-xs">{tr("Some costs are missing; total is incomplete.","بعض التكاليف مفقودة؛ الإجمالي غير مكتمل.")}</p> : null}</div></div>

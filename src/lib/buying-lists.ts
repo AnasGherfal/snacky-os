@@ -1,9 +1,10 @@
+import type {MarketChecklistItem} from './market-checklist';
 export const buyingRoles = ['owner','admin','supervisor','warehouse','purchasing','finance'] as const;
 export const buyingPlannerRoles = ['owner','admin','supervisor','warehouse','purchasing'] as const;
 export const buyingUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type BuyingOutcome = 'pending'|'bought'|'partial'|'unavailable';
 export type BuyingItem = {product_id:string;name:string;supplier:string|null;units_per_box:number;planned_boxes:number;unit_cost:number|null;outcome:BuyingOutcome;bought_boxes:number;note:string};
-export type BuyingList = {id:string;title:string;instructions:string;assigned_to:string;created_by:string;buyer_name:string;creator_name:string;due_on:string;status:'open'|'completed'|'cancelled';revision:number;created_at:string;updated_at:string;items:BuyingItem[]};
+export type BuyingList = {id:string;title:string;instructions:string;assigned_to:string;created_by:string;buyer_name:string;creator_name:string;due_on:string;status:'open'|'completed'|'cancelled';revision:number;created_at:string;updated_at:string;items:BuyingItem[];shopping_mode?:boolean;checklist_items?:MarketChecklistItem[];remaining_count?:number;acquired_count?:number;unavailable_count?:number};
 export type BuyingWorkspace = {me:string;planner:boolean;today:string;record:BuyingList|null;people:{id:string;name:string}[];rows:(Omit<BuyingList,'items'> & {item_count:number;checked_count:number})[];total:number;offset:number};
 export type BuyingCommand = {request_id:string;list_id:string;action:'create'|'item'|'complete'|'cancel'|'reopen'|'assign'|'source';revision:number;payload:Record<string,unknown>};
 export const buyingOutcomeLabels:Record<BuyingOutcome,[string,string]> = {pending:['Not checked','لم يُراجع'],bought:['Bought','تم الشراء'],partial:['Partly bought','تم شراء جزء'],unavailable:['Unavailable','غير متوفر']};

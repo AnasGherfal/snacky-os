@@ -4,7 +4,10 @@ on:
     paths:
       - 'src/**'
       - 'supabase/migrations/*shared_buying_lists*'
+      - 'supabase/migrations/*market_shopping_checklist*'
       - 'scripts/test-shared-buying*'
+      - 'scripts/test-market-checklist*'
+      - 'scripts/test-market-shopping-checklist*'
       - 'scripts/test-buying-print-css.mjs'
       - 'scripts/shared-buying/**'
       - '.github/workflows/shared-buying-lists.yml'
@@ -15,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   contracts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -42,7 +45,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --experimental-strip-types --test scripts/test-buying-print-css.mjs scripts/test-shared-buying.mjs scripts/test-purchase-boxes.mjs scripts/test-box-list-navigation.mjs scripts/test-authz-permissions.mjs
+      - run: node --experimental-strip-types --test scripts/test-buying-print-css.mjs scripts/test-shared-buying.mjs scripts/test-purchase-boxes.mjs scripts/test-box-list-navigation.mjs scripts/test-authz-permissions.mjs scripts/test-market-checklist.mjs scripts/test-market-checklist-api.mjs scripts/test-market-checklist-ui.mjs
       - name: Actual migration, buyer isolation, replay and no financial effects
         env:
           PGHOST: localhost
@@ -53,6 +56,8 @@ jobs:
         run: |
           mkdir -p diagnostics
           psql -X -v ON_ERROR_STOP=1 -f scripts/test-shared-buying-db.sql > diagnostics/buying-db.log 2>&1 || { tail -n 80 diagnostics/buying-db.log; exit 1; }
+          createdb market_checklist_tests
+          PGDATABASE=market_checklist_tests psql -X -v ON_ERROR_STOP=1 -f scripts/test-market-shopping-checklist-db.sql > diagnostics/market-checklist-db.log 2>&1 || { tail -n 80 diagnostics/market-checklist-db.log; exit 1; }
       - run: npm run typecheck
       - uses: actions/upload-artifact@v4
         if: always()
