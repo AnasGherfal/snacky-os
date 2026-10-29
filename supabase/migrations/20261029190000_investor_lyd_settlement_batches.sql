@@ -253,3 +253,40 @@ end
 $function$;
 revoke all on function public.snacky_record_investor_lyd_payout_batch_v1(uuid,jsonb,date,numeric,text,text,text,text,uuid) from public,anon;
 grant execute on function public.snacky_record_investor_lyd_payout_batch_v1(uuid,jsonb,date,numeric,text,text,text,text,uuid) to authenticated;
+
+-- Retire the old USD cash-out path for this agreement model without touching
+-- any historical records. Existing USD payout receipts remain read-only.
+revoke execute on function public.snacky_record_investor_usd_payout_v1(uuid,date,numeric,date,numeric,text,text,text,text,uuid) from authenticated;
+
+-- Other legacy LYD payout commands continue to serve uncapped agreements,
+-- but must not bypass the new FX/cap reconciliation for USD-ceiling agreements.
+create or replace function public.snacky_block_legacy_capped_investor_payout()
+returns trigger language plpgsql set search_path to ''
+as $block$
+begin
+ if exists(select 1 from public.investor_agreements a
+  where a.id=new.agreement_id and a.payout_cap_usd is not null) then
+   raise exception 'Use the multi-month LYD settlement command for USD-ceiling agreements'
+    using errcode='23514';
+ end if;
+ return new;
+end
+$block$;
+drop trigger if exists snacky_block_legacy_capped_investor_payment on public.investor_payments;
+create trigger snacky_block_legacy_capped_investor_payment before insert
+ on public.investor_payments for each row execute function public.snacky_block_legacy_capped_investor_payout();
+
+create or replace function public.snacky_protect_investor_lyd_payout_ledger()
+returns trigger language plpgsql set search_path to ''
+as $protect$
+begin
+ raise exception 'Posted investor payments are append-only and cannot be rewritten'
+ using errcode='23514';
+end
+$protect$;
+create trigger snacky_lyd_batch_immutable before update or delete on public.investor_lyd_payout_batches
+ for each row execute function public.snacky_protect_investor_lyd_payout_ledger();
+create trigger snacky_lyd_allocation_immutable before update or delete on public.investor_lyd_payout_allocations
+ for each row execute function public.snacky_protect_investor_lyd_payout_ledger();
+revoke all on function public.snacky_protect_investor_lyd_payout_ledger() from public,anon,authenticated;
+revoke all on function public.snacky_block_legacy_capped_investor_payout() from public,anon,authenticated;
