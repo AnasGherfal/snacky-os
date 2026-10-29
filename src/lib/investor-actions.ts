@@ -197,38 +197,20 @@ export async function generateInvestorStatement(fd:FormData) {
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
  const priorDue=priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
  let investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
- const usdCapped=agreement.payout_cap_usd!=null;
- const savedFx=usdCapped ? await supabase.from('investor_monthly_fx_rates').select('lyd_per_usd,rate_source').eq('agreement_id',agreementId).eq('month_start',bounds.start).maybeSingle() : {data:null,error:null};
- if(savedFx.error)fail('Could not load saved investor exchange rate.');
- const enteredRate=text(fd,'usd_rate_lyd_per_usd');
- const requestedRate=enteredRate?Number(enteredRate):Number(savedFx.data?.lyd_per_usd??NaN);
- const rate=usdCapped&&Number.isFinite(requestedRate)&&requestedRate>0?requestedRate:null;
- const rateSource=text(fd,'usd_rate_source')||String(savedFx.data?.rate_source??'');
+ // The investor earns LYD. Exchange-rate credit is calculated only when a real
+ // LYD cash payout is recorded; never cap or convert the monthly entitlement in USD.
  const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
-  (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized') &&
-  (!usdCapped||(rate!==null&&rateSource.length>=8));
- let shareUsd:number|null=null;
- if(usdCapped&&rate!=null){
-  const history=await supabase.from('investor_historical_months').select('confirmed_payable_usd,payment_confirmed_at')
-   .eq('investor_user_id',agreement.investor_user_id).gte('month_start',agreement.start_date).lt('month_start',bounds.start);
-  if(history.error)fail('Could not verify historical investor entitlement before USD cap calculation.');
-  if((history.data??[]).some(h=>h.payment_confirmed_at==null||h.confirmed_payable_usd==null))
-   fail('Historical investor entitlement is incomplete.');
-  const previouslyDueUsd=(history.data??[]).reduce((sum,h)=>sum+Number(h.confirmed_payable_usd),0)
-   +priorFinalized.reduce((sum,row)=>sum+Number(row.investor_share_due_usd??0),0);
-  shareUsd=Math.max(0,Math.min(Math.round((grossShare/rate)*100)/100,Number(agreement.payout_cap_usd)-previouslyDueUsd));
-  investorDue=Math.min(investorDue,Math.round(shareUsd*rate*100)/100);
- }
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`,`excluded_cashbook_entries: ${ledgerRows.length-cleanLedger.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`rate_USD_LYD=${rate??'not documented'}`,`FX_evidence=${rateSource||'not supplied'}`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
+  (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized');
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`,`excluded_cashbook_entries: ${ledgerRows.length-cleanLedger.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`settlement_currency=LYD`,`fx_applies_only_on_actual_payment=true`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
   operating_expenses_lyd:Math.round((operatingExpensesBeforeAccrual+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((profitBeforeAccrual-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
-  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:rate,investor_share_due_usd:shareUsd,profit_basis:calculation.profitBasis,expense_breakdown:[...(agreement.investment_amount_usd!=null?[{key:'ledger_checked_operating',label:'Confirmed salaries and operating charges excluding owner drawings, charity, new-machine freight and capital items',amount:operatingExpensesBeforeAccrual,transactionCount:null}]:calculation.expenseBreakdown),...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
+  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:null,investor_share_due_usd:null,profit_basis:calculation.profitBasis,expense_breakdown:[...(agreement.investment_amount_usd!=null?[{key:'ledger_checked_operating',label:'Confirmed salaries and operating charges excluding owner drawings, charity, new-machine freight and capital items',amount:operatingExpensesBeforeAccrual,transactionCount:null}]:calculation.expenseBreakdown),...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
   share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
  revalidatePath('/finance/investors');revalidatePath('/investor');
- redirect(investorsUrl(agreementId,{type:complete?'success':'warning',text:complete?'Monthly draft ready. Review rent/payroll, all expenses, sales completeness and machine purchases before finalizing.':'Draft is incomplete. Resolve sales costs, unreviewed expenses or missing USD rates, then recalculate. No entitlement was finalized.'}));
+ redirect(investorsUrl(agreementId,{type:complete?'success':'warning',text:complete?'Monthly draft ready. Review rent/payroll, all expenses, sales completeness and machine purchases before finalizing.':'Draft is incomplete. Resolve sales costs, unreviewed expenses or missing or unreviewed costs, then recalculate. No entitlement was finalized.'}));
 }
 
 export async function finalizeInvestorStatement(fd:FormData) {

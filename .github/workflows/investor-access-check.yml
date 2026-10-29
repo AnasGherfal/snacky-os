@@ -49,6 +49,16 @@ jobs:
           PGPASSWORD: isolated-test-only
           PGDATABASE: investor_tests
         run: psql -X -v ON_ERROR_STOP=1 -f scripts/test-investor-ledger.sql
+      - name: Multi-month LYD payment, FX goal, and RLS checks (isolated PostgreSQL)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: isolated-test-only
+          PGDATABASE: investor_lyd_tests
+        run: |
+          createdb --maintenance-db=postgres investor_lyd_tests
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-investor-lyd-payout-db.sql
       - name: Typecheck
         run: npm run typecheck
       - name: Production build
