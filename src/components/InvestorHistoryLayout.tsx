@@ -67,7 +67,7 @@ export async function InvestorHistoryLayout({ children, ownerOnly = false }: {
           </summary>
         <div className="mt-4">
           <h2 id="investor-history-heading" className="text-xl font-semibold text-slate-950">{tr('Historical months · supplied figures', 'الأشهر التاريخية · الأرقام المقدّمة')}</h2>
-          <p className="mt-1 text-sm text-slate-600">{tr('The original records remain visible here, even while the ongoing agreement is not set up. They are included in the 2026 year overview using their recorded historical LYD rates, but not counted twice in the new monthly ledger.', 'تبقى السجلات الأصلية ظاهرة هنا حتى لو لم تُجهّز الاتفاقية المستمرة بعد. تدخل هذه المبالغ في كشف سنة 2026 بسعر صرفها التاريخي، ولا تُحسب مرة أخرى في دفتر الأشهر الجديد.')}</p>
+          <p className="mt-1 text-sm text-slate-600">{tr('These are the original imported figures and settlement confirmations as recorded at the time. For current paid/unpaid LYD balances and any later payouts, use the investor ledger above. Historical amounts are not counted twice.', 'هذه الأرقام الأصلية المستوردة وحالات الدفع المثبتة وقت التوثيق. لمعرفة أرصدة الدينار الحالية والمدفوع لاحقاً، راجع كشف المستثمر أعلاه. لا تُحتسب المبالغ التاريخية مرتين.')}</p>
         </div>
         <div className="mt-4 space-y-4">{[...groups].map(([investorId, rows]) => <InvestorHistoryTable
           key={investorId} rows={rows} investorName={names.get(investorId) || tr('Investor', 'المستثمر')} ar={ar}
