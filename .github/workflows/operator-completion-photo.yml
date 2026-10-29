@@ -5,6 +5,11 @@ on:
     paths:
       - '.github/workflows/operator-completion-photo.yml'
       - 'src/lib/operator-actions.ts'
+      - 'src/lib/refill-photo.ts'
+      - 'src/components/operator/RouteStopQuickActions.tsx'
+      - 'scripts/test-refill-photo-optimization.mjs'
+      - 'scripts/refill-photo-browser.mjs'
+      - 'scripts/sql/refill-photo-retention-report.sql'
       - 'src/app/operator/routes/[id]/stops/[stopId]/page.tsx'
       - 'src/app/api/operator/routes/[id]/stops/[stopId]/completion-photo/route.ts'
       - 'scripts/test-route-stop-persistence-fix.mjs'
@@ -22,8 +27,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +39,18 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Photo persistence and stop completion regressions
-        run: node --test scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs scripts/test-route-photo-evidence-audit.mjs
+        run: node --experimental-strip-types --test scripts/test-refill-photo-optimization.mjs scripts/test-route-stop-persistence-fix.mjs scripts/test-stop-runtime-polish.mjs scripts/test-stop-completion-recovery.mjs scripts/test-separated-refill-and-compressor-proofs.mjs scripts/test-route-photo-evidence-audit.mjs
       - name: Type check
         run: npx tsc --noEmit
+      - name: Install isolated browser acceptance tooling
+        run: |
+          npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0
+          .qa/browser/node_modules/.bin/playwright install --with-deps chromium webkit
+      - name: Real camera-encoder acceptance in Chromium and WebKit
+        run: node scripts/refill-photo-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refill-photo-compression
+          path: diagnostics/refill-photo-browser.json
+          retention-days: 7
