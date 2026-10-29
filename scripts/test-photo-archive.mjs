@@ -170,13 +170,24 @@ function routeHarness(options = {}) {
     '@/lib/authz': { hasAnyRole: p => p?.role === 'owner', isOwnerAdminRole: p => p?.role === 'owner', isSupervisorRole: () => false, isOperatorRole: p => p?.role === 'operator', canAccessOperatorRoute: (_profile, operator) => operator === 'member', canViewVmsImports: () => false },
     '@/lib/operator-route-access': { buildOperatorRouteAccessContext: async (_s, p) => p },
     '@/lib/supabase-server': { getSupabaseAdminClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { operator_id: options.otherRoute ? 'someone-else' : 'member' } }) }) }) }),
-      storage: { from: () => ({ createSignedUrl: async () => { events.push('supabase'); return options.storage ?? { data: null, error: { statusCode: 404, message: 'Object not found' } }; } }) } }) },
+      storage: { from: () => ({
+        exists: async () => {
+          events.push('storage-exists');
+          return options.storage?.error ? { data: null, error: options.storage.error }
+            : { data: Boolean(options.storage?.data?.signedUrl), error: null };
+        },
+        createSignedUrl: async () => {
+          events.push('supabase');
+          return options.storage ?? { data: null, error: { statusCode: 404, message: 'Object not found' } };
+        },
+      }) } }) },
     '@/lib/photo-archive-server': { archivedPhotoResponse: async () => { events.push('archive'); if (options.corrupt) throw Error('corrupt'); return options.noArchive ? null : new Response(image, { headers: { 'X-Snacky-Photo-Source': 'verified-private-archive' } }); } },
     '@/lib/photo-archive-core': { isMissingStorageObject: core.isMissingStorageObject },
+    '@/lib/private-blob-originals': { readVerifiedOriginal: async () => { events.push('private-blob'); return null; } },
     '@/lib/storage-buckets': { PRIVATE_STORAGE_BUCKETS: new Set(['refill-photos','receipt-images']), REFILL_PHOTO_BUCKET: 'refill-photos', ISSUE_PHOTO_BUCKET: 'issue-photos', CASH_EVIDENCE_BUCKET: 'cash-evidence', MACHINE_PHOTO_BUCKET: 'machine-photos', RECEIPT_IMAGE_BUCKET: 'receipt-images', VMS_IMPORT_BUCKET: 'vms-imports' },
   };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, URL, require: name => { assert.ok(imports[name],name); return imports[name]; } });
+  vm.runInNewContext(compiled, { exports, URL, process: { env: {} }, require: name => { assert.ok(imports[name],name); return imports[name]; } });
   return { events, get: (bucket = photo.bucket, query = '') => exports.GET(new Request(`https://snacky.invalid/api/storage/${bucket}/${path}${query}`), { params: Promise.resolve({ bucket, path: path.split('/') }) }) };
 }
 test('unauthenticated, inactive and unassigned operators cannot probe an archive even in verification mode', async () => {
