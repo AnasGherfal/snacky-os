@@ -31,7 +31,7 @@ async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabase
   const [history,safety,quantity]=await Promise.all([
     supabase.from("machine_refill_history").select("id,route_id,route_stop_id,machine_id,machine_photo_url,issues_found,linked_issue_id").eq("machine_photo_path",path).limit(10),
     supabase.from("route_stop_safety_checks").select("id,route_id,route_stop_id,machine_id,proof_photo_url").eq("proof_photo_path",path).limit(10),
-    supabase.from("route_stop_quantity_confirmations").select("id").filter("evidence_files::text","like",`%${path}%`).limit(1),
+    supabase.from("route_stop_quantity_confirmations").select("id").filter("evidence_files","cs",JSON.stringify([{photoPath:path}])).limit(1),
   ]);
   if(history.error||safety.error||quantity.error){
     console.warn("[photo-storage] Reference lookup failed",{
