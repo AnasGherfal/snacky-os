@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { archivedPhotoResponse } from "@/lib/photo-archive-server";
+import { readVerifiedOriginal } from "@/lib/private-blob-originals";
 import { isMissingStorageObject } from "@/lib/photo-archive-core";
 
 import { getCurrentProfile } from "@/lib/auth";
@@ -115,14 +116,46 @@ export async function GET(
   }
 
   // A read-only rehearsal exercises the real access checks BEFORE any original is removed.
+  // Only the private proxy can read archived images; never expose Blob URLs or credentials.
+  async function blobArchive() {
+    if (bucket !== REFILL_PHOTO_BUCKET || !process.env.BLOB_READ_WRITE_TOKEN) return null;
+    const original = await readVerifiedOriginal(objectPath);
+    if (!original) return null;
+    return new Response(new Uint8Array(original.bytes), {
+      headers: {
+        "Content-Type": original.receipt.mime,
+        "Content-Length": String(original.bytes.byteLength),
+        "Cache-Control": "private, no-store",
+        "Vary": "Cookie, Authorization",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Snacky-Photo-Source": "verified-private-blob",
+      },
+    });
+  }
   // It cannot bypass authentication and has no write/delete behavior.
   const archiveCheck = new URL(request.url).searchParams.get("archive") === "verify";
   if (archiveCheck && bucket === REFILL_PHOTO_BUCKET) {
     try {
-      const archived = await archivedPhotoResponse(bucket, objectPath);
+      const archived = await blobArchive() ?? await archivedPhotoResponse(bucket, objectPath);
       return archived ?? NextResponse.json({ error: "Verified archive copy not found" }, { status: 404 });
     } catch {
       return NextResponse.json({ error: "Archive could not be verified" }, { status: 503 });
+    }
+  }
+
+  // Supabase may sign a URL for a file that is already gone. Explicitly check
+  // existence and serve verified immutable archive bytes for removed originals.
+  if (bucket === REFILL_PHOTO_BUCKET) {
+    const existence = await supabase.storage.from(bucket).exists(objectPath);
+    if (existence.error) return NextResponse.json({ error: "Storage temporarily unavailable" }, { status: 503 });
+    if (existence.data === false) {
+      try {
+        const archived = await blobArchive() ?? await archivedPhotoResponse(bucket, objectPath);
+        return archived ?? NextResponse.json({ error: "Storage object not found" }, { status: 404 });
+      } catch {
+        return NextResponse.json({ error: "Archived photo failed verification" }, { status: 503 });
+      }
     }
   }
 
