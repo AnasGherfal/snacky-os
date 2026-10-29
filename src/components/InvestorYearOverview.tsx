@@ -60,12 +60,13 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
    [tr("Approved LYD profit","أرباح معتمدة بالدينار"),lyd(earned)],
    [tr("Actually paid LYD","المدفوع الفعلي بالدينار"),lyd(paid)],
-   [tr("Unpaid LYD profit","أرباح غير مدفوعة بالدينار"),lyd(Math.max(0,round(earned-paid)))],
+   [tr("Unsettled LYD share · subject to payout cap","حصة بالدينار لم تُسوّ بعد · تخضع لسقف التوزيع"),lyd(Math.max(0,round(earned-paid)))],
    [tr("Paid progress toward USD goal","قيمة المدفوع نحو هدف الدولار"),usd(usdCredited)+" / "+usd(cap)]
   ].map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">{label}</p><strong className="mt-2 block text-xl tabular-nums">{value}</strong></div>)}</div>
   <div className="rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between gap-3 text-sm"><span>{tr("Contract goal reached from actual payments","التقدم نحو الهدف من الدفعات الفعلية")}</span><strong>{cap>0?(100*usdCredited/cap).toFixed(1):"0.0"}%</strong></div>
    <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-700" style={{width:(cap>0?Math.min(100,100*usdCredited/cap):0)+"%"}}/></div>
    <p className="mt-2 text-xs text-slate-600">{tr("USD goal remaining","المتبقي من الهدف بالدولار")}: {usd(capLeft)}. {tr("A payment's exchange rate is frozen at recording and never changes historical LYD shares.","سعر صرف كل دفعة يُثبت عند تسجيلها ولا يغير حصص الأشهر بالدينار.")}</p></div>
+  {capLeft<=0?<p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{tr("The contractual payout goal has been reached. Unsettled monthly share figures are historical accounting records, not authorization for additional payments.","تم بلوغ السقف التعاقدي للتوزيعات. الحصص الشهرية غير المسواة هي سجلات محاسبية وليست إذناً لدفع مبالغ إضافية.")}</p>:null}
   {overlap||unknownHistory||paid>earned+.005?<p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{tr("Historical months or payment totals require reconciliation before further payouts.","الأشهر التاريخية أو إجمالي الدفعات تحتاج مراجعة قبل تسجيل دفعات جديدة.")}</p>:null}
   {admin&&payable.length>0&&capLeft>0&&!overlap&&!unknownHistory?<InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()} months={[...payable].reverse()} remainingGoalUsd={capLeft} today={today()} ar={ar}/>:null}
   <div><h3 className="font-semibold">{tr("Monthly profit shares · LYD","حصص الأرباح الشهرية · بالدينار")}</h3><p className="mt-1 text-xs text-slate-600">{tr("Monthly profit never has a payment exchange rate. Drafts are not payable.","لا يوجد سعر صرف للدفع على أرباح الأشهر. المسودات ليست مستحقة.")}</p></div>
