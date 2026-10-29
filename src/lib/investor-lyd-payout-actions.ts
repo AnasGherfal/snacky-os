@@ -37,7 +37,7 @@ export async function recordActualInvestorLydBatch(fd:FormData){
     ||!Number.isFinite(rate)||rate<=0||rate>=100000
     ||!["snacky_lyd","owner_lyd"].includes(account)||!["cash","bank_transfer","other"].includes(method)
     ||reference.length<3||reference.length>200||notes.length>2000)fail("Check the actual LYD payment date, exchange rate, account and receipt reference.");
- let allocations:Array<{month_start:string;amount_lyd:number}>;
+ let allocations:Array<{month_start:string;amount_lyd:number}>=[];
  try{
   const parsed:unknown=JSON.parse(value(fd,"allocations_json"));
   if(!Array.isArray(parsed)||parsed.length<1||parsed.length>24)throw Error("Invalid allocations");
@@ -51,7 +51,7 @@ export async function recordActualInvestorLydBatch(fd:FormData){
   if(new Set(allocations.map(a=>a.month_start)).size!==allocations.length)throw Error("Duplicate month");
  }catch{fail("Select at least one payable month and enter valid amounts in LYD.");}
  const db=await getAuthenticatedSupabaseServerClient();
- if(!db)fail("Database session unavailable. Check the payout history before retrying the same payment request.");
+ if(!db)return fail("Database session unavailable. Check the payout history before retrying the same payment request.");
  const {data,error}=await db.rpc("snacky_record_investor_lyd_payout_batch_v1",{
   p_agreement_id:id,p_allocations:allocations,p_payout_date:date,p_lyd_per_usd:rate,
   p_account_id:account,p_method:method,p_reference:reference,p_notes:notes,p_command_id:command
