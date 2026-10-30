@@ -27,10 +27,15 @@ async function loadInvestorVmsProfit(client: any,dateFrom:string,dateTo:string) 
  const monthly=await client.rpc('sales_dashboard_monthly_summary',{p_date_from:dateFrom,p_date_to:dateTo});
  const monthlyRow=(monthly.data ?? [])[0];
  const toRows=(row:any)=>row?[{net_sales_amount:row.revenue_amount,cogs_amount:row.cogs_amount,gross_profit_amount:row.gross_profit_amount,cost_missing:Number(row.missing_cost_sales_count ?? 0)>0,source:'vms'}]:[];
- if(!monthly.error && Number(monthlyRow?.revenue_amount)>0) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
+ // Use only internally reconciled monthly summary. If a summary is inconsistent,
+ // fall through to detailed sales and then the complete active XY import.
+ const internallyConsistent=(row:any)=>row && [row.revenue_amount,row.cogs_amount,row.gross_profit_amount]
+  .every((v:unknown)=>v!=null&&Number.isFinite(Number(v)))
+  && Math.abs(Math.round((Number(row.revenue_amount)-Number(row.cogs_amount)-Number(row.gross_profit_amount))*100))<=2;
+ if(!monthly.error && internallyConsistent(monthlyRow) && Number(monthlyRow.revenue_amount)>0) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
  const detailed=await client.rpc('sales_dashboard_summary',{p_date_from:dateFrom,p_date_to:dateTo});
  const detailedRow=(detailed.data ?? [])[0];
- if(!detailed.error && Number(detailedRow?.revenue_amount)>0) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
+ if(!detailed.error && internallyConsistent(detailedRow) && Number(detailedRow.revenue_amount)>0) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
  // The dashboard RPCs can legitimately return no rows while a verified active
  // XY monthly file exists. Never substitute zero sales or sum superseded uploads.
  const reader=getSupabaseAdminClient() ?? client;
