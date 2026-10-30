@@ -90,7 +90,7 @@ export async function loadAuthorizedInvestorCashOutAudit({
   const missingIds=manual.filter(m=>!m.product_id);
   if(missingIds.length){
    const clean=(x:string)=>x.toLowerCase().normalize("NFKC")
-    .replace(/[\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]/g,"").trim();
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,"").trim();
    const resolvedIds=missingIds.map(m=>products.filter(p=>clean(p.name??"")===clean(m.product_name??"")))
     .filter(p=>p.length===1).map(p=>p[0].id);
    const additional=[...new Set(resolvedIds)].filter(id=>!unlinkedProductIds.includes(id));
