@@ -84,22 +84,23 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
  // the investor's cash register, and no new financial records are written.
  let finance;
  try {
-  finance=await loadAuthorizedInvestorCashOutAudit({agreementId,investorUserId,startDate,endDate});
+  finance=await loadAuthorizedInvestorCashOutAudit({agreementId,investorUserId,startDate,endDate,
+   months:generated.filter(g=>g.calculation_status==="draft").map(g=>g.month_start)});
  }catch(error){
   console.error("[investor] Company money-out verification unavailable",error);
   return unavailable();
  }
  const calculatedDrafts=reconcileRecordedInvestorDrafts({
   statements:generated,sourceAudit:finance.audit,policies:finance.policies,
-  profitShare:Number(sharePercent??NaN)
+  profitShare:Number(sharePercent??NaN),salesByMonth:finance.salesByMonth
  });
  const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,
   generated:calculatedDrafts,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
   <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")}
-   sharePercent={sharePercent??null} ar={ar} cashOutByMonth={finance.audit.byMonth}
-   cashOutIssues={finance.audit.auditIssues}/>
+   sharePercent={sharePercent??null} ar={ar} admin={admin}
+   cashOutByMonth={finance.audit.byMonth} cashOutIssues={finance.audit.auditIssues}/>
   {admin&&!ledger.needsReview&&ledger.payableMonths.length>0&&ledger.remainingGoalUsd>0?
    <div id="investor-record-payment"><InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
     months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd} today={tripoliToday()} ar={ar}/></div>:null}
