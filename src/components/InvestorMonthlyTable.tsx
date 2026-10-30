@@ -94,7 +94,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    </div>
    {!ledger.months.length?<p className="px-5 py-5 text-sm text-slate-600">{tr("No monthly source records are available for this agreement yet.","لا توجد سجلات شهرية لهذه الاتفاقية بعد.")}</p>:null}
    {ledger.months.some(m=>m.status==="pending")?<p className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-600 sm:px-5">
-    {tr("Estimated monthly shares reflect recorded costs and remain subject to review.","قيد المراجعة يعني أن المبلغ لم يُعتمد بعد، وليس أن الأرباح صفر.")}
+    {tr("Estimated monthly shares reflect recorded costs and remain subject to review.","الحصص التقديرية مبنية على التكاليف المسجلة، وقد تتغير بعد مراجعة الحسابات.")}
    </p>:null}
    {ledger.needsReview?<p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
     {tr("Some records need reconciliation. Confirmed amounts remain visible; further payments are blocked until resolved.","بعض السجلات تحتاج مطابقة. المبالغ المؤكدة ظاهرة؛ ولا يمكن تسجيل دفعات جديدة قبل المعالجة.")}
