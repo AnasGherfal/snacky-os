@@ -5,8 +5,8 @@ import {
 
 export type InvestorMonthlySource = {
  month_start:string;calculation_status:string;
- gross_profit_lyd?:number|string|null;operating_profit_lyd?:number|string|null;
- investor_share_due_lyd?:number|string|null;profit_basis?:string|null;
+ gross_profit_lyd?:number|string|null;operating_profit_lyd:number|string|null;
+ investor_share_due_lyd:number|string|null;profit_basis?:string|null;
  capital_purchases_lyd?:number|string|null;source_complete?:boolean|null;
 };
 export type DatedCostPolicy = InvestorCostPolicyRow & {
