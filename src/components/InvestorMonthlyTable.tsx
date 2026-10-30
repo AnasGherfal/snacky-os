@@ -1,5 +1,7 @@
 import type { InvestorLedgerResult, InvestorLedgerMonth } from "@/lib/investor-monthly-ledger";
 import type { InvestorCashOutMonth } from "@/lib/investor-finance-outflow";
+import type { InvestorSalesProof } from "@/lib/investor-sales-proof";
+import Link from "next/link";
 
 const money=(v:number|null)=>v===null?"—":new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
 const dollar=(v:number)=>"$"+money(v);
@@ -28,9 +30,11 @@ function CashOutDisplay({month,ar}:{month?:InvestorCashOutMonth;ar:boolean}){
   </span>:null}
  </span>;
 }
-export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=false,cashOutByMonth,cashOutIssues}:{
+export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=false,cashOutByMonth,cashOutIssues,salesByMonth,ownerSourceEntries}:{
  ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean;admin?:boolean;
- cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[]
+ cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[];
+ salesByMonth?:Record<string,InvestorSalesProof>;
+ ownerSourceEntries?:Array<{id:string;date:string;description:string;amount:number;currency:string}>
 }){
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const totalShare=cents(ledger.totalDueLyd+ledger.totalEstimatedLyd);
@@ -119,6 +123,15 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=
      {tr("The cash-out register includes every active debit, including budget adjustments. Exact duplicate source imports are counted once. Product purchases and transfers remain recorded without double-charging the agreed operating-profit formula.",
       "يشمل سجل الصرف جميع الحركات الخارجة النشطة بما فيها تعديل الميزانية. لا تتكرر حركات الاستيراد المتطابقة. تظهر مشتريات المنتجات والتحويلات دون خصمها مرتين من الربح التشغيلي المتفق عليه.")}
     </p>
+    {salesByMonth&&Object.keys(salesByMonth).length>0?<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+     {Object.values(salesByMonth).sort((a,b)=>a.month.localeCompare(b.month)).map(proof=>
+      <div key={proof.month} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+       <strong className="text-slate-800">{monthTitle(proof.month,ar)}</strong>
+       <p className="mt-1 text-slate-600">{tr("XY product records","سجلات مبيعات XY")}: {proof.xyRows} · {tr("Manual sales","مبيعات يدوية")}: {proof.manualSales}</p>
+       <p className="mt-1 text-slate-600">{tr("Costs matched to dated inventory records","تكاليف طابقت سجلات مخزون مؤرخة")}: {proof.datedCostMatches}</p>
+       {proof.unresolvedCostCount>0?<p className="mt-1 text-slate-600">{tr("Missing source cost entries","سجلات تكلفة دون مصدر")}: {proof.unresolvedCostCount}</p>:null}
+      </div>)}
+    </div>:null}
     <div className="overflow-x-auto"><table className="w-full min-w-[360px] text-xs">
      <thead><tr className="border-b border-slate-200 text-slate-600">
       <th className="py-2 text-start">{tr("Month","الشهر")}</th>
@@ -138,6 +151,15 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=
      {tr("Mirrored imports identified","نسخ الاستيراد المتطابقة")}: {duplicates} ·
      {tr("Source entries awaiting supporting evidence","حركات تحتاج مستندات داعمة")}: {cashReviewCount}
     </p>
+    {ownerSourceEntries&&ownerSourceEntries.length>0?<div className="rounded-lg border border-slate-200 p-3">
+     <p className="text-xs font-semibold text-slate-700">{tr("Original Finance source entries","حركات المالية الأصلية")} · {ownerSourceEntries.length}</p>
+     <div className="mt-2 space-y-2">{ownerSourceEntries.map(r=><div key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-xs">
+      <span>{r.date} · {r.description} · <strong>{money(r.amount)} {r.currency}</strong></span>
+      {r.id?<Link href={`/finance/transactions/${r.id}`} className="font-semibold text-emerald-800 underline underline-offset-2">
+       {tr("View source","عرض المصدر")}
+      </Link>:null}
+     </div>)}</div>
+    </div>:null}
     {cashOutIssues?.length?<p className="text-xs text-slate-500">
      {tr("Foreign-currency cash entries without a dated rate remain in their original currency; they are not silently converted.","تظل حركات الصرف الأجنبي دون سعر موثق بعملتها الأصلية ولا تُحوّل تلقائياً.")}
     </p>:null}
