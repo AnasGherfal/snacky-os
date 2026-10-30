@@ -66,3 +66,20 @@ test("release requires storage checks, a preserved exact copy and explicit opt-i
  assert.ok(reader.includes("readVerifiedOriginal(objectPath)"));
 });
 
+
+
+test("archive quantity proofs use JSONB containment with serialized objects, never cast filters",()=>{
+ const source=readFileSync("src/app/api/ops/archive-refill-photo/route.ts","utf8");
+ assert.doesNotMatch(source,/\.filter\("evidence_files::text"/);
+ assert.match(source,/\.contains\("evidence_files",JSON\.stringify\(\[\{photoPath:path\}\]\)\)/);
+ assert.match(source,/\.contains\("evidence_files",JSON\.stringify\(\[\{photoUrl:proxy\}\]\)\)/);
+ assert.match(source,/quantityPath\.error\|\|quantityUrl\.error/);
+ assert.match(source,/quantityPath\.data\?\.length\|\|quantityUrl\.data\?\.length/);
+});
+test("source release stays off without a separate owner-controlled environment gate",()=>{
+ const source=readFileSync("src/app/api/ops/archive-refill-photo/route.ts","utf8");
+ assert.match(source,/job\.release===true&&process\.env\.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true"/);
+ assert.match(source,/source_release_disabled/);
+ assert.match(source,/if\(!job\.release\)/);
+ assert.match(source,/source_version_conflict_before_release/);
+});
