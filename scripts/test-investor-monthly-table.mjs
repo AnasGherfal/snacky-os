@@ -86,7 +86,7 @@ test("one shared visible table serves investor and owner; advanced views cannot 
  assert.match(table,/ledger\.months\.map/);
  assert.match(table,/row\.dueLyd/);
  assert.match(table,/row\.paidLyd/);
- assert.match(table,/row\.outstandingLyd/);
+ assert.match(table,/balanceOf\(row\)/);
  assert.match(table,/monthTitle/);
  assert.doesNotMatch(table,/under review|not approved|needs confirmation|requires review/i);
  assert.doesNotMatch(table,/tr\("Status","الحالة"\)/);
