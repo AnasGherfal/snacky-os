@@ -15,6 +15,7 @@ export type InvestorGeneratedLedgerMonth = {
   operating_profit_lyd: number | string | null;
   investor_share_due_lyd: number | string | null;
   calculation_status: string;
+  source_complete?: boolean | null;
 };
 export type InvestorLydAllocation = { payout_id: string; month_start: string; amount_lyd: number | string };
 export type InvestorLydBatch = {
@@ -27,6 +28,7 @@ export type InvestorLedgerMonth = {
   source: "historical" | "finalized" | "draft";
   netProfitLyd: number | null;
   dueLyd: number | null;
+  estimatedShareLyd: number | null;
   paidLyd: number | null;
   outstandingLyd: number | null;
   status: "unpaid" | "partial" | "paid" | "nothing_due" | "pending" | "unverified";
@@ -34,6 +36,7 @@ export type InvestorLedgerMonth = {
 export type InvestorLedgerResult = {
   months: InvestorLedgerMonth[];
   totalDueLyd: number;
+  totalEstimatedLyd: number;
   totalPaidLyd: number;
   totalOutstandingLyd: number;
   creditedUsd: number;
@@ -97,23 +100,24 @@ export function buildInvestorMonthlyLedger(input: {
         Number.isFinite(rate) && rate > 0;
       if (!verified) {
         needsReview = true;
-        months.push({ month, source: "historical", netProfitLyd: safeSigned(h.net_profit_lyd), dueLyd: null, paidLyd: null, outstandingLyd: null, status: "unverified" });
+        months.push({ month, source: "historical", netProfitLyd: safeSigned(h.net_profit_lyd), dueLyd: null, estimatedShareLyd: null, paidLyd: null, outstandingLyd: null, status: "unverified" });
         continue;
       }
       const due = cents(payable * rate);
       const paid = cents(cents(paidHistoric * rate) + (allocationByMonth.get(month) ?? 0));
       if (paid > due + 0.005) needsReview = true;
       months.push({ month, source: "historical", netProfitLyd: safeSigned(h.net_profit_lyd),
-        dueLyd: due, paidLyd: paid, outstandingLyd: Math.max(0, cents(due - paid)),
+        dueLyd: due, estimatedShareLyd: null, paidLyd: paid, outstandingLyd: Math.max(0, cents(due - paid)),
         status: due === 0 ? "nothing_due" : paid >= due - 0.005 ? "paid" : paid > 0 ? "partial" : "unpaid" });
     } else if (s) {
       const finalized = s.calculation_status === "finalized";
       const due = finalized ? safeMoney(s.investor_share_due_lyd) : null;
+      const estimatedShareLyd = s.calculation_status === 'draft' ? safeMoney(s.investor_share_due_lyd) : null;
       if (finalized && due === null) needsReview = true;
       const paid = due === null ? null : cents((allocationByMonth.get(month) ?? 0) + (legacyByMonth.get(month) ?? 0));
       if (due !== null && paid !== null && paid > due + 0.005) needsReview = true;
-      months.push({ month, source: finalized ? "finalized" : "draft", netProfitLyd: finalized ? safeSigned(s.operating_profit_lyd) : null,
-        dueLyd: due, paidLyd: paid, outstandingLyd: due === null || paid === null ? null : Math.max(0, cents(due - paid)),
+      months.push({ month, source: finalized ? "finalized" : "draft", netProfitLyd: finalized || estimatedShareLyd !== null ? safeSigned(s.operating_profit_lyd) : null,
+        dueLyd: due, estimatedShareLyd, paidLyd: paid, outstandingLyd: due === null || paid === null ? null : Math.max(0, cents(due - paid)),
         status: !finalized ? "pending" : due === null ? "unverified" : due === 0 ? "nothing_due" : paid! >= due - 0.005 ? "paid" : paid! > 0 ? "partial" : "unpaid" });
     }
   }
@@ -133,6 +137,7 @@ export function buildInvestorMonthlyLedger(input: {
   if (goalUsd !== null && creditedUsd > goalUsd + .005) needsReview = true;
   const confirmed = months.filter(row => row.dueLyd !== null && row.paidLyd !== null);
   const totalDueLyd = total(confirmed.map(m => m.dueLyd!));
+  const totalEstimatedLyd = total(months.filter(m => m.source === 'draft' && m.estimatedShareLyd !== null).map(m => m.estimatedShareLyd!));
   const totalPaidLyd = total(confirmed.map(m => m.paidLyd!));
   const payableMonths = !needsReview && goalUsd !== null && creditedUsd < goalUsd
     ? confirmed.filter(r => r.outstandingLyd! > 0.005).map(r => ({
@@ -140,7 +145,7 @@ export function buildInvestorMonthlyLedger(input: {
       }))
     : [];
   return {
-    months, totalDueLyd, totalPaidLyd,
+    months, totalDueLyd, totalEstimatedLyd, totalPaidLyd,
     totalOutstandingLyd: Math.max(0, cents(totalDueLyd - totalPaidLyd)),
     creditedUsd, goalUsd: goalUsd ?? 0,
     remainingGoalUsd: Math.max(0, cents((goalUsd ?? 0) - creditedUsd)),

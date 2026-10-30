@@ -43,15 +43,14 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
  let historical:InvestorHistoricLedgerMonth[],generated:InvestorGeneratedLedgerMonth[];
  let batches:InvestorLydBatch[],allocations:InvestorLydAllocation[],legacyUsdPayouts:InvestorUsdLegacyPayout[];
  try{
-  const [h,g,b,a,u,pending]=await Promise.all([
+  const [h,g,b,a,u]=await Promise.all([
    allRows((from,to)=>db.from("investor_historical_months")
     .select("month_start,net_profit_lyd,exchange_rate_lyd_per_usd,confirmed_payable_usd,confirmed_paid_usd,payment_confirmed_at")
     .eq("investor_user_id",investorUserId).gte("month_start",startDate).order("month_start").order("id").range(from,to)),
    allRows((from,to)=>{
     let q=db.from("investor_monthly_statements")
-     .select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status")
+     .select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status,source_complete")
      .eq("agreement_id",agreementId).gte("month_start",startDate).order("month_start").order("id").range(from,to);
-    if(!admin)q=q.eq("calculation_status","finalized");
     return q;
    }),
    allRows((from,to)=>db.from("investor_lyd_payout_batches")
@@ -60,20 +59,24 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
    allRows((from,to)=>db.from("investor_lyd_payout_allocations")
     .select("payout_id,month_start,amount_lyd").eq("agreement_id",agreementId).order("month_start").order("id").range(from,to)),
    allRows((from,to)=>db.from("investor_usd_payouts")
-    .select("month_start,amount_usd,lyd_equivalent").eq("agreement_id",agreementId).order("month_start").order("id").range(from,to)),
-   admin?Promise.resolve([]):allRows((from,to)=>db.from("investor_monthly_statements")
-    .select("month_start,calculation_status").eq("agreement_id",agreementId)
-    .neq("calculation_status","finalized").gte("month_start",startDate).order("month_start").order("id").range(from,to))
+    .select("month_start,amount_usd,lyd_equivalent").eq("agreement_id",agreementId).order("month_start").order("id").range(from,to))
   ]);
   historical=h as InvestorHistoricLedgerMonth[];
   generated=g as InvestorGeneratedLedgerMonth[];
   batches=b as InvestorLydBatch[];allocations=a as InvestorLydAllocation[];
   legacyUsdPayouts=u as InvestorUsdLegacyPayout[];
-  // An investor may see that an unapproved month exists, but never the draft's numbers.
-  if(!admin)generated.push(...(pending as Array<{month_start:string;calculation_status:string}>).map(row=>({
-   ...row,operating_profit_lyd:null,investor_share_due_lyd:null
-  })));
+  // Estimates are visible to the investor, but remain clearly preliminary and
+  // never enter finalized entitlements or payment eligibility.
  }catch(error){console.error("[investor] Monthly ledger failed to load",error);return unavailable();}
+ // The ongoing month should be visible in the chronology without inventing
+ // a completed profit or payout amount.
+ const ongoingMonth=tripoliToday().slice(0,7)+"-01";
+ if(ongoingMonth>=startDate&&(!endDate||ongoingMonth<=endDate)
+    &&!historical.some(h=>h.month_start===ongoingMonth)
+    &&!generated.some(g=>g.month_start===ongoingMonth)){
+   generated.push({month_start:ongoingMonth,calculation_status:"in_progress",
+    operating_profit_lyd:null,investor_share_due_lyd:null});
+ }
  const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,generated,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>

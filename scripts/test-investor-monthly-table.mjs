@@ -27,6 +27,8 @@ test("January–March imported months are first and visible in LYD, with confirm
  assert.deepEqual(result.months.map(row=>row.status),["nothing_due","unpaid","unpaid","pending"]);
  assert.equal(result.months[0].netProfitLyd,-9369);
  assert.equal(result.totalDueLyd,4075.50);
+ assert.equal(result.totalEstimatedLyd,600);
+ assert.equal(result.months[3].estimatedShareLyd,600);
  assert.equal(result.totalPaidLyd,0);
  assert.equal(result.totalOutstandingLyd,4075.50);
  assert.equal(result.creditedUsd,0);
@@ -78,7 +80,7 @@ test("one shared visible table serves investor and owner; advanced views cannot 
  assert.match(overview,/buildInvestorMonthlyLedger/);
  assert.match(overview,/investor_historical_months/);
  assert.match(overview,/investor_lyd_payout_allocations/);
- assert.match(overview,/\.eq\("calculation_status","finalized"\)/);
+ assert.doesNotMatch(overview,/\.eq\("calculation_status","finalized"\)/);
  assert.match(overview,/InvestorMonthlyTable/);
  assert.match(table,/<table/);
  assert.match(table,/ledger\.months\.map/);

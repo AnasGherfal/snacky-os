@@ -12,11 +12,11 @@ const labels = {
  partial: ["Partly paid","مدفوع جزئياً","border-sky-200 bg-sky-50 text-sky-800"],
  paid: ["Paid","مدفوع","border-emerald-200 bg-emerald-50 text-emerald-800"],
  nothing_due: ["No payout due","لا يوجد مستحق","border-slate-200 bg-slate-50 text-slate-600"],
- pending: ["Under review","قيد المراجعة","border-slate-200 bg-slate-50 text-slate-600"],
+ pending: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
  unverified: ["Needs confirmation","بحاجة للتأكيد","border-rose-200 bg-rose-50 text-rose-800"]
 } as const;
 function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
- const info=labels[row.status];
+ const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Provisional','تقديري','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
  return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold leading-tight sm:text-xs ${info[2]}`}>{ar?info[1]:info[0]}</span>;
 }
 export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
@@ -40,14 +40,15 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
      </div>:null}
     </div>
    </div>
-   <div className="grid grid-cols-3 divide-x divide-slate-100 px-1 py-4 text-center sm:px-3 sm:py-5">
+   <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 px-1 py-4 text-center sm:px-3 sm:py-5">
     {[
      [tr("Approved share","حصة الأرباح المعتمدة"),ledger.totalDueLyd],
+     [tr("Provisional estimate","تقدير مبدئي"),ledger.totalEstimatedLyd],
      [tr("Actually paid","المدفوع فعلياً"),ledger.totalPaidLyd],
-     [tr("Still unpaid","المتبقي غير المدفوع"),ledger.totalOutstandingLyd]
+     [tr("Approved unpaid","المتبقي من المعتمد"),ledger.totalOutstandingLyd]
     ].map(([label,value],i)=><div key={String(label)} className="min-w-0 px-1 sm:px-3">
      <p className="text-[10px] leading-4 text-slate-500 sm:text-xs">{label}</p>
-     <strong dir="ltr" className={`mt-1 block whitespace-nowrap text-base font-bold tabular-nums sm:text-2xl ${i===2?"text-amber-700":"text-slate-900"}`}>{money(Number(value))}</strong>
+     <strong dir="ltr" className={`mt-1 block whitespace-nowrap text-base font-bold tabular-nums sm:text-2xl ${i===1?"text-amber-700":i===3?"text-emerald-800":"text-slate-900"}`}>{money(Number(value))}</strong>
      <span className="text-[10px] text-slate-400">{tr("LYD","د.ل")}</span>
     </div>)}
    </div>
@@ -75,7 +76,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
         <span className="mt-1 block sm:hidden"><Badge row={row} ar={ar}/></span>
        </th>
        <td dir="ltr" className="hidden px-3 py-3 text-end tabular-nums lg:table-cell">{row.netProfitLyd===null?"—":money(row.netProfitLyd)}</td>
-       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd)}</td>
+       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Est.","تقديري")}</span>:null}</td>
        <td dir="ltr" className="px-1 py-3 text-end tabular-nums sm:px-3">{money(row.paidLyd)}</td>
        <td dir="ltr" className="px-1 py-3 text-end font-semibold tabular-nums sm:px-3">{money(row.outstandingLyd)}</td>
        <td className="hidden px-3 py-3 text-start sm:table-cell"><Badge row={row} ar={ar}/></td>
@@ -93,7 +94,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    </div>
    {!ledger.months.length?<p className="px-5 py-5 text-sm text-slate-600">{tr("No monthly source records are available for this agreement yet.","لا توجد سجلات شهرية لهذه الاتفاقية بعد.")}</p>:null}
    {ledger.months.some(m=>m.status==="pending")?<p className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-600 sm:px-5">
-    {tr("Under review means the amount is not approved yet; it does not mean profit is zero.","قيد المراجعة يعني أن المبلغ لم يُعتمد بعد، وليس أن الأرباح صفر.")}
+    {tr("Estimated monthly shares reflect recorded costs and remain subject to review.","الحصص التقديرية مبنية على التكاليف المسجلة، وقد تتغير بعد مراجعة الحسابات.")}
    </p>:null}
    {ledger.needsReview?<p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
     {tr("Some records need reconciliation. Confirmed amounts remain visible; further payments are blocked until resolved.","بعض السجلات تحتاج مطابقة. المبالغ المؤكدة ظاهرة؛ ولا يمكن تسجيل دفعات جديدة قبل المعالجة.")}
