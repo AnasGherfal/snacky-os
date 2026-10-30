@@ -98,12 +98,13 @@ test('investor portal is a genuine read-only view, and USD contracts do not inve
  const owner=read('src/app/finance/investors/page.tsx');
  const portal=read('src/app/investor/page.tsx');
  const card=read('src/components/InvestorStatementCard.tsx');
- for(const s of [owner,portal]){
-  assert.doesNotMatch(s,/investment_amount_usd\)\*7\.5/);
-  assert.match(s,/selected\.payout_cap_usd == null/);
-  assert.match(s,/investorName=\{selected\.investor_name\}/);
-  assert.match(s,/InvestorYearOverview/);
+ for(const source of [owner,portal]){
+  assert.doesNotMatch(source,/investment_amount_usd\)\*7\.5/);
+  assert.match(source,/investorName=\{selected\.investor_name\}/);
+  assert.match(source,/InvestorYearOverview/);
  }
+ assert.match(owner,/selected\.payout_cap_usd!=null/);
+ assert.match(portal,/selected\.payout_cap_usd == null/);
  assert.match(portal,/admin=\{false\}/);
  assert.match(portal,/eq\('investor_user_id',profile\.id\)/);
  assert.match(portal,/eq\('calculation_status','finalized'\)/);
