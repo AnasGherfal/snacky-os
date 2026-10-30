@@ -21,6 +21,24 @@ function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
  const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Calculated · not approved','محسوب · غير معتمد','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
  return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold leading-tight sm:text-xs ${info[2]}`}>{ar?info[1]:info[0]}</span>;
 }
+function CashOutDisplay({month,ar}:{month?:InvestorCashOutMonth;ar:boolean}) {
+ if(!month)return <span className="text-slate-400">—</span>;
+ const tr=(en:string,arabic:string)=>ar?arabic:en;
+ return <span className="block whitespace-nowrap">
+  <span className="font-semibold tabular-nums">{month.recordedMoneyOutLyd===null?
+   "≥"+money(month.knownMoneyOutLyd):money(month.recordedMoneyOutLyd)}</span>
+  {month.missingFxCount>0?<span className="mt-1 block whitespace-normal text-[10px] font-medium text-rose-700">
+   {tr("Unconverted", "غير محوّل")}: {money(month.missingFxNativeUsd)} USD
+  </span>:null}
+  {month.adjustmentLyd>0?<span className="mt-1 block whitespace-normal text-[10px] font-medium text-emerald-800">
+   {tr("Includes budget adjustment", "تشمل تعديل الميزانية")}: {money(month.adjustmentLyd)}
+  </span>:null}
+  {month.reviewedCount>0?<span className="mt-1 block whitespace-normal text-[10px] text-amber-700">
+   {month.reviewedCount} {tr("entries need review", "حركات تحتاج مراجعة")}
+  </span>:null}
+ </span>;
+}
+
 export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOutByMonth,cashOutIssues}:{
  ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean;
  cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[]
