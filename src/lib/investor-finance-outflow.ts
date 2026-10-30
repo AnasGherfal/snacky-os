@@ -1,5 +1,5 @@
-import { canonicalExpenseCategory,isFinanceProductPurchaseRow } from "./finance-operations";
-import { isInvestorCapitalPurchase } from "./investor-expenses";
+import { canonicalExpenseCategory,isFinanceProductPurchaseRow } from "./finance-operations.ts";
+import { isInvestorCapitalPurchase } from "./investor-expenses.ts";
 /**
  * Finance money-out evidence for investor reconciliation. Every active, non-void
  * money_out is counted regardless of its category or description (including
