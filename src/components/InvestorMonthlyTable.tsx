@@ -44,6 +44,11 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOu
  cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[]
 }) {
  const tr=(en:string,arabic:string)=>ar?arabic:en;
+ const cashMonths=Object.values(cashOutByMonth??{});
+ const countAudit=(key:"duplicateImportCount"|"reviewedCount"|"missingFxCount")=>
+  cashMonths.reduce((n,m)=>n+m[key],0);
+ const knownMirrored=cashMonths.reduce((n,m)=>n+m.duplicateImportLyd,0);
+ const allAdjustments=cashMonths.reduce((n,m)=>n+m.adjustmentLyd,0);
  return <div className="space-y-4" dir={ar?"rtl":"ltr"}>
   <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-label={tr("Investment summary","ملخص الاستثمار")}>
    <div className="relative overflow-hidden px-4 py-5 text-white sm:px-6" style={{backgroundColor:"var(--snacky-accent)"}}>
@@ -124,6 +129,16 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOu
    {ledger.needsReview?<p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
     {tr("Some records need reconciliation. Confirmed amounts remain visible; further payments are blocked until resolved.","بعض السجلات تحتاج مطابقة. المبالغ المؤكدة ظاهرة؛ ولا يمكن تسجيل دفعات جديدة قبل المعالجة.")}
    </p>:null}
+   {cashMonths.length?<details className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 text-sm sm:px-5">
+    <summary className="cursor-pointer font-semibold text-slate-700">{tr("Finance reconciliation and money-out evidence","تدقيق الصرف والحركات المالية")}</summary>
+    <div className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+     <p>{tr("Every active Finance money-out row counts in the cash register, whatever its description—including budget adjustments. Original source imports are only counted once when both copies have the same date, source row and amount.","تدخل جميع حركات الصرف النشطة في سجل المال الخارج مهما كان وصفها، بما فيها تعديل الميزانية. تُحسب حركة الاستيراد مرة واحدة عندما تتطابق النسختان في التاريخ ورقم السطر والمبلغ.")}</p>
+     {allAdjustments>0?<p className="font-semibold text-emerald-800">{tr("Budget adjustment money out included","صرف تعديل الميزانية المحتسب")}: {money(allAdjustments)} LYD</p>:null}
+     <p>{tr("Exact mirrored import entries excluded","نسخ الاستيراد المطابقة التي لم تتكرر")}: {countAudit("duplicateImportCount")} ({money(knownMirrored)} LYD). {tr("Outstanding Finance review entries","الحركات المالية التي تحتاج مراجعة")}: {countAudit("reviewedCount")}. {tr("Missing USD/LYD rates","أسعار صرف مفقودة")}: {countAudit("missingFxCount")}.</p>
+     <p>{tr("Monthly profit is still calculated under the agreed operating-profit formula. Inventory purchases already enter the calculation through cost of goods sold, confirmed rent is accrued by month, and account transfers are recorded as cash movement—not deducted again as operating expenses.","تُحسب حصة الربح وفق الاتفاق المبني على الربح التشغيلي. مشتريات المخزون محسوبة ضمن تكلفة المنتجات المباعة، وتُحمّل الإيجارات وفق الشهر، وتظهر تحويلات الحسابات ضمن حركة الصرف ولا تُخصم كمصاريف تشغيلية مرة ثانية.")}</p>
+     {cashOutIssues?.length?<p className="font-semibold text-rose-800">{tr("Some cash debits cannot be valued without source evidence; no rate or amount was invented.","لا يمكن تقييم بعض حركات الصرف دون دليل المصدر، ولم يُفترض أي سعر أو مبلغ.")}</p>:null}
+    </div>
+   </details>:null}
   </section>
   <section className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
    <div className="flex flex-wrap items-center justify-between gap-2"><div>
