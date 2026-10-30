@@ -12,7 +12,7 @@ const labels = {
  partial: ["Partly paid","مدفوع جزئياً","border-sky-200 bg-sky-50 text-sky-800"],
  paid: ["Paid","مدفوع","border-emerald-200 bg-emerald-50 text-emerald-800"],
  nothing_due: ["No payout due","لا يوجد مستحق","border-slate-200 bg-slate-50 text-slate-600"],
- pending: ["Under review","قيد المراجعة","border-slate-200 bg-slate-50 text-slate-600"],
+ pending: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
  unverified: ["Needs confirmation","بحاجة للتأكيد","border-rose-200 bg-rose-50 text-rose-800"]
 } as const;
 function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
