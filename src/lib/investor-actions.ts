@@ -14,8 +14,8 @@ import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashou
 function text(fd: FormData,name: string) { return String(fd.get(name) ?? "").trim(); }
 function numberValue(fd: FormData,name: string,fallback=0) { const n=Number(fd.get(name) ?? fallback); return Number.isFinite(n)?n:fallback; }
 function optionalNumber(fd: FormData,name: string) { const raw=text(fd,name); return raw?Number(raw):null; }
-function investorsUrl(agreementId?: string | null,message?: {type:'success'|'error'|'warning';text:string}) {
- const params=new URLSearchParams(); if(agreementId) params.set('agreement',agreementId); if(message) params.set(message.type,message.text);
+function investorsUrl(agreementId?: string | null,message?: {type:'success'|'error'|'warning';text:string},month?:string) {
+ const params=new URLSearchParams(); if(agreementId) params.set('agreement',agreementId); if(month&&/^\d{4}-(0[1-9]|1[0-2])$/.test(month))params.set('month',month); if(message) params.set(message.type,message.text);
  return `/finance/investors${params.size?'?'+params.toString():''}`;
 }
 async function requireOwnerAdmin() {
@@ -226,7 +226,7 @@ export async function generateInvestorStatement(fd:FormData) {
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
  revalidatePath('/finance/investors');revalidatePath('/investor');
- redirect(investorsUrl(agreementId,{type:complete?'success':'warning',text:complete?'Monthly draft ready. Review rent/payroll, all expenses, sales completeness and machine purchases before finalizing.':'Draft is incomplete. Resolve sales costs, unreviewed expenses or missing or unreviewed costs, then recalculate. No entitlement was finalized.'}));
+ redirect(investorsUrl(agreementId,{type:complete?'success':'warning',text:complete?'Monthly draft refreshed. Review the figures before approval.':'The source record is incomplete. Fix its underlying evidence and refresh again.'},bounds.start.slice(0,7)));
 }
 
 export async function finalizeInvestorStatement(fd:FormData) {
@@ -236,7 +236,7 @@ export async function finalizeInvestorStatement(fd:FormData) {
  const {error}=await supabase.rpc('snacky_finalize_investor_statement_v1',{p_statement_id:statementId,p_generated_at:text(fd,'generated_at'),p_review_checks:checks});
  if(error) redirect(investorsUrl(agreementId,{type:'error',text:error.message}));
  revalidatePath('/finance/investors');revalidatePath('/investor');
- redirect(investorsUrl(agreementId,{type:'success',text:'Monthly entitlement finalized. It remains unpaid until an actual payout is recorded.'}));
+ redirect(investorsUrl(agreementId,{type:'success',text:'Month approved. The share remains unpaid until an actual payout is recorded.'},text(fd,'review_month')));
 }
 
 /** Compatibility entry point. New forms use the same atomic command directly. */
