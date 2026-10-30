@@ -22,5 +22,5 @@ export async function updateInvestorAgreement(fd:FormData) {
  if(error||!after)fail(error?.message??'Agreement update could not be confirmed.');
  await logActivity({profile,action:'update_investor_agreement',entityType:'investor_agreement',entityId:id,entityLabel:name,beforeData:before,afterData:after,summary:'Updated investor agreement terms; no capital receipt or payout was posted'});
  revalidatePath('/finance/investors');revalidatePath('/investor');
- redirect(`/finance/investors?agreement=${id}&success=${encodeURIComponent('Agreement saved. Capital receipts and payouts remain separate money records.')}`);
+ redirect(`/finance/investors?agreement=${id}&tab=manage&success=${encodeURIComponent('Agreement saved. Capital receipts and payouts remain separate money records.')}`);
 }

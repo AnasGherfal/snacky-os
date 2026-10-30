@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
+import type { ReactNode } from "react";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { InvestorLydBatchForm } from "@/components/InvestorLydBatchForm";
-import { InvestorMonthlyTable } from "@/components/InvestorMonthlyTable";
+import { InvestorAdminTabs } from "@/components/InvestorAdminTabs";
+import { InvestorMonthlyTable, InvestorOwnerEvidence } from "@/components/InvestorMonthlyTable";
 import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashout";
 import { reconcileRecordedInvestorDrafts } from "@/lib/investor-recorded-draft";
 import {
@@ -14,7 +16,10 @@ import {
 type Props={
  agreementId:string;investorUserId:string;investorName?:string;sharePercent?:number|string;
  startDate?:string;endDate?:string|null;investmentUsd?:number|string|null;
- capUsd?:number|string|null;ar:boolean;admin?:boolean
+ capUsd?:number|string|null;ar:boolean;admin?:boolean;
+ reviewPanel?:ReactNode;managePanel?:ReactNode;
+ initialAdminTab?:"review"|"payment"|"manage";
+ unresolvedLegacyPayments?:boolean
 };
 const money=(number:number)=>new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
 const tripoliToday=()=>{
@@ -33,7 +38,7 @@ async function allRows(builder:(from:number,to:number)=>any):Promise<any[]>{
 }
 
 export async function InvestorYearOverview({agreementId,investorUserId,investorName,sharePercent,
- startDate="2026-01-01",endDate,capUsd,ar,admin=false}:Props){
+ startDate="2026-01-01",endDate,capUsd,ar,admin=false,reviewPanel,managePanel,initialAdminTab="review",unresolvedLegacyPayments=false}:Props){
  if(capUsd==null)return null;
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const db=await getAuthenticatedSupabaseServerClient();
@@ -97,30 +102,45 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
  const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,
   generated:calculatedDrafts,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
+ const ownerSourceEntries=admin?finance.audit.rows.filter(r=>
+  (r.review_status==="needs_review"||r.needs_review) &&
+  generated.some(g=>g.calculation_status==="draft" &&
+   g.month_start.slice(0,7)===String(r.transaction_date??"").slice(0,7)))
+  .map(r=>({id:String(r.id??""),date:String(r.transaction_date??""),
+   description:String(r.description??r.category??""),
+   amount:Number(r.amount??0),currency:String(r.currency??"LYD")})):undefined;
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
-  <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")}
-   sharePercent={sharePercent??null} ar={ar} admin={admin}
-   cashOutByMonth={finance.audit.byMonth} cashOutIssues={finance.audit.auditIssues}
-   salesByMonth={admin?finance.salesByMonth:undefined}
-   ownerSourceEntries={admin?finance.audit.rows.filter(r=>
-    (r.review_status==="needs_review"||r.needs_review) &&
-    generated.some(g=>g.calculation_status==="draft" &&
-     g.month_start.slice(0,7)===String(r.transaction_date??"").slice(0,7)))
-    .map(r=>({id:String(r.id??""),date:String(r.transaction_date??""),description:String(r.description??r.category??""),
-      amount:Number(r.amount??0),currency:String(r.currency??"LYD")})):undefined}/>
-  {admin&&!ledger.needsReview&&ledger.payableMonths.length>0&&ledger.remainingGoalUsd>0?
-   <div id="investor-record-payment"><InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
-    months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd} today={tripoliToday()} ar={ar}/></div>:null}
-  {admin&&ledger.remainingGoalUsd<=0?<div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-   {tr("The contractual payout ceiling has been reached. No more investor payouts may be recorded.",
-       "تم بلوغ سقف التوزيعات المتفق عليه؛ لا يمكن تسجيل توزيعات إضافية.")}
-  </div>:null}
-  {admin&&!ledger.needsReview&&ledger.remainingGoalUsd>0&&ledger.payableMonths.length===0?
-   <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
-    {tr("To record a payment, first review and finalize the applicable month's LYD share.",
-        "لتسجيل دفعة، يجب مراجعة حصة الشهر بالدينار واعتمادها أولاً.")}
-   </p>:null}
-  {batches.length>0?<details className="surface-card">
+  <InvestorMonthlyTable ledger={ledger}
+   investorName={investorName||tr("Investor","المستثمر")}
+   sharePercent={sharePercent??null} ar={ar}/>
+  {admin && reviewPanel && managePanel ? <InvestorAdminTabs ar={ar} initialTab={initialAdminTab}
+     review={<div className="space-y-5">
+       {reviewPanel}
+       <InvestorOwnerEvidence ar={ar} cashOutByMonth={finance.audit.byMonth}
+        cashOutIssues={finance.audit.auditIssues} salesByMonth={finance.salesByMonth}
+        ownerSourceEntries={ownerSourceEntries}/>
+     </div>} manage={managePanel}
+     payment={<div className="space-y-4">
+       <div>
+        <h3 className="text-lg font-bold text-slate-950">{tr("Record an investor payment","تسجيل دفعة للمستثمر")}</h3>
+        <p className="mt-1 text-sm text-slate-500">{tr("Record an actual LYD payment. This does not send money.","سجّل دفعة تمت بالفعل بالدينار؛ هذا التسجيل لا يحوّل المال.")}</p>
+       </div>
+       {unresolvedLegacyPayments?<p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        {tr("Older investor payment entries need Finance reconciliation before another payment.","تحتاج دفعات مستثمر سابقة إلى مطابقة مع المالية قبل تسجيل دفعة أخرى.")}
+       </p>:null}
+       {ledger.needsReview ? <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
+        {tr("Payment records need reconciliation before another payout.","سجلات الدفعات تحتاج مطابقة قبل تسجيل دفعة جديدة.")}
+       </p> : ledger.remainingGoalUsd<=0 ?
+        <p className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900">
+         {tr("Agreed payout goal reached.","تم بلوغ سقف التوزيعات المتفق عليه.")}
+        </p> : ledger.payableMonths.length>0 ?
+        <InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
+         months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd}
+         today={tripoliToday()} ar={ar} embedded/> :
+        <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
+         {tr("No approved unpaid months yet. Review and approve a month first.","لا توجد أشهر معتمدة وغير مدفوعة. راجع الشهر واعتمده أولاً.")}
+        </p>}
+       {batches.length>0?<details className="surface-card">
    <summary className="cursor-pointer font-semibold">{tr("Payment receipts","إيصالات الدفعات")} · {batches.length}</summary>
    <div className="mt-4 divide-y divide-slate-100">{batches.map(batch=><div className="flex flex-wrap justify-between gap-3 py-3 text-sm" key={batch.id}>
     <div><strong>{money(Number(batch.amount_lyd))} {tr("LYD","د.ل")}</strong><p className="mt-1 text-xs text-slate-500">{batch.payout_date} · {batch.payment_reference}</p></div>
@@ -135,5 +155,29 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
     tr("No profit payments have been made or recorded yet.","لم تُدفع أو تُسجل أي توزيعات أرباح حتى الآن."):
     tr("No recent LYD payout receipts. Earlier payments remain reflected in confirmed balances.","لا توجد إيصالات دفعات دينار حديثة؛ وتبقى الدفعات السابقة ضمن الأرصدة المعتمدة.")}
   </p>}
+
+     </div>}/>
+   : <>
+     {admin&&!ledger.needsReview&&ledger.payableMonths.length>0&&ledger.remainingGoalUsd>0?
+       <InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
+        months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd}
+        today={tripoliToday()} ar={ar}/>:null}
+     {batches.length>0?<details className="surface-card">
+   <summary className="cursor-pointer font-semibold">{tr("Payment receipts","إيصالات الدفعات")} · {batches.length}</summary>
+   <div className="mt-4 divide-y divide-slate-100">{batches.map(batch=><div className="flex flex-wrap justify-between gap-3 py-3 text-sm" key={batch.id}>
+    <div><strong>{money(Number(batch.amount_lyd))} {tr("LYD","د.ل")}</strong><p className="mt-1 text-xs text-slate-500">{batch.payout_date} · {batch.payment_reference}</p></div>
+    <div className="text-end text-xs text-slate-600">
+     <p>{tr("Goal credit","المحتسب نحو الهدف")}: {fmtUsd(Number(batch.credited_usd))}</p>
+     <p className="mt-1">{tr("Payment-day rate","سعر صرف يوم الدفع")}: {Number(batch.lyd_per_usd).toFixed(3)} {tr("LYD/USD","د.ل/دولار")}</p>
+     <p className="mt-1">{tr("Months covered","الأشهر المشمولة")}: {allocations.filter(a=>a.payout_id===batch.id).map(a=>a.month_start.slice(0,7)).join(", ")||"—"}</p>
+    </div>
+   </div>)}</div>
+  </details>:<p role="status" className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+   {ledger.totalPaidLyd===0?
+    tr("No profit payments have been made or recorded yet.","لم تُدفع أو تُسجل أي توزيعات أرباح حتى الآن."):
+    tr("No recent LYD payout receipts. Earlier payments remain reflected in confirmed balances.","لا توجد إيصالات دفعات دينار حديثة؛ وتبقى الدفعات السابقة ضمن الأرصدة المعتمدة.")}
+  </p>}
+
+   </>}
  </section>;
 }
