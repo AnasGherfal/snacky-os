@@ -14,7 +14,7 @@ const todayInTripoli=()=>{
  const get=(part:string)=>parts.find(p=>p.type===part)?.value;
  return [get("year"),get("month"),get("day")].join("-");
 };
-const url=(id:string,type:"error"|"success",message:string)=>"/finance/investors?"+new URLSearchParams({agreement:id,[type]:message}).toString();
+const url=(id:string,type:"error"|"success",message:string)=>"/finance/investors?"+new URLSearchParams({agreement:id,tab:"payment",[type]:message}).toString();
 const safeError=(message:string)=>{
  if(/exceeds verified unpaid LYD/i.test(message))return "One or more monthly allocations exceed the confirmed LYD remaining. Refresh the balances and review the payment.";
  if(/exceed remaining agreed USD/i.test(message))return "This payment would exceed the remaining USD payout goal. Reduce the payment or check the agreement.";
