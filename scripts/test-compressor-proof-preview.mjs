@@ -74,3 +74,11 @@ test("existing compressor photo inventory is read-only and requires individual s
  assert.ok(sql.includes("has_unresolved_issue"));
  assert.doesNotMatch(sql, /(?:^|\\n)\\s*(?:DELETE|UPDATE|TRUNCATE|DROP|ALTER)\\b/im);
 });
+
+test("archive release preflights actual image compression before deleting any original",()=>{
+ const s=fs.readFileSync("src/app/api/ops/archive-refill-photo/route.ts","utf8");
+ const verify=s.indexOf('archive_verification_failed');
+ const prepare=s.indexOf('await compactCompressorIndicator(source)');
+ const remove=s.indexOf('bucket.remove([job.path])');
+ assert.ok(verify>=0&&prepare>verify&&remove>prepare);
+});

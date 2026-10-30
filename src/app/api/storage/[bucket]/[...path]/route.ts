@@ -158,7 +158,13 @@ export async function GET(
     if (bucket !== REFILL_PHOTO_BUCKET || !process.env.BLOB_READ_WRITE_TOKEN) return null;
     const original = await readVerifiedOriginal(objectPath);
     if (!original) return null;
-    if (isCompressor && !archiveCheck) return displayCompressor(new Uint8Array(original.bytes));
+    if (isCompressor && !archiveCheck) {
+      try { return await displayCompressor(new Uint8Array(original.bytes)); }
+      catch {
+        // Keep the original verified proof readable if a particular camera
+        // photo cannot be made tiny. Never turn valid audit evidence into 503.
+      }
+    }
     return new Response(new Uint8Array(original.bytes), {
       headers: {
         "Content-Type": original.receipt.mime,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
 import { authorizedSchedulerToken, createPrivateBlobStore, photoArchiveReceiptKey, readVerifiedOriginal, sha256, storeVerifiedOriginal, validatePath } from "@/lib/private-blob-originals";
 
 export const runtime = "nodejs";
@@ -121,6 +122,9 @@ export async function POST(request: Request){
     },store);
     const check=await readVerifiedOriginal(job.path,store);
     if(!check||check.receipt.sha256!==sha256(source))throw Error("archive_verification_failed");
+    // A compressor source must have a viable small visual replacement BEFORE
+    // any source release. Unreadable/oversized conversions retain Supabase bytes.
+    if(isCompactCompressorJob(job))await compactCompressorIndicator(source);
     if(!job.release) return response(200,{ok:true,status:"copy_verified_source_retained",bytes:source.length,verified:true});
     await ensureEligible(supabase,job);
     const {data:checkInfo,error:checkErr}=await bucket.info(job.path);
