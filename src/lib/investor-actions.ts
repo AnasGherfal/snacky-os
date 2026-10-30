@@ -8,6 +8,7 @@ import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanc
 import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds, type InvestorProfitBasis } from "@/lib/investor-profit";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { recordInvestorCommand } from "@/lib/investor-money-actions";
+import { auditInvestorFinanceMoneyOut,calculateInvestorOperatingExpenses } from "@/lib/investor-finance-outflow";
 
 function text(fd: FormData,name: string) { return String(fd.get(name) ?? "").trim(); }
 function numberValue(fd: FormData,name: string,fallback=0) { const n=Number(fd.get(name) ?? fallback); return Number.isFinite(n)?n:fallback; }
@@ -150,40 +151,25 @@ export async function generateInvestorStatement(fd:FormData) {
  const policyRows=(policyResult.data??[]).filter((p:any)=>p.effective_through==null||p.effective_through>=bounds.start);
  const costs=policyRows.filter((p:any)=>p.item_type==='rent'||p.item_type==='salary_adjustment');
  const additionalAccrual=costs.reduce((sum:number,p:any)=>sum+Number(p.monthly_amount_lyd??0),0);
- const isOwnerOrNonOperating=(r:any)=>{
-   const category=String(r.category??'').toLowerCase();
-   const description=String(r.description??'');
-   if(/product|inventory|restock|stock purchase|machine purchase|machine investment|equipment|capital/i.test(category))return false; // handled by existing COGS/capital classifier
-   if(/rent|fixed costs|charity/.test(category))return true;
-   if(category.includes('shipping') && String(r.transaction_date??'').slice(0,10)<='2026-09-30')return true; // Owner identified this period's freight as new-machine capital logistics
-   if(/ايجار|إيجار|rent|warehouse|مخزن|ht mall|تركيب مكيف|تعديل الميزانيه/i.test(description))return true;
-   if(String(r.transaction_date??'').slice(0,10)<='2026-09-30' && /الشاهين|ارامكس|نقل ماكينه/i.test(description))return true;
-   if(/^(anas|أنس)$/i.test(description.trim()))return true;
-   if(category==='uncategorized' && description.trim()!=='machine moving')return true;
-   if(category==='other' && !['machine moving','Car battery'].includes(description.trim()))return true;
-   return false;
- };
- const cleanLedger=agreement.investment_amount_usd!=null?ledgerRows.filter(r=>!isOwnerOrNonOperating(r)):ledgerRows;
+ // A Finance MONEY OUT remains a debit even when its description is
+ // "تعديل الميزانيه", Other, Uncategorized, Charity, or an owner withdrawal.
+ // Exact mirrored bootstrap/CSV imports are one economic event, not two.
+ const cashAudit=auditInvestorFinanceMoneyOut(ledgerRows);
+ const effectiveRows=cashAudit.rows;
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
- const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows:cleanLedger,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
- // For this investor's confirmed policy, recognize explicitly classified salary
- // and operating cash items; do not automatically deduct personal drawings,
- // charity, machine freight, capital equipment or unverified adjustments.
- const approvedOperations=(row:any)=>{
-  const category=String(row.category??'').toLowerCase();
-  const description=String(row.description??'').trim().toLowerCase();
-  return (category.includes('salary')||category==='other'&&description==='car battery'||category==='uncategorized'&&description==='machine moving'||category.includes('maintenance')||category.includes('utilities')||category.includes('fuel')||category.includes('marketing')||category.includes('advertising')||category.includes('repair')||(category.includes('shipping')&&String(row.transaction_date??'').slice(0,10)>'2026-09-30'))
-   && row.direction==='money_out' && row.transaction_effect==='expense' && row.transaction_status==='active'
-   && row.voided_at==null && !row.is_void && ['confirmed','reviewed'].includes(String(row.review_status??''))
-   && String(row.currency??'LYD').toUpperCase()==='LYD' && Number.isFinite(Number(row.amount));
- };
- const policyOperatingExpenses=agreement.investment_amount_usd!=null
-   ? cleanLedger.filter(approvedOperations).reduce((sum:number,r:any)=>sum+Number(r.amount),0)
-   : calculation.operatingExpensesLyd;
- const operatingExpensesBeforeAccrual=Math.round(policyOperatingExpenses*100)/100;
+ const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],
+  ledgerRows:effectiveRows,sharePercent:Number(agreement.profit_share_percent),
+  profitBasis:agreement.profit_basis as InvestorProfitBasis});
+ // Inventory cash purchases are represented by COGS and owner-confirmed
+ // monthly rent by the monthly policy. They remain in the cash-out audit but
+ // must not silently be charged twice in the operating-profit distribution.
+ const operatingExpenseAudit=agreement.investment_amount_usd!=null
+  ? calculateInvestorOperatingExpenses(effectiveRows,costs)
+  : null;
+ const operatingExpensesBeforeAccrual=operatingExpenseAudit?.additionalCashOperatingLyd
+  ??calculation.operatingExpensesLyd;
  const profitBeforeAccrual=Math.round((calculation.grossProfitLyd-operatingExpensesBeforeAccrual)*100)/100;
-
- const pendingExpenseRows=ledgerRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
+ const pendingExpenseRows=effectiveRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
  const previousStatements=priorStatementsResult.data??[];
  const priorFinalized=previousStatements.filter(row=>row.calculation_status==='finalized');
  const last=previousStatements[0]??null;
@@ -199,13 +185,16 @@ export async function generateInvestorStatement(fd:FormData) {
  let investorDue=cap===null?grossShare:Math.min(grossShare,Math.max(0,cap-priorDue));
  // The investor earns LYD. Exchange-rate credit is calculated only when a real
  // LYD cash payout is recorded; never cap or convert the monthly entitlement in USD.
+ const periodCash=cashAudit.byMonth[bounds.start.slice(0,7)];
  const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
+  cashAudit.missingFxCount===0 && cashAudit.auditIssues.length===0 &&
+  (operatingExpenseAudit?.missingFxOrAmount??0)===0 &&
   (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized');
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`,`excluded_cashbook_entries: ${ledgerRows.length-cleanLedger.length}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`settlement_currency=LYD`,`fx_applies_only_on_actual_payment=true`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`, `finance_out_raw_rows: ${ledgerRows.length}`,`finance_out_mirrored_imports_omitted: ${cashAudit.duplicateImportCount}`,`finance_out_all_debits_LYD: ${periodCash?.recordedMoneyOutLyd??'unvalued'}`,`finance_out_budget_adjustments_LYD: ${periodCash?.adjustmentLyd??0}`,`finance_out_transfers_LYD: ${periodCash?.transferLyd??0}`,`finance_out_missing_FX: ${periodCash?.missingFxCount??0}`,`finance_extra_operating_included_LYD: ${operatingExpensesBeforeAccrual}`,`finance_cash_out_stock_and_capital_not_double_counted: true`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`settlement_currency=LYD`,`fx_applies_only_on_actual_payment=true`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
   operating_expenses_lyd:Math.round((operatingExpensesBeforeAccrual+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((profitBeforeAccrual-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
-  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:null,investor_share_due_usd:null,profit_basis:calculation.profitBasis,expense_breakdown:[...(agreement.investment_amount_usd!=null?[{key:'ledger_checked_operating',label:'Confirmed salaries and operating charges excluding owner drawings, charity, new-machine freight and capital items',amount:operatingExpensesBeforeAccrual,transactionCount:null}]:calculation.expenseBreakdown),...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
+  distribution_basis_lyd:Math.max(0,adjustedProfit),loss_carried_in_lyd:priorLoss,loss_carried_out_lyd:carriedLossOut,usd_rate_lyd_per_usd:null,investor_share_due_usd:null,profit_basis:calculation.profitBasis,expense_breakdown:[...(agreement.investment_amount_usd!=null?[{key:'ledger_checked_operating',label:'All recorded non-product operating money-out, including other/uncategorized, budget adjustments, owner withdrawals and charity; inventory COGS and accrued rent are not double counted',amount:operatingExpensesBeforeAccrual,transactionCount:operatingExpenseAudit?.includedOutCount??null}]:calculation.expenseBreakdown),...costs.map((p:any)=>({key:p.item_key,label:p.label,amount:Number(p.monthly_amount_lyd),transactionCount:1,note:p.notes}))],source_complete:complete,review_checks:null,
   share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
  },{onConflict:'agreement_id,month_start'});
  if(saveError) fail(saveError.message);
