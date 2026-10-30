@@ -1,84 +1,109 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from "node:crypto";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
-import { InvestorLydBatchForm, type PayableInvestorMonth } from "@/components/InvestorLydBatchForm";
+import { InvestorLydBatchForm } from "@/components/InvestorLydBatchForm";
+import { InvestorMonthlyTable } from "@/components/InvestorMonthlyTable";
+import {
+ buildInvestorMonthlyLedger,
+ type InvestorHistoricLedgerMonth, type InvestorGeneratedLedgerMonth,
+ type InvestorLydBatch, type InvestorLydAllocation, type InvestorUsdLegacyPayout
+} from "@/lib/investor-monthly-ledger";
 
-type Props={agreementId:string;investorUserId:string;investorName?:string;sharePercent?:number|string;startDate?:string;endDate?:string|null;investmentUsd?:number|string|null;capUsd?:number|string|null;ar:boolean;admin?:boolean};
-type Historic={month_start:string;net_profit_lyd:number|string|null;exchange_rate_lyd_per_usd:number|string;confirmed_payable_usd:number|string|null;confirmed_paid_usd:number|string|null;payment_confirmed_at:string|null};
-type Statement={month_start:string;operating_profit_lyd:number|string;investor_share_due_lyd:number|string;calculation_status:string};
-type Batch={id:string;amount_lyd:number|string;credited_usd:number|string;lyd_per_usd:number|string;payout_date:string;payment_reference:string};
-type Allocation={payout_id:string;month_start:string;amount_lyd:number|string};
-type Legacy={month_start:string;amount_usd:number|string;lyd_equivalent:number|string};
-const n=(value:unknown)=>Number(value??0);
-const round=(value:number)=>Math.round(value*100)/100;
-const fmt=(v:number)=>new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
-const lyd=(v:number)=>fmt(v)+" LYD",usd=(v:number)=>"$"+fmt(v);
-const nameMonth=(m:string,ar:boolean)=>new Intl.DateTimeFormat(ar?"ar-LY":"en-US",{year:"numeric",month:"long",timeZone:"UTC"}).format(new Date(m+"T12:00:00Z"));
-const today=()=>{const p=new Intl.DateTimeFormat("en-US",{timeZone:"Africa/Tripoli",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());return ["year","month","day"].map(k=>p.find(x=>x.type===k)?.value).join("-");};
+type Props={
+ agreementId:string;investorUserId:string;investorName?:string;sharePercent?:number|string;
+ startDate?:string;endDate?:string|null;investmentUsd?:number|string|null;
+ capUsd?:number|string|null;ar:boolean;admin?:boolean
+};
+const money=(number:number)=>new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
+const tripoliToday=()=>{
+ const parts=new Intl.DateTimeFormat("en-US",{timeZone:"Africa/Tripoli",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+ return ["year","month","day"].map(part=>parts.find(x=>x.type===part)?.value??"").join("-");
+};
+async function allRows(builder:(from:number,to:number)=>any):Promise<any[]>{
+ const rows:any[]=[];
+ for(let from=0;from<50000;from+=500){
+  const result=await builder(from,from+499);
+  if(result.error)throw result.error;
+  const page=result.data??[];
+  rows.push(...page);if(page.length<500)return rows;
+ }
+ throw new Error("Investor records exceeded safe pagination limit");
+}
 
-export async function InvestorYearOverview({agreementId,investorUserId,investorName,sharePercent,startDate="2026-01-01",endDate,capUsd,ar,admin=false}:Props){
+export async function InvestorYearOverview({agreementId,investorUserId,investorName,sharePercent,
+ startDate="2026-01-01",endDate,capUsd,ar,admin=false}:Props){
  if(capUsd==null)return null;
- const tr=(en:string,arabic:string)=>ar?arabic:en,db=await getAuthenticatedSupabaseServerClient();
- const unavailable=()=> <p role="alert" className="surface-card text-rose-800">{tr("Investor data unavailable. No zero balances have been assumed.","بيانات المستثمر غير متاحة. لم نفترض أن الأرصدة صفر.")}</p>;
+ const tr=(en:string,arabic:string)=>ar?arabic:en;
+ const db=await getAuthenticatedSupabaseServerClient();
+ const unavailable=()=> <div role="alert" className="surface-card border-rose-200 bg-rose-50 text-sm text-rose-900">
+  {tr("Investor data could not be verified. The monthly balances are not assumed to be zero. Reload or contact Snacky management.",
+      "تعذر التحقق من بيانات المستثمر. لا نفترض أن الأرصدة الشهرية صفر. أعد التحميل أو تواصل مع إدارة سناكي.")}
+ </div>;
  if(!db)return unavailable();
- const [hr,sr,br,arows,ur]=await Promise.all([
-  db.from("investor_historical_months").select("month_start,net_profit_lyd,exchange_rate_lyd_per_usd,confirmed_payable_usd,confirmed_paid_usd,payment_confirmed_at").eq("investor_user_id",investorUserId).gte("month_start",startDate),
-  (admin?db.from("investor_monthly_statements").select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status"):db.from("investor_monthly_statements").select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status").eq("calculation_status","finalized")).eq("agreement_id",agreementId).gte("month_start",startDate),
-  db.from("investor_lyd_payout_batches").select("id,amount_lyd,credited_usd,lyd_per_usd,payout_date,payment_reference").eq("agreement_id",agreementId).order("payout_date",{ascending:false}),
-  db.from("investor_lyd_payout_allocations").select("payout_id,month_start,amount_lyd").eq("agreement_id",agreementId),
-  db.from("investor_usd_payouts").select("month_start,amount_usd,lyd_equivalent").eq("agreement_id",agreementId),
- ]);
- if(hr.error||sr.error||br.error||arows.error||ur.error)return unavailable();
- const history=(hr.data??[]) as Historic[],statements=(sr.data??[]) as Statement[],batches=(br.data??[]) as Batch[],allocations=(arows.data??[]) as Allocation[],legacy=(ur.data??[]) as Legacy[];
- const hmap=new Map(history.filter(h=>!endDate||h.month_start<=endDate).map(h=>[h.month_start,h]));
- const smap=new Map(statements.filter(s=>!endDate||s.month_start<=endDate).map(s=>[s.month_start,s]));
- const periods=[...new Set([...hmap.keys(),...smap.keys()])].sort().reverse();
- const overlap=periods.some(m=>hmap.has(m)&&smap.has(m));
- const unknownHistory=history.some(h=>!h.payment_confirmed_at||h.confirmed_payable_usd==null||h.confirmed_paid_usd==null);
- const newPaid=new Map<string,number>(),oldPaid=new Map<string,number>();
- for(const a of allocations)newPaid.set(a.month_start,(newPaid.get(a.month_start)??0)+n(a.amount_lyd));
- for(const a of legacy)oldPaid.set(a.month_start,(oldPaid.get(a.month_start)??0)+n(a.lyd_equivalent));
- const payable:PayableInvestorMonth[]=[];
- const monthly=periods.map(month=>{
-  const h=hmap.get(month),s=smap.get(month),verified=h?Boolean(h.payment_confirmed_at&&h.confirmed_payable_usd!=null&&h.confirmed_paid_usd!=null):s?.calculation_status==="finalized";
-  const due=verified?(h?round(n(h.confirmed_payable_usd)*n(h.exchange_rate_lyd_per_usd)):n(s?.investor_share_due_lyd)):0;
-  const paid=verified?round((newPaid.get(month)??0)+(h?round(n(h.confirmed_paid_usd)*n(h.exchange_rate_lyd_per_usd)):(oldPaid.get(month)??0))):0;
-  const remaining=Math.max(0,round(due-paid));
-  if(verified&&remaining>0.005&&!overlap)payable.push({month_start:month,due_lyd:due,paid_lyd:paid,remaining_lyd:remaining});
-  return {month,h,s,verified,due,paid,remaining};
- });
- const earned=round(monthly.reduce((v,m)=>v+m.due,0)),paid=round(monthly.reduce((v,m)=>v+m.paid,0));
- const historicPaidUsd=round(history.filter(h=>h.payment_confirmed_at).reduce((v,h)=>v+n(h.confirmed_paid_usd),0));
- const legacyCurrentUsd=round(legacy.filter(row=>!hmap.has(row.month_start)).reduce((v,row)=>v+n(row.amount_usd),0));
- const usdCredited=round(historicPaidUsd+legacyCurrentUsd+batches.reduce((v,b)=>v+n(b.credited_usd),0));
- const cap=n(capUsd),capLeft=Math.max(0,round(cap-usdCredited));
- const status=(m:typeof monthly[number])=>!m.verified?(m.s?tr("Draft · not payable","مسودة · غير مستحقة"):tr("Not verified","غير معتمد")):m.due<=0?tr("No payout due","لا يوجد مستحق"):m.paid>=m.due-.005?tr("Paid","مدفوع"):m.paid>0?tr("Partially paid","مدفوع جزئياً"):tr("Unpaid","غير مدفوع");
- return <section className="surface-card space-y-5" dir={ar?"rtl":"ltr"}>
-  <div><p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{tr("Investor profit & payments","أرباح ودفعات المستثمر")}</p>
-   <h2 className="mt-1 text-xl font-bold">{investorName||tr("Investor statement","كشف المستثمر")}</h2>
-   <p className="mt-1 text-sm text-slate-600">{tr("Profit and real payments are in LYD. Only real payments count toward the USD contractual goal.","الأرباح والدفعات الفعلية بالدينار. فقط الدفعات الفعلية تُحتسب نحو الهدف التعاقدي بالدولار.")}</p>
-   {sharePercent!=null?<p className="mt-2 text-sm font-semibold">{tr("Agreed share","النسبة المتفق عليها")}: {sharePercent}%</p>:null}</div>
-  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[
-   [tr("Approved LYD profit","أرباح معتمدة بالدينار"),lyd(earned)],
-   [tr("Actually paid LYD","المدفوع الفعلي بالدينار"),lyd(paid)],
-   [tr("Unsettled LYD share · subject to payout cap","حصة بالدينار لم تُسوّ بعد · تخضع لسقف التوزيع"),lyd(Math.max(0,round(earned-paid)))],
-   [tr("Paid progress toward USD goal","قيمة المدفوع نحو هدف الدولار"),usd(usdCredited)+" / "+usd(cap)]
-  ].map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs text-slate-600">{label}</p><strong className="mt-2 block text-xl tabular-nums">{value}</strong></div>)}</div>
-  <div className="rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between gap-3 text-sm"><span>{tr("Contract goal reached from actual payments","التقدم نحو الهدف من الدفعات الفعلية")}</span><strong>{cap>0?(100*usdCredited/cap).toFixed(1):"0.0"}%</strong></div>
-   <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-700" style={{width:(cap>0?Math.min(100,100*usdCredited/cap):0)+"%"}}/></div>
-   <p className="mt-2 text-xs text-slate-600">{tr("USD goal remaining","المتبقي من الهدف بالدولار")}: {usd(capLeft)}. {tr("A payment's exchange rate is frozen at recording and never changes historical LYD shares.","سعر صرف كل دفعة يُثبت عند تسجيلها ولا يغير حصص الأشهر بالدينار.")}</p></div>
-  {capLeft<=0?<p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{tr("The contractual payout goal has been reached. Unsettled monthly share figures are historical accounting records, not authorization for additional payments.","تم بلوغ السقف التعاقدي للتوزيعات. الحصص الشهرية غير المسواة هي سجلات محاسبية وليست إذناً لدفع مبالغ إضافية.")}</p>:null}
-  {overlap||unknownHistory||paid>earned+.005?<p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{tr("Historical months or payment totals require reconciliation before further payouts.","الأشهر التاريخية أو إجمالي الدفعات تحتاج مراجعة قبل تسجيل دفعات جديدة.")}</p>:null}
-  {admin&&payable.length>0&&capLeft>0&&!overlap&&!unknownHistory?<InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()} months={[...payable].reverse()} remainingGoalUsd={capLeft} today={today()} ar={ar}/>:null}
-  <div><h3 className="font-semibold">{tr("Monthly profit shares · LYD","حصص الأرباح الشهرية · بالدينار")}</h3><p className="mt-1 text-xs text-slate-600">{tr("Monthly profit never has a payment exchange rate. Drafts are not payable.","لا يوجد سعر صرف للدفع على أرباح الأشهر. المسودات ليست مستحقة.")}</p></div>
-  <div className="space-y-2">{monthly.map(m=><details key={m.month} className="rounded-xl border border-slate-200 p-4"><summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3"><span className="font-semibold">{nameMonth(m.month,ar)}</span><span className="text-sm text-slate-600">{status(m)} · <strong>{m.verified?lyd(m.due):"—"}</strong></span></summary>
-   <div className="mt-4 grid gap-2 sm:grid-cols-3">{[[tr("Profit share","الحصة"),m.verified?lyd(m.due):"—"],[tr("Actually paid","المدفوع"),m.verified?lyd(m.paid):"—"],[tr("Remaining","المتبقي"),m.verified?lyd(m.remaining):"—"]].map(([label,val])=><div className="rounded-lg bg-slate-50 p-3" key={label}><p className="text-xs text-slate-600">{label}</p><strong className="mt-1 block tabular-nums">{val}</strong></div>)}</div>
-   {m.s?<p className="mt-3 text-xs text-slate-600">{tr("Net operating result","صافي نتيجة التشغيل")}: {lyd(n(m.s.operating_profit_lyd))}</p>:m.h?<p className="mt-3 text-xs text-slate-600">{tr("Imported history: original confirmed share converted using the archived historical rate. Future payments do not change this LYD share.","سجل تاريخي: حُسبت الحصة المؤكدة بسعر المصدر التاريخي المحفوظ. لا تغير الدفعات المستقبلية حصة الدينار.")}</p>:null}
-  </details>)}{!monthly.length?<p className="text-sm text-slate-600">{tr("No finalized months yet.","لا توجد أشهر معتمدة بعد.")}</p>:null}</div>
-  <div className="space-y-3"><h3 className="font-semibold">{tr("Actual payments","الدفعات الفعلية")}</h3>
-   {batches.map(b=><div key={b.id} className="rounded-xl border border-slate-200 p-4 text-sm"><div className="flex flex-wrap justify-between gap-3"><strong>{lyd(n(b.amount_lyd))}</strong><span>{tr("Goal credit","المحتسب نحو الهدف")}: {usd(n(b.credited_usd))}</span></div>
-    <p className="mt-2 text-xs text-slate-600">{b.payout_date} · {b.payment_reference} · 1 USD = {n(b.lyd_per_usd).toFixed(3)} LYD</p>
-    <p className="mt-1 text-xs text-slate-600">{tr("Months paid","الأشهر المدفوعة")}: {allocations.filter(a=>a.payout_id===b.id).map(a=>a.month_start.slice(0,7)).join(", ")}</p></div>)}
-   {!batches.length&&legacy.length===0&&historicPaidUsd===0?<p className="rounded-lg border border-slate-200 p-4 text-sm">{tr("No payments recorded. 0.00 LYD paid and $0.00 credited to the goal.","لا توجد دفعات مسجلة. المدفوع 0.00 د.ل والمحتسب نحو الهدف $0.00.")}</p>:null}
-  </div>
+ let historical:InvestorHistoricLedgerMonth[],generated:InvestorGeneratedLedgerMonth[];
+ let batches:InvestorLydBatch[],allocations:InvestorLydAllocation[],legacyUsdPayouts:InvestorUsdLegacyPayout[];
+ try{
+  const [h,g,b,a,u,pending]=await Promise.all([
+   allRows((from,to)=>db.from("investor_historical_months")
+    .select("month_start,net_profit_lyd,exchange_rate_lyd_per_usd,confirmed_payable_usd,confirmed_paid_usd,payment_confirmed_at")
+    .eq("investor_user_id",investorUserId).gte("month_start",startDate).order("month_start").order("id").range(from,to)),
+   allRows((from,to)=>{
+    let q=db.from("investor_monthly_statements")
+     .select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status")
+     .eq("agreement_id",agreementId).gte("month_start",startDate).order("month_start").order("id").range(from,to);
+    if(!admin)q=q.eq("calculation_status","finalized");
+    return q;
+   }),
+   allRows((from,to)=>db.from("investor_lyd_payout_batches")
+    .select("id,amount_lyd,credited_usd,lyd_per_usd,payout_date,payment_reference")
+    .eq("agreement_id",agreementId).order("payout_date",{ascending:false}).order("id").range(from,to)),
+   allRows((from,to)=>db.from("investor_lyd_payout_allocations")
+    .select("payout_id,month_start,amount_lyd").eq("agreement_id",agreementId).order("month_start").order("id").range(from,to)),
+   allRows((from,to)=>db.from("investor_usd_payouts")
+    .select("month_start,amount_usd,lyd_equivalent").eq("agreement_id",agreementId).order("month_start").order("id").range(from,to)),
+   admin?Promise.resolve([]):allRows((from,to)=>db.from("investor_monthly_statements")
+    .select("month_start,calculation_status").eq("agreement_id",agreementId)
+    .neq("calculation_status","finalized").gte("month_start",startDate).order("month_start").order("id").range(from,to))
+  ]);
+  historical=h as InvestorHistoricLedgerMonth[];
+  generated=g as InvestorGeneratedLedgerMonth[];
+  batches=b as InvestorLydBatch[];allocations=a as InvestorLydAllocation[];
+  legacyUsdPayouts=u as InvestorUsdLegacyPayout[];
+  // An investor may see that an unapproved month exists, but never the draft's numbers.
+  if(!admin)generated.push(...(pending as Array<{month_start:string;calculation_status:string}>).map(row=>({
+   ...row,operating_profit_lyd:null,investor_share_due_lyd:null
+  })));
+ }catch(error){console.error("[investor] Monthly ledger failed to load",error);return unavailable();}
+ const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,generated,batches,allocations,legacyUsdPayouts});
+ const fmtUsd=(v:number)=>"$"+money(v);
+ return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
+  <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")} sharePercent={sharePercent??null} ar={ar}/>
+  {admin&&!ledger.needsReview&&ledger.payableMonths.length>0&&ledger.remainingGoalUsd>0?
+   <div id="investor-record-payment"><InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
+    months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd} today={tripoliToday()} ar={ar}/></div>:null}
+  {admin&&ledger.remainingGoalUsd<=0?<div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+   {tr("The contractual payout ceiling has been reached. No more investor payouts may be recorded.",
+       "تم بلوغ سقف التوزيعات المتفق عليه؛ لا يمكن تسجيل توزيعات إضافية.")}
+  </div>:null}
+  {admin&&!ledger.needsReview&&ledger.remainingGoalUsd>0&&ledger.payableMonths.length===0?
+   <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
+    {tr("To record a payment, first review and finalize the applicable month's LYD share.",
+        "لتسجيل دفعة، يجب مراجعة حصة الشهر بالدينار واعتمادها أولاً.")}
+   </p>:null}
+  {batches.length>0?<details className="surface-card">
+   <summary className="cursor-pointer font-semibold">{tr("Payment receipts","إيصالات الدفعات")} · {batches.length}</summary>
+   <div className="mt-4 divide-y divide-slate-100">{batches.map(batch=><div className="flex flex-wrap justify-between gap-3 py-3 text-sm" key={batch.id}>
+    <div><strong>{money(Number(batch.amount_lyd))} {tr("LYD","د.ل")}</strong><p className="mt-1 text-xs text-slate-500">{batch.payout_date} · {batch.payment_reference}</p></div>
+    <div className="text-end text-xs text-slate-600">
+     <p>{tr("Goal credit","المحتسب نحو الهدف")}: {fmtUsd(Number(batch.credited_usd))}</p>
+     <p className="mt-1">{tr("Payment-day rate","سعر صرف يوم الدفع")}: {Number(batch.lyd_per_usd).toFixed(3)} {tr("LYD/USD","د.ل/دولار")}</p>
+     <p className="mt-1">{tr("Months covered","الأشهر المشمولة")}: {allocations.filter(a=>a.payout_id===batch.id).map(a=>a.month_start.slice(0,7)).join(", ")||"—"}</p>
+    </div>
+   </div>)}</div>
+  </details>:<p role="status" className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+   {ledger.totalPaidLyd===0?
+    tr("No profit payments have been made or recorded yet.","لم تُدفع أو تُسجل أي توزيعات أرباح حتى الآن."):
+    tr("No recent LYD payout receipts. Earlier payments remain reflected in confirmed balances.","لا توجد إيصالات دفعات دينار حديثة؛ وتبقى الدفعات السابقة ضمن الأرصدة المعتمدة.")}
+  </p>}
  </section>;
 }

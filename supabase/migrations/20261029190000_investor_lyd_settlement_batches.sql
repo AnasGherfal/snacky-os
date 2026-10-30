@@ -38,8 +38,10 @@ alter table public.investor_lyd_payout_allocations enable row level security;
 revoke all on public.investor_lyd_payout_batches, public.investor_lyd_payout_allocations from public,anon,authenticated;
 grant select on public.investor_lyd_payout_batches,public.investor_lyd_payout_allocations to authenticated;
 
+drop policy if exists investor_lyd_batches_read on public.investor_lyd_payout_batches;
 create policy investor_lyd_batches_read on public.investor_lyd_payout_batches
  for select to authenticated using (public.snacky_is_owner_admin() or public.snacky_can_view_investor_agreement(agreement_id));
+drop policy if exists investor_lyd_allocations_read on public.investor_lyd_payout_allocations;
 create policy investor_lyd_allocations_read on public.investor_lyd_payout_allocations
  for select to authenticated using (public.snacky_is_owner_admin() or public.snacky_can_view_investor_agreement(agreement_id));
 
@@ -284,8 +286,10 @@ begin
  using errcode='23514';
 end
 $protect$;
+drop trigger if exists snacky_lyd_batch_immutable on public.investor_lyd_payout_batches;
 create trigger snacky_lyd_batch_immutable before update or delete on public.investor_lyd_payout_batches
  for each row execute function public.snacky_protect_investor_lyd_payout_ledger();
+drop trigger if exists snacky_lyd_allocation_immutable on public.investor_lyd_payout_allocations;
 create trigger snacky_lyd_allocation_immutable before update or delete on public.investor_lyd_payout_allocations
  for each row execute function public.snacky_protect_investor_lyd_payout_ledger();
 revoke all on function public.snacky_protect_investor_lyd_payout_ledger() from public,anon,authenticated;
