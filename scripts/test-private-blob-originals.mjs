@@ -196,6 +196,6 @@ test("photo canary query is read-only and cannot silently approve a source relea
  assert.match(sql,/photoUrl/);
  assert.match(sql,/route_stop_safety_checks/);
  assert.match(sql,/machine_photo_path/);
- assert.match(sql,/latest|later\\.refill_at/);
+ assert.ok(sql.includes("later.refill_at"));
  assert.match(sql,/resolved_at IS NULL AND i\\.archived_at IS NULL/);
 });
