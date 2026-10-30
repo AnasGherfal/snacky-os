@@ -1,4 +1,5 @@
 import type { InvestorLedgerResult, InvestorLedgerMonth } from "@/lib/investor-monthly-ledger";
+import type { InvestorCashOutMonth } from "@/lib/investor-finance-outflow";
 
 const money = (v: number | null) => v === null ? "—" : new Intl.NumberFormat("en-US", {minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
 const dollar = (v: number) => "$" + money(v);
@@ -12,15 +13,17 @@ const labels = {
  partial: ["Partly paid","مدفوع جزئياً","border-sky-200 bg-sky-50 text-sky-800"],
  paid: ["Paid","مدفوع","border-emerald-200 bg-emerald-50 text-emerald-800"],
  nothing_due: ["No payout due","لا يوجد مستحق","border-slate-200 bg-slate-50 text-slate-600"],
- pending: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
+ pending: ["Requires review","بحاجة للمراجعة","border-amber-200 bg-amber-50 text-amber-800"],
+ in_progress: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
  unverified: ["Needs confirmation","بحاجة للتأكيد","border-rose-200 bg-rose-50 text-rose-800"]
 } as const;
 function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
- const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Provisional','تقديري','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
+ const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Calculated · not approved','محسوب · غير معتمد','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
  return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold leading-tight sm:text-xs ${info[2]}`}>{ar?info[1]:info[0]}</span>;
 }
-export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
- ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean
+export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOutByMonth,cashOutIssues}:{
+ ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean;
+ cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[]
 }) {
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  return <div className="space-y-4" dir={ar?"rtl":"ltr"}>
@@ -43,7 +46,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 px-1 py-4 text-center sm:px-3 sm:py-5">
     {[
      [tr("Approved share","حصة الأرباح المعتمدة"),ledger.totalDueLyd],
-     [tr("Provisional estimate","تقدير مبدئي"),ledger.totalEstimatedLyd],
+     [tr("Calculated · not approved","محسوب · غير معتمد"),ledger.totalEstimatedLyd],
      [tr("Actually paid","المدفوع فعلياً"),ledger.totalPaidLyd],
      [tr("Approved unpaid","المتبقي من المعتمد"),ledger.totalOutstandingLyd]
     ].map(([label,value],i)=><div key={String(label)} className="min-w-0 px-1 sm:px-3">
@@ -76,7 +79,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
         <span className="mt-1 block sm:hidden"><Badge row={row} ar={ar}/></span>
        </th>
        <td dir="ltr" className="hidden px-3 py-3 text-end tabular-nums lg:table-cell">{row.netProfitLyd===null?"—":money(row.netProfitLyd)}</td>
-       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Est.","تقديري")}</span>:null}</td>
+       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Not approved","غير معتمد")}</span>:null}</td>
        <td dir="ltr" className="px-1 py-3 text-end tabular-nums sm:px-3">{money(row.paidLyd)}</td>
        <td dir="ltr" className="px-1 py-3 text-end font-semibold tabular-nums sm:px-3">{money(row.outstandingLyd)}</td>
        <td className="hidden px-3 py-3 text-start sm:table-cell"><Badge row={row} ar={ar}/></td>
@@ -94,7 +97,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    </div>
    {!ledger.months.length?<p className="px-5 py-5 text-sm text-slate-600">{tr("No monthly source records are available for this agreement yet.","لا توجد سجلات شهرية لهذه الاتفاقية بعد.")}</p>:null}
    {ledger.months.some(m=>m.status==="pending")?<p className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-600 sm:px-5">
-    {tr("Estimated monthly shares reflect recorded costs and remain subject to review.","الحصص التقديرية مبنية على التكاليف المسجلة، وقد تتغير بعد مراجعة الحسابات.")}
+    {tr("Monthly calculations now include the recorded Finance outflows and agreed rent/payroll. A draft is not eligible for payment until every source is verified and the month is finalized.","تشمل الحسابات الشهرية حركات الصرف المسجلة والإيجارات والمرتبات المتفق عليها. ولا تُدفع المسودة حتى التحقق من مصادرها واعتماد الشهر.")}
    </p>:null}
    {ledger.needsReview?<p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
     {tr("Some records need reconciliation. Confirmed amounts remain visible; further payments are blocked until resolved.","بعض السجلات تحتاج مطابقة. المبالغ المؤكدة ظاهرة؛ ولا يمكن تسجيل دفعات جديدة قبل المعالجة.")}
