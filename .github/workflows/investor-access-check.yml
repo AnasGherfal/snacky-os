@@ -41,6 +41,8 @@ jobs:
       - run: npm ci
       - name: Role and monthly accounting regressions
         run: node --experimental-strip-types --test scripts/test-investor-access-accounting.mjs scripts/test-growth-investor-portal.mjs
+      - name: January–March visible LYD investor table and payment reconciliation
+        run: node --experimental-strip-types --test scripts/test-investor-monthly-table.mjs
       - name: Actual investor migrations and atomic ledger tests in isolated PostgreSQL
         env:
           PGHOST: localhost
