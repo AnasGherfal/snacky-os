@@ -5,6 +5,7 @@ import { register } from "node:module";
 register("./ts-alias-loader.mjs",import.meta.url);
 const {auditInvestorFinanceMoneyOut,calculateInvestorOperatingExpenses}=await import("../src/lib/investor-finance-outflow.ts");
 const {reconcileRecordedInvestorDrafts}=await import("../src/lib/investor-recorded-draft.ts");
+const {reconcileInvestorSalesSources}=await import("../src/lib/investor-sales-proof.ts");
 const read=file=>fs.readFileSync(new URL("../"+file,import.meta.url),"utf8");
 const row=(id,date,amount,category,extra={})=>({
  id,transaction_date:date,direction:"money_out",transaction_status:"active",
@@ -66,7 +67,7 @@ test("stock purchases and paid rents stay in money-out, not double-charged to op
  assert.equal(expenses.excludedRentPaidCount,1);
 });
 
-test("an unvalued USD cash debit never gets a guessed exchange rate or a monthly payout",()=>{
+test("USD machine capex is recorded in original currency without blocking operating profit",()=>{
  const audit=auditInvestorFinanceMoneyOut([
   row("usd","2026-09-19",1023,"Machine Purchase",
    {currency:"USD",exchange_rate_usd_to_lyd:null})
@@ -79,7 +80,8 @@ test("an unvalued USD cash debit never gets a guessed exchange rate or a monthly
   {month_start:"2026-09-01",calculation_status:"draft",gross_profit_lyd:17663.33,
    investor_share_due_lyd:3101.5,operating_profit_lyd:10338.33,profit_basis:"operating_profit"}
  ],sourceAudit:audit,policies:[],profitShare:30});
- assert.equal(computed[0].investor_share_due_lyd,null);
+ assert.equal(computed[0].investor_share_due_lyd,5299);
+ assert.equal(computed[0].calculation_status,"draft");
 });
 
 test("recorded profit is recalculated rather than leaving the old excluded budget amount",()=>{
