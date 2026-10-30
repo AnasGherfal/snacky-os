@@ -132,7 +132,7 @@ export default async function InvestorsPage({searchParams}:{searchParams:Promise
      investorName={selected.investor_name} sharePercent={selected.profit_share_percent}
      startDate={selected.start_date} endDate={selected.end_date}
      investmentUsd={selected.investment_amount_usd} capUsd={selected.payout_cap_usd}
-     ar={ar} admin initialAdminTab={initialTab}
+     ar={ar} admin initialAdminTab={initialTab} unresolvedLegacyPayments={payments.length!==posted.length}
      reviewPanel={reviewPanel} managePanel={agreementPanel}
     /> :
     <>
@@ -156,6 +156,9 @@ export default async function InvestorsPage({searchParams}:{searchParams:Promise
      </section>
      <InvestorAdminTabs ar={ar} initialTab={initialTab} review={reviewPanel}
       manage={agreementPanel} payment={<div className="space-y-4">
+       {payments.length!==posted.length?<p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        {tr("An older investor payout needs reconciliation in Finance.","تحتاج دفعة مستثمر قديمة إلى مراجعة في المالية.")}
+       </p>:null}
        <h3 className="text-lg font-bold">{tr("Recorded payouts","توزيعات الأرباح")}</h3>
        {finalized.length?finalized.map(s=><InvestorStatementCard key={s.id} statement={s}
         ar={ar} adminUserId={profile.id}
