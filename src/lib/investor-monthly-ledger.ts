@@ -25,13 +25,13 @@ export type InvestorLydBatch = {
 export type InvestorUsdLegacyPayout = { month_start: string; amount_usd: number | string; lyd_equivalent: number | string };
 export type InvestorLedgerMonth = {
   month: string;
-  source: "historical" | "finalized" | "draft";
+  source: "historical" | "finalized" | "draft" | "in_progress";
   netProfitLyd: number | null;
   dueLyd: number | null;
   estimatedShareLyd: number | null;
   paidLyd: number | null;
   outstandingLyd: number | null;
-  status: "unpaid" | "partial" | "paid" | "nothing_due" | "pending" | "unverified";
+  status: "unpaid" | "partial" | "paid" | "nothing_due" | "pending" | "in_progress" | "unverified";
 };
 export type InvestorLedgerResult = {
   months: InvestorLedgerMonth[];
@@ -116,9 +116,9 @@ export function buildInvestorMonthlyLedger(input: {
       if (finalized && due === null) needsReview = true;
       const paid = due === null ? null : cents((allocationByMonth.get(month) ?? 0) + (legacyByMonth.get(month) ?? 0));
       if (due !== null && paid !== null && paid > due + 0.005) needsReview = true;
-      months.push({ month, source: finalized ? "finalized" : "draft", netProfitLyd: finalized || estimatedShareLyd !== null ? safeSigned(s.operating_profit_lyd) : null,
+      months.push({ month, source: finalized ? "finalized" : s.calculation_status === "in_progress" ? "in_progress" : "draft", netProfitLyd: finalized || estimatedShareLyd !== null ? safeSigned(s.operating_profit_lyd) : null,
         dueLyd: due, estimatedShareLyd, paidLyd: paid, outstandingLyd: due === null || paid === null ? null : Math.max(0, cents(due - paid)),
-        status: !finalized ? "pending" : due === null ? "unverified" : due === 0 ? "nothing_due" : paid! >= due - 0.005 ? "paid" : paid! > 0 ? "partial" : "unpaid" });
+        status: s.calculation_status === "in_progress" ? "in_progress" : !finalized ? "pending" : due === null ? "unverified" : due === 0 ? "nothing_due" : paid! >= due - 0.005 ? "paid" : paid! > 0 ? "partial" : "unpaid" });
     }
   }
   if (historic.length !== history.size || generated.length !== statement.size) needsReview = true;
