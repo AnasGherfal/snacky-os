@@ -45,7 +45,7 @@ test("stop completion verifies protected side effects and commits inventory as t
 
   const operatorActions = read("src/lib/operator-actions.ts");
   const uploadProof = functionSource(operatorActions, "uploadRefillProofPhoto");
-  assert.match(uploadProof, /createHash\("sha256"\)[\s\S]*file\.arrayBuffer\(\)/);
+  assert.match(uploadProof, /createHash\("sha256"\)[\s\S]*storedFile\.arrayBuffer\(\)/);
   assert.match(uploadProof, /objectName = `\$\{safeFileSegment\(stopId, "stop"\)\}-\$\{photoDigest\}/);
 });
 
