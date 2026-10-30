@@ -59,3 +59,18 @@ test("all compressor uploads are converted on the server, including uncompressed
  assert.match(actions,/storedFile = new File\(/);
  assert.match(actions,/if \(photoPurpose === "compressor"\) \{[\s\S]*?storedFile = new File\(/);
 });
+
+test("existing compressor photo inventory is read-only and requires individual source verification",()=>{
+ const sql=fs.readFileSync("scripts/sql/compressor-photo-compaction-candidates.sql","utf8");
+ assert.ok(sql.includes("BEGIN TRANSACTION READ ONLY"));
+ assert.ok(sql.includes("source_release_approved"));
+ assert.ok(sql.includes("'release',false"));
+ assert.ok(sql.includes("'includeSafety',true"));
+ assert.ok(sql.includes("expectedEtag"));
+ assert.ok(sql.includes("expectedUpdatedAt"));
+ assert.ok(sql.includes("photoPath"));
+ assert.ok(sql.includes("photoUrl"));
+ assert.ok(sql.includes("safety_references=1"));
+ assert.ok(sql.includes("has_unresolved_issue"));
+ assert.doesNotMatch(sql, /(?:^|\\n)\\s*(?:DELETE|UPDATE|TRUNCATE|DROP|ALTER)\\b/im);
+});
