@@ -14,7 +14,7 @@ test("active XY and historical inventory costs provide source-backed manual sale
    {id:"unlinked",sale_time:"2026-07-17T10:00:00Z",status:"confirmed",
     product_id:"water",product_name:"Water",quantity:2,total_amount_lyd:2,inventory_movement_id:null},
    {id:"legacy",sale_time:"2026-07-18T10:00:00Z",status:"confirmed",
-    product_id:null,product_name:"Water",quantity:2,total_amount_lyd:2,inventory_movement_id:null}
+    product_id:null,product_name:String.fromCharCode(8207)+"Water",quantity:2,total_amount_lyd:2,inventory_movement_id:null}
   ],
   movements:[
    {id:"linked-move",product_id:"water",created_at:"2026-07-15T10:00:00Z",line_total_lyd:0.42,unit_cost_lyd:0.42},
@@ -39,4 +39,18 @@ test("an unlinked sale without dated cost evidence cannot generate a monthly sha
  });
  assert.equal(proof["2026-07-01"].grossProfitLyd,null);
  assert.equal(proof["2026-07-01"].unresolvedCostCount,1);
+});
+
+test("month boundaries use Tripoli local time instead of UTC",()=>{
+ const proof=reconcileInvestorSalesSources({
+  months:["2026-08-01"],
+  batches:[{id:"aug",report_start_date:"2026-08-01",report_end_date:"2026-08-31"}],
+  xyRows:[{import_batch_id:"aug",business_month:"2026-08-01",transaction_amount:100,cost_amount:60}],
+  manualSales:[{id:"local",sale_time:"2026-07-31T23:30:00Z",status:"confirmed",
+   product_id:"water",product_name:"Water",quantity:1,total_amount_lyd:1,inventory_movement_id:"m"}],
+  movements:[{id:"m",product_id:"water",line_total_lyd:0.4,unit_cost_lyd:0.4}],
+  products:[]
+ });
+ assert.equal(proof["2026-08-01"].manualSales,1);
+ assert.equal(proof["2026-08-01"].grossProfitLyd,40.6);
 });
