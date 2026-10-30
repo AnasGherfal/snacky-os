@@ -114,7 +114,9 @@ export function buildInvestorMonthlyLedger(input: {
       const due = finalized ? safeMoney(s.investor_share_due_lyd) : null;
       const estimatedShareLyd = s.calculation_status === 'draft' ? safeMoney(s.investor_share_due_lyd) : null;
       if (finalized && due === null) needsReview = true;
-      const paid = due === null ? null : cents((allocationByMonth.get(month) ?? 0) + (legacyByMonth.get(month) ?? 0));
+      // Paid is a factual cash allocation, even when the month's share is
+      // still a calculated draft. A draft cannot become payable from this.
+      const paid = cents((allocationByMonth.get(month) ?? 0) + (legacyByMonth.get(month) ?? 0));
       if (due !== null && paid !== null && paid > due + 0.005) needsReview = true;
       months.push({ month, source: finalized ? "finalized" : s.calculation_status === "in_progress" ? "in_progress" : "draft", netProfitLyd: finalized || estimatedShareLyd !== null ? safeSigned(s.operating_profit_lyd) : null,
         dueLyd: due, estimatedShareLyd, paidLyd: paid, outstandingLyd: due === null || paid === null ? null : Math.max(0, cents(due - paid)),
