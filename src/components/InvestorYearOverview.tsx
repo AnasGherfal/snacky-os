@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { InvestorLydBatchForm } from "@/components/InvestorLydBatchForm";
 import { InvestorMonthlyTable } from "@/components/InvestorMonthlyTable";
+import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashout";
+import { reconcileRecordedInvestorDrafts } from "@/lib/investor-recorded-draft";
 import {
  buildInvestorMonthlyLedger,
  type InvestorHistoricLedgerMonth, type InvestorGeneratedLedgerMonth,
@@ -49,7 +51,7 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
     .eq("investor_user_id",investorUserId).gte("month_start",startDate).order("month_start").order("id").range(from,to)),
    allRows((from,to)=>{
     let q=db.from("investor_monthly_statements")
-     .select("month_start,operating_profit_lyd,investor_share_due_lyd,calculation_status,source_complete")
+     .select("month_start,revenue_lyd,gross_profit_lyd,operating_profit_lyd,investor_share_due_lyd,profit_basis,capital_purchases_lyd,calculation_status,source_complete")
      .eq("agreement_id",agreementId).gte("month_start",startDate).order("month_start").order("id").range(from,to);
     return q;
    }),
@@ -77,10 +79,27 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
    generated.push({month_start:ongoingMonth,calculation_status:"in_progress",
     operating_profit_lyd:null,investor_share_due_lyd:null});
  }
- const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,generated,batches,allocations,legacyUsdPayouts});
+ // Reconcile the existing, unfinalized amounts from all active Finance debits.
+ // No cash flow entry (including Arabic budget adjustments) is omitted from
+ // the investor's cash register, and no new financial records are written.
+ let finance;
+ try {
+  finance=await loadAuthorizedInvestorCashOutAudit({agreementId,investorUserId,startDate,endDate});
+ }catch(error){
+  console.error("[investor] Company money-out verification unavailable",error);
+  return unavailable();
+ }
+ const calculatedDrafts=reconcileRecordedInvestorDrafts({
+  statements:generated,sourceAudit:finance.audit,policies:finance.policies,
+  profitShare:Number(sharePercent??NaN)
+ });
+ const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,
+  generated:calculatedDrafts,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
-  <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")} sharePercent={sharePercent??null} ar={ar}/>
+  <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")}
+   sharePercent={sharePercent??null} ar={ar} cashOutByMonth={finance.audit.byMonth}
+   cashOutIssues={finance.audit.auditIssues}/>
   {admin&&!ledger.needsReview&&ledger.payableMonths.length>0&&ledger.remainingGoalUsd>0?
    <div id="investor-record-payment"><InvestorLydBatchForm agreementId={agreementId} submissionId={randomUUID()}
     months={ledger.payableMonths} remainingGoalUsd={ledger.remainingGoalUsd} today={tripoliToday()} ar={ar}/></div>:null}
