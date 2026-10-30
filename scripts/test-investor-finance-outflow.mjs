@@ -113,6 +113,9 @@ test("shared owner/investor view is authorized before Finance admin read and nev
  assert.match(table,/CashOutDisplay/);
  assert.match(generator,/auditInvestorFinanceMoneyOut/);
  assert.match(generator,/calculateInvestorOperatingExpenses/);
+ assert.match(generator,/loadAuthorizedInvestorCashOutAudit/);
+ assert.match(generator,/proof\.unresolvedCostCount===0/);
+ assert.match(generator,/previousStatements\.every/);
  assert.doesNotMatch(generator,/isOwnerOrNonOperating|approvedOperations/);
 });
 
