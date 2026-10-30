@@ -18,7 +18,8 @@ type Props={
  startDate?:string;endDate?:string|null;investmentUsd?:number|string|null;
  capUsd?:number|string|null;ar:boolean;admin?:boolean;
  reviewPanel?:ReactNode;managePanel?:ReactNode;
- initialAdminTab?:"review"|"payment"|"manage"
+ initialAdminTab?:"review"|"payment"|"manage";
+ unresolvedLegacyPayments?:boolean
 };
 const money=(number:number)=>new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
 const tripoliToday=()=>{
@@ -37,7 +38,7 @@ async function allRows(builder:(from:number,to:number)=>any):Promise<any[]>{
 }
 
 export async function InvestorYearOverview({agreementId,investorUserId,investorName,sharePercent,
- startDate="2026-01-01",endDate,capUsd,ar,admin=false,reviewPanel,managePanel,initialAdminTab="review"}:Props){
+ startDate="2026-01-01",endDate,capUsd,ar,admin=false,reviewPanel,managePanel,initialAdminTab="review",unresolvedLegacyPayments=false}:Props){
  if(capUsd==null)return null;
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const db=await getAuthenticatedSupabaseServerClient();
@@ -124,6 +125,9 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
         <h3 className="text-lg font-bold text-slate-950">{tr("Record an investor payment","تسجيل دفعة للمستثمر")}</h3>
         <p className="mt-1 text-sm text-slate-500">{tr("Record an actual LYD payment. This does not send money.","سجّل دفعة تمت بالفعل بالدينار؛ هذا التسجيل لا يحوّل المال.")}</p>
        </div>
+       {unresolvedLegacyPayments?<p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        {tr("Older investor payment entries need Finance reconciliation before another payment.","تحتاج دفعات مستثمر سابقة إلى مطابقة مع المالية قبل تسجيل دفعة أخرى.")}
+       </p>:null}
        {ledger.needsReview ? <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
         {tr("Payment records need reconciliation before another payout.","سجلات الدفعات تحتاج مطابقة قبل تسجيل دفعة جديدة.")}
        </p> : ledger.remainingGoalUsd<=0 ?
