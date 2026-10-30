@@ -68,6 +68,15 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
   // Estimates are visible to the investor, but remain clearly preliminary and
   // never enter finalized entitlements or payment eligibility.
  }catch(error){console.error("[investor] Monthly ledger failed to load",error);return unavailable();}
+ // The ongoing month should be visible in the chronology without inventing
+ // a completed profit or payout amount.
+ const ongoingMonth=tripoliToday().slice(0,7)+"-01";
+ if(ongoingMonth>=startDate&&(!endDate||ongoingMonth<=endDate)
+    &&!historical.some(h=>h.month_start===ongoingMonth)
+    &&!generated.some(g=>g.month_start===ongoingMonth)){
+   generated.push({month_start:ongoingMonth,calculation_status:"in_progress",
+    operating_profit_lyd:null,investor_share_due_lyd:null});
+ }
  const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,generated,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
