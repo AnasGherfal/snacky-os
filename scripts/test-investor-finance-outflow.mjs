@@ -115,3 +115,18 @@ test("shared owner/investor view is authorized before Finance admin read and nev
  assert.match(generator,/calculateInvestorOperatingExpenses/);
  assert.doesNotMatch(generator,/isOwnerOrNonOperating|approvedOperations/);
 });
+
+test("fresh verified XY gross profit overrides stale saved monthly totals without finalizing",()=>{
+ const proof={"2026-08-01":{
+  month:"2026-08-01",revenueLyd:100,cogsLyd:60,grossProfitLyd:40,
+  xyRows:1,manualSales:0,datedCostMatches:0,missingInventoryMovements:0,unresolvedCostCount:0,sourceIssues:[]
+ }};
+ const recalculated=reconcileRecordedInvestorDrafts({
+  statements:[{month_start:"2026-08-01",calculation_status:"draft",
+   gross_profit_lyd:9999,operating_profit_lyd:9999,investor_share_due_lyd:2999.7}],
+  sourceAudit:auditInvestorFinanceMoneyOut([]),policies:[],profitShare:30,salesByMonth:proof
+ });
+ assert.equal(recalculated[0].operating_profit_lyd,40);
+ assert.equal(recalculated[0].investor_share_due_lyd,12);
+ assert.equal(recalculated[0].calculation_status,"draft");
+});
