@@ -52,18 +52,32 @@ test('investor payments reduce cash but are non-operating and atomically posted'
  const sql=read('supabase/migrations/20260915170000_investor_access_and_ledger.sql'),actions=read('src/lib/investor-money-actions.ts');
  assert.match(sql,/'money_out','manual_money_out','Investor Profit Share'/);assert.match(sql,/'investor_payment',r.id/);assert.match(sql,/finance_posting_status='posted'/);assert.match(actions,/snacky_record_investor_payment_v1/);assert.match(actions,/Number\(finance.signed_amount\)/);
 });
-test('growth, investor, and machine dashboards contain real charts',()=>{
- for(const file of ['src/app/finance/growth-decisions/page.tsx','src/app/finance/investors/page.tsx','src/app/investor/page.tsx'])assert.match(read(file),/TrendChart/);
- assert.match(read('src/app/finance/growth-decisions/page.tsx'),/HorizontalBarChart/);assert.match(read('src/app/machines-dashboard/page.tsx'),/HorizontalBarChart/);
+test('growth and machine dashboards keep charts while investor admin uses a clear monthly table',()=>{
+ for(const file of ['src/app/finance/growth-decisions/page.tsx','src/app/investor/page.tsx'])assert.match(read(file),/TrendChart/);
+ const owner=read('src/app/finance/investors/page.tsx');
+ assert.match(owner,/InvestorYearOverview/);
+ assert.match(read('src/components/InvestorMonthlyTable.tsx'),/<table/);
+ assert.doesNotMatch(owner,/TrendChart|ChartCard/);
+ assert.match(read('src/app/finance/growth-decisions/page.tsx'),/HorizontalBarChart/);
+ assert.match(read('src/app/machines-dashboard/page.tsx'),/HorizontalBarChart/);
 });
 test('original migration is additive and protects each investor data',()=>{
  const migration=read('supabase/migrations/202607180003_growth_decisions_investor_portal.sql');
  for(const pattern of [/alter type public\.team_role add value if not exists 'investor'/,/create table if not exists public\.investor_agreements/,/create table if not exists public\.investor_monthly_statements/,/create table if not exists public\.investor_payments/,/investor_user_id = auth\.uid\(\)/,/calculation_status = 'finalized'/,/snacky_can_view_investor_agreement/])assert.match(migration,pattern);
  assert.doesNotMatch(migration,/\btruncate\b|\bdelete\s+from\b|drop\s+table|drop\s+column|drop[\s\S]{0,120}\bcascade\b/i);
 });
-test('owner pages connect agreement creation, monthly review and atomic payout forms',()=>{
- const tabs=read('src/components/module-tabs-config.ts'),team=read('src/lib/team.ts'),owner=read('src/app/finance/investors/page.tsx'),card=read('src/components/InvestorStatementCard.tsx');
- assert.match(tabs,/Growth Decisions/);assert.match(tabs,/Investors/);assert.match(team,/investor:/);assert.match(owner,/Create investor login/);assert.match(owner,/generateInvestorStatement/);assert.match(owner,/InvestorStatementCard/);assert.match(card,/InvestorMoneyForm kind="payout"/);
+test('owner workflow connects agreement setup, monthly review and payout in focused panels',()=>{
+ const tabs=read('src/components/module-tabs-config.ts'),team=read('src/lib/team.ts');
+ const owner=read('src/app/finance/investors/page.tsx');
+ const agreement=read('src/components/InvestorAdminAgreement.tsx');
+ const review=read('src/components/InvestorAdminReview.tsx');
+ const overview=read('src/components/InvestorYearOverview.tsx');
+ const card=read('src/components/InvestorStatementCard.tsx');
+ assert.match(tabs,/Growth Decisions/);assert.match(tabs,/Investors/);assert.match(team,/investor:/);
+ assert.match(owner,/InvestorAdminTabs/);assert.match(owner,/InvestorAdminReview/);
+ assert.match(agreement,/Create investor login/);assert.match(agreement,/createInvestorAgreement/);
+ assert.match(review,/generateInvestorStatement/);assert.match(review,/finalizeInvestorStatement/);
+ assert.match(overview,/InvestorLydBatchForm/);assert.match(card,/InvestorMoneyForm kind="payout"/);
 });
 
 test('the investor earns LYD and no monthly USD share is invented',()=>{
@@ -84,12 +98,13 @@ test('investor portal is a genuine read-only view, and USD contracts do not inve
  const owner=read('src/app/finance/investors/page.tsx');
  const portal=read('src/app/investor/page.tsx');
  const card=read('src/components/InvestorStatementCard.tsx');
- for(const s of [owner,portal]){
-  assert.doesNotMatch(s,/investment_amount_usd\)\*7\.5/);
-  assert.match(s,/selected\.payout_cap_usd == null/);
-  assert.match(s,/investorName=\{selected\.investor_name\}/);
-  assert.match(s,/InvestorYearOverview/);
+ for(const source of [owner,portal]){
+  assert.doesNotMatch(source,/investment_amount_usd\)\*7\.5/);
+  assert.match(source,/investorName=\{selected\.investor_name\}/);
+  assert.match(source,/InvestorYearOverview/);
  }
+ assert.match(owner,/selected\.payout_cap_usd!=null/);
+ assert.match(portal,/selected\.payout_cap_usd == null/);
  assert.match(portal,/admin=\{false\}/);
  assert.match(portal,/eq\('investor_user_id',profile\.id\)/);
  assert.match(portal,/eq\('calculation_status','finalized'\)/);

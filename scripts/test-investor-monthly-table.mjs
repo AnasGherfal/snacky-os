@@ -90,7 +90,10 @@ test("one shared visible table serves investor and owner; advanced views cannot 
  assert.match(table,/monthTitle/);
  assert.doesNotMatch(table,/under review|not approved|needs confirmation|requires review/i);
  assert.doesNotMatch(table,/tr\("Status","الحالة"\)/);
- assert.match(table,/admin&&cashMonths\.length>0/);
+ assert.match(table,/export function InvestorOwnerEvidence/);
+ assert.match(overview,/InvestorOwnerEvidence/);
+ const mainTable = table.split("export function InvestorMonthlyTable")[1]?.split("type InvestorEvidenceProps")[0]??"";
+ assert.doesNotMatch(mainTable,/cashReviewCount|ownerSourceEntries/);
  assert.match(table,/shareOf\(row\)/);
  assert.match(table,/balanceOf\(row\)/);
  assert.match(owner,/InvestorYearOverview/);
