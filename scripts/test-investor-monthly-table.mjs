@@ -23,7 +23,7 @@ test("January–March imported months are first and visible in LYD, with confirm
  const result=buildInvestorMonthlyLedger(sample);
  assert.deepEqual(result.months.map(row=>row.month),["2026-01-01","2026-02-01","2026-03-01","2026-04-01"]);
  assert.deepEqual(result.months.map(row=>row.dueLyd),[0,319.20,3756.30,null]);
- assert.deepEqual(result.months.map(row=>row.paidLyd),[0,0,0,null]);
+ assert.deepEqual(result.months.map(row=>row.paidLyd),[0,0,0,0]);
  assert.deepEqual(result.months.map(row=>row.status),["nothing_due","unpaid","unpaid","pending"]);
  assert.equal(result.months[0].netProfitLyd,-9369);
  assert.equal(result.totalDueLyd,4075.50);
@@ -88,7 +88,11 @@ test("one shared visible table serves investor and owner; advanced views cannot 
  assert.match(table,/row\.paidLyd/);
  assert.match(table,/row\.outstandingLyd/);
  assert.match(table,/monthTitle/);
- assert.match(table,/under review/i);
+ assert.doesNotMatch(table,/under review|not approved|needs confirmation|requires review/i);
+ assert.doesNotMatch(table,/tr\("Status","الحالة"\)/);
+ assert.match(table,/admin&&cashMonths\.length>0/);
+ assert.match(table,/shareOf\(row\)/);
+ assert.match(table,/balanceOf\(row\)/);
  assert.match(owner,/InvestorYearOverview/);
  assert.match(portal,/InvestorYearOverview/);
  assert.match(portal,/admin=\{false\}/);
