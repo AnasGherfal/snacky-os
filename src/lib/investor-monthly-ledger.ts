@@ -118,6 +118,9 @@ export function buildInvestorMonthlyLedger(input: {
     }
   }
   if (historic.length !== history.size || generated.length !== statement.size) needsReview = true;
+  // Every posted allocation must point to an actual month in the agreement.
+  if (input.allocations.some(a => !history.has(a.month_start) && !statement.has(a.month_start))) needsReview = true;
+  if (input.allocations.some(a => !input.batches.some(batch => batch.id === a.payout_id))) needsReview = true;
   // A legacy USD payment also changed the imported confirmed-paid field. Count
   // it once, then count only payments for non-historical finalized months.
   const archivedCredit = total(historic.filter(h => h.payment_confirmed_at).map(h => safeMoney(h.confirmed_paid_usd) ?? 0));
@@ -137,7 +140,7 @@ export function buildInvestorMonthlyLedger(input: {
       }))
     : [];
   return {
-    months: months.reverse(), totalDueLyd, totalPaidLyd,
+    months, totalDueLyd, totalPaidLyd,
     totalOutstandingLyd: Math.max(0, cents(totalDueLyd - totalPaidLyd)),
     creditedUsd, goalUsd: goalUsd ?? 0,
     remainingGoalUsd: Math.max(0, cents((goalUsd ?? 0) - creditedUsd)),
