@@ -66,7 +66,7 @@ export function InvestorAdminReview({
           </strong>
           <span className="text-[11px] text-slate-500">LYD</span>
         </div>)}
-      </div>      </div> : null}
+      </div> : null}
       {!finalized && ready ? <form action={finalizeInvestorStatement} className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
         <input type="hidden" name="agreement_id" value={agreementId}/>
         <input type="hidden" name="statement_id" value={statement.id}/>
