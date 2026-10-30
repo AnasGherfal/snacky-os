@@ -7,6 +7,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Job = {path:string;expectedSize:number;expectedUpdatedAt:string;expectedEtag:string;release?:boolean;includeSafety?:boolean};
+function isCompactCompressorJob(job: Job) {
+  // Only historical complete-stop safety proof photos; never quantity screenshots.
+  return job.includeSafety === true &&
+    /^[0-9a-f]{8}-[0-9a-f-]{27}\/compressor\/[A-Za-z0-9._-]+\.(?:jpg|jpeg|png|webp)$/i.test(job.path) &&
+    process.env.SNACKY_COMPRESSOR_HISTORICAL_COMPACTION_ENABLED === "true";
+}
 const maxBytes=7*1024*1024;
 const minAgeMs=30*24*60*60*1000;
 function matchesTime(value:unknown,original:string){
@@ -67,7 +73,10 @@ async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabase
   if(routes.data?.length!==routeIds.length||stops.data?.length!==stopIds.length||
      routes.data.some(row=>row.status!=="completed")||
      stops.data.some(row=>row.status!=="completed")||
-     issues.data?.length)throw Error("open_route_or_issue_hold");
+     (issues.data?.length && !isCompactCompressorJob(job)))throw Error("open_route_or_issue_hold");
+  // For compressor proofs only, original evidence is retained bit-for-bit in the
+  // verified private archive, so an unresolved machine issue need not block
+  // a reviewed low-resolution display copy. A separate release gate still applies.
 }
 export async function POST(request: Request){
   if(!authorizedSchedulerToken(String(request.headers.get("authorization")??"")))return response(401,{ok:false,error:"unauthorized"});
@@ -88,6 +97,8 @@ export async function POST(request: Request){
   // Neither value is inferred from a successful copy or archive receipt.
   if(job.release===true&&process.env.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true")
     return response(409,{ok:false,error:"source_release_disabled"});
+  if(job.release===true&&isCompactCompressorJob(job)&&process.env.SNACKY_COMPRESSOR_SOURCE_RELEASE_ENABLED!=="true")
+    return response(409,{ok:false,error:"compressor_source_release_disabled"});
   const supabase=getSupabaseAdminClient();
   if(!supabase)return response(503,{ok:false,error:"storage_client_unavailable"});
   try{
@@ -96,7 +107,7 @@ export async function POST(request: Request){
     const {data:oldInfo,error:infoError}=await bucket.info(job.path);
     if(infoError||!oldInfo)throw Error("source_file_missing");
     const expectedEtag=String(job.expectedEtag).replaceAll('"',"");
-    if(!fileAgeEligible(oldInfo)||oldInfo.size!==job.expectedSize||
+    if(!(fileAgeEligible(oldInfo)||isCompactCompressorJob(job))||oldInfo.size!==job.expectedSize||
        infoEtag(oldInfo)!==expectedEtag||
        !matchesTime(oldInfo.updatedAt,job.expectedUpdatedAt))
        throw Error("source_metadata_changed");

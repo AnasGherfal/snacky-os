@@ -115,3 +115,25 @@ Additional official references checked 29 October 2026:
 - https://developers.cloudflare.com/r2/api/s3/api/
 - https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sig-v4-header-based-auth.html
 - https://supabase.com/docs/guides/storage/serving/downloads
+
+
+## Existing compressor ON proof images: low-resolution archive display (30 October 2026)
+
+The owner requested minimizing size of existing compressor ON indicator photographs, with **no Supabase plan upgrade**.
+
+Read-only live inventory: 53 compressor photos in `refill-photos` occupy 109,986,479 bytes. All are JPEG and linked to `route_stop_safety_checks` on completed route stops, 23 currently associated with machines with unresolved issues. All were uploaded within the last 30 days, so previous archive age/issue guards would block them.
+
+This code adds a preview-only image transformer with a 60 KiB target and 120 KiB maximum: WebP at a declining 800–512 pixel long edge and quality 43–25. It never crops the image, enlarges a small one, or rewrites an original SHA-named file. A green ON indicator is checked in a synthetic-image test; **real operator camera readability is not established by that test**. The existing authenticated `/api/storage/refill-photos/.../compressor/...` URL supports `?preview=compact` while the original is still in Supabase. `?archive=verify` continues to return bit-identical original archive bytes for owner/authorized operator verification.
+
+For original compressor files that have a verified private Blob archive copy, and **only after separately authorizing release**, the existing archive job can remove the Supabase original. The same authenticated URL then automatically serves a small WebP view rendered from the bit-identical private original. Neither route IDs nor the saved safety-check proof path change. Existing machine issue holds are bypassed **only for explicitly enabled compressor proof archiving**, which preserves original bytes and authenticated access, never for routine or quantity files.
+
+Three independent production flags must be explicitly configured before any compressor original could be removed:
+- `SNACKY_PHOTO_ARCHIVE_MIGRATION_ENABLED=true` (already used by archive worker);
+- `SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED=true` (separate release switch, default off);
+- `SNACKY_COMPRESSOR_SOURCE_RELEASE_ENABLED=true` (compressor-specific release switch, default off).
+
+`SNACKY_COMPRESSOR_HISTORICAL_COMPACTION_ENABLED=true` must also be present to bypass recent-age and unresolved-issue checks **for compressor originals only**. Default off. All file size, ETag, object version, link, completed-stop and quantity-proof guards remain enforced. Copies are exact, hash verified and read back; operators never get a public Blob URL.
+
+**No automated deletion, bulk job, cron, archive transfer or production flag was enabled here.** First compare real compact previews with original photos in an authenticated preview session; confirm that the ON switch/LED is legible on representative phones. Then perform an individually reviewed source-retained canary backup, verify its archive readback, and only after explicit separate approval perform a single source release and verify both historical URL and original archive still work. Do not estimate recovered bytes as an accomplished saving until the storage object count actually decreases.
+
+Potential storage recovery from all 53 compressor source removals: up to 109,986,479 bytes (about 110 MB of Supabase Storage). This alone is insufficient to meet the 1 GB allowance; the broader review-only archive project remains necessary. Compacted responses save photo delivery bandwidth but full originals remain available privately for audit.
