@@ -9,6 +9,7 @@ import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds, type
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { recordInvestorCommand } from "@/lib/investor-money-actions";
 import { auditInvestorFinanceMoneyOut,calculateInvestorOperatingExpenses } from "@/lib/investor-finance-outflow";
+import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashout";
 
 function text(fd: FormData,name: string) { return String(fd.get(name) ?? "").trim(); }
 function numberValue(fd: FormData,name: string,fallback=0) { const n=Number(fd.get(name) ?? fallback); return Number.isFinite(n)?n:fallback; }
@@ -162,7 +163,23 @@ export async function generateInvestorStatement(fd:FormData) {
  const cashAudit=auditInvestorFinanceMoneyOut(ledgerRows);
  const effectiveRows=cashAudit.rows;
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
- const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],
+ // For the USD-goal contract, refresh the *same dated source evidence* used
+ // by both investor and owner pages. Legacy route sales with missing inventory
+ // movement links use dated product costs, not a guessed zero or current price.
+ const proofBundle=agreement.investment_amount_usd!=null
+  ? await loadAuthorizedInvestorCashOutAudit({agreementId,
+     investorUserId:agreement.investor_user_id,startDate:bounds.start,
+     endDate:bounds.end,months:[bounds.start]})
+  : null;
+ const proof=proofBundle?.salesByMonth[bounds.start];
+ if(proofBundle && (!proof||proof.sourceIssues.length>0||proof.grossProfitLyd===null
+  ||proof.revenueLyd===null||proof.cogsLyd===null))
+  fail('The active XY report or historical manual-sale cost evidence is incomplete. Verify the source records before saving.');
+ const salesForCalculation=proof
+  ?[{net_sales_amount:proof.revenueLyd,cogs_amount:proof.cogsLyd,
+     gross_profit_amount:proof.grossProfitLyd,cost_missing:false,source:'vms'}]
+  :[...salesResult.data,...manualProfitRows];
+ const calculation=calculateInvestorMonth({salesRows:salesForCalculation,
   ledgerRows:effectiveRows,sharePercent:Number(agreement.profit_share_percent),
   profitBasis:agreement.profit_basis as InvestorProfitBasis});
  // Inventory cash purchases are represented by COGS and owner-confirmed
@@ -191,11 +208,16 @@ export async function generateInvestorStatement(fd:FormData) {
  // The investor earns LYD. Exchange-rate credit is calculated only when a real
  // LYD cash payout is recorded; never cap or convert the monthly entitlement in USD.
  const periodCash=cashAudit.byMonth[bounds.start.slice(0,7)];
- const complete=calculation.complete && pendingExpenseRows.length===0 && priorMonthKnown &&
-  cashAudit.missingFxCount===0 && cashAudit.auditIssues.length===0 &&
-  (operatingExpenseAudit?.missingFxOrAmount??0)===0 &&
-  (bounds.start==='2026-04-01'||!!last) && previousStatements.every(row=>row.calculation_status==='finalized');
- const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`, `finance_out_raw_rows: ${ledgerRows.length}`,`finance_out_mirrored_imports_omitted: ${cashAudit.duplicateImportCount}`,`finance_out_all_debits_LYD: ${periodCash?.recordedMoneyOutLyd??'unvalued'}`,`finance_out_budget_adjustments_LYD: ${periodCash?.adjustmentLyd??0}`,`finance_out_transfers_LYD: ${periodCash?.transferLyd??0}`,`finance_out_missing_FX: ${periodCash?.missingFxCount??0}`,`finance_extra_operating_included_LYD: ${operatingExpensesBeforeAccrual}`,`finance_cash_out_stock_and_capital_not_double_counted: true`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`settlement_currency=LYD`,`fx_applies_only_on_actual_payment=true`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
+ // Recorded Finance debits are included even when their imported category
+ // is pending classification. Missing FX for a machine CAPITAL purchase does
+ // not prevent an operating-profit month; unknown operating expense does.
+ const complete=(agreement.investment_amount_usd!=null
+  ? !!proof && proof.sourceIssues.length===0 && proof.unresolvedCostCount===0
+    && (operatingExpenseAudit?.missingFxOrAmount??0)===0
+  : calculation.complete && pendingExpenseRows.length===0 && cashAudit.missingFxCount===0)
+  && priorMonthKnown && (bounds.start==='2026-04-01'||!!last)
+  && previousStatements.every(row=>row.calculation_status==='finalized');
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`accrued_investor_rent_salary_policy: ${additionalAccrual}`, `finance_out_raw_rows: ${ledgerRows.length}`,`finance_out_mirrored_imports_omitted: ${cashAudit.duplicateImportCount}`,`finance_out_all_debits_LYD: ${periodCash?.recordedMoneyOutLyd??'unvalued'}`,`finance_out_budget_adjustments_LYD: ${periodCash?.adjustmentLyd??0}`,`finance_out_transfers_LYD: ${periodCash?.transferLyd??0}`,`finance_out_missing_FX: ${periodCash?.missingFxCount??0}`,`finance_extra_operating_included_LYD: ${operatingExpensesBeforeAccrual}`,`finance_cash_out_stock_and_capital_not_double_counted: true`, `dated_manual_cost_matches: ${proof?.datedCostMatches??0}`,`unresolved_manual_cost_rows: ${proof?.unresolvedCostCount??0}`,`complete=${complete}`,`carry_in=${priorLoss}`,`carry_out=${carriedLossOut}`,`settlement_currency=LYD`,`fx_applies_only_on_actual_payment=true`,`USD_cap=${agreement.payout_cap_usd??'none'}`,...calculation.accountingWarnings].join('; ');
  const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
   ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
   operating_expenses_lyd:Math.round((operatingExpensesBeforeAccrual+additionalAccrual)*100)/100,operating_profit_lyd:Math.round((profitBeforeAccrual-additionalAccrual)*100)/100,capital_purchases_lyd:calculation.capitalPurchasesLyd,
