@@ -15,6 +15,7 @@ export type InvestorGeneratedLedgerMonth = {
   operating_profit_lyd: number | string | null;
   investor_share_due_lyd: number | string | null;
   calculation_status: string;
+  source_complete?: boolean | null;
 };
 export type InvestorLydAllocation = { payout_id: string; month_start: string; amount_lyd: number | string };
 export type InvestorLydBatch = {
@@ -27,6 +28,7 @@ export type InvestorLedgerMonth = {
   source: "historical" | "finalized" | "draft";
   netProfitLyd: number | null;
   dueLyd: number | null;
+  estimatedShareLyd: number | null;
   paidLyd: number | null;
   outstandingLyd: number | null;
   status: "unpaid" | "partial" | "paid" | "nothing_due" | "pending" | "unverified";
@@ -34,6 +36,7 @@ export type InvestorLedgerMonth = {
 export type InvestorLedgerResult = {
   months: InvestorLedgerMonth[];
   totalDueLyd: number;
+  totalEstimatedLyd: number;
   totalPaidLyd: number;
   totalOutstandingLyd: number;
   creditedUsd: number;
