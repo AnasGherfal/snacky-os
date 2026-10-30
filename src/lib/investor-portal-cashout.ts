@@ -29,7 +29,7 @@ export async function loadAuthorizedInvestorCashOutAudit({
  const todayParts=new Intl.DateTimeFormat("en-US",{timeZone:"Africa/Tripoli",
   year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
  const today=["year","month","day"].map(k=>todayParts.find(p=>p.type===k)?.value??"").join("-");
- const from=startDate>"2026-04-01"?startDate:"2026-04-01";
+ const from=startDate;
  const to=endDate && endDate<today?endDate:today;
  const rows:InvestorFinanceOutflow[]=[];
  const costPolicies=await reader.from("investor_cost_policies")
