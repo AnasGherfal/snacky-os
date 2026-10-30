@@ -73,7 +73,7 @@ test('owner and portal render the same monthly breakdown without investor write 
  assert.match(portal,/eq\('investor_user_id',profile.id\)/);
  assert.match(portal,/eq\('calculation_status','finalized'\)/);
  assert.match(card,/review_\$\{key\}/);assert.match(card,/rent_payroll/);assert.match(card,/generated_at/);
- assert.match(owner,/allRows/);assert.match(portal,/readAll/);
+ assert.match(owner,/readAll/);assert.match(portal,/readAll/);
 });
 
 test('actual money commands use one SQL transaction, correct actor FK and safe retries',()=>{
