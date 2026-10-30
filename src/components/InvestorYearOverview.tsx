@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { InvestorLydBatchForm } from "@/components/InvestorLydBatchForm";
 import { InvestorAdminTabs } from "@/components/InvestorAdminTabs";
-import { InvestorMonthlyTable } from "@/components/InvestorMonthlyTable";
+import { InvestorMonthlyTable, InvestorOwnerEvidence } from "@/components/InvestorMonthlyTable";
 import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashout";
 import { reconcileRecordedInvestorDrafts } from "@/lib/investor-recorded-draft";
 import {
@@ -101,19 +101,24 @@ export async function InvestorYearOverview({agreementId,investorUserId,investorN
  const ledger=buildInvestorMonthlyLedger({startDate,endDate,capUsd,historical,
   generated:calculatedDrafts,batches,allocations,legacyUsdPayouts});
  const fmtUsd=(v:number)=>"$"+money(v);
+ const ownerSourceEntries=admin?finance.audit.rows.filter(r=>
+  (r.review_status==="needs_review"||r.needs_review) &&
+  generated.some(g=>g.calculation_status==="draft" &&
+   g.month_start.slice(0,7)===String(r.transaction_date??"").slice(0,7)))
+  .map(r=>({id:String(r.id??""),date:String(r.transaction_date??""),
+   description:String(r.description??r.category??""),
+   amount:Number(r.amount??0),currency:String(r.currency??"LYD")})):undefined;
  return <section className="space-y-4" aria-label={tr("Investor financial statement","الكشف المالي للمستثمر")}>
-  <InvestorMonthlyTable ledger={ledger} investorName={investorName||tr("Investor","المستثمر")}
-   sharePercent={sharePercent??null} ar={ar} admin={admin}
-   cashOutByMonth={finance.audit.byMonth} cashOutIssues={finance.audit.auditIssues}
-   salesByMonth={admin?finance.salesByMonth:undefined}
-   ownerSourceEntries={admin?finance.audit.rows.filter(r=>
-    (r.review_status==="needs_review"||r.needs_review) &&
-    generated.some(g=>g.calculation_status==="draft" &&
-     g.month_start.slice(0,7)===String(r.transaction_date??"").slice(0,7)))
-    .map(r=>({id:String(r.id??""),date:String(r.transaction_date??""),description:String(r.description??r.category??""),
-      amount:Number(r.amount??0),currency:String(r.currency??"LYD")})):undefined}/>
+  <InvestorMonthlyTable ledger={ledger}
+   investorName={investorName||tr("Investor","المستثمر")}
+   sharePercent={sharePercent??null} ar={ar}/>
   {admin && reviewPanel && managePanel ? <InvestorAdminTabs ar={ar} initialTab={initialAdminTab}
-     review={reviewPanel} manage={managePanel}
+     review={<div className="space-y-5">
+       {reviewPanel}
+       <InvestorOwnerEvidence ar={ar} cashOutByMonth={finance.audit.byMonth}
+        cashOutIssues={finance.audit.auditIssues} salesByMonth={finance.salesByMonth}
+        ownerSourceEntries={ownerSourceEntries}/>
+     </div>} manage={managePanel}
      payment={<div className="space-y-4">
        <div>
         <h3 className="text-lg font-bold text-slate-950">{tr("Record an investor payment","تسجيل دفعة للمستثمر")}</h3>
