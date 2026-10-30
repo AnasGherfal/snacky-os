@@ -40,7 +40,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
      </div>:null}
     </div>
    </div>
-   <div className="grid grid-cols-3 divide-x divide-slate-100 px-1 py-4 text-center sm:px-3 sm:py-5">
+   <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 px-1 py-4 text-center sm:px-3 sm:py-5">
     {[
      [tr("Approved share","حصة الأرباح المعتمدة"),ledger.totalDueLyd],
      [tr("Actually paid","المدفوع فعلياً"),ledger.totalPaidLyd],
