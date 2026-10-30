@@ -34,7 +34,13 @@ const normalized=(v:unknown)=>String(v??"").toLowerCase().normalize("NFKC")
  .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,"").replace(/\s+/g," ").trim();
 const validMonth=(m:string)=>/^\d{4}-(0[1-9]|1[0-2])-01$/.test(m);
 const monthEnd=(m:string)=>new Date(Date.UTC(Number(m.slice(0,4)),Number(m.slice(5,7)),0)).toISOString().slice(0,10);
-const monthOf=(v:string)=>String(v??"").slice(0,7)+"-01";
+const monthOf=(v:string)=>{
+ const date=new Date(v);
+ if(!Number.isFinite(date.getTime()))return "";
+ const parts=new Intl.DateTimeFormat("en-US",{timeZone:"Africa/Tripoli",
+  year:"numeric",month:"2-digit"}).formatToParts(date);
+ return (parts.find(p=>p.type==="year")?.value??"")+"-"+(parts.find(p=>p.type==="month")?.value??"")+"-01";
+};
 
 export function reconcileInvestorSalesSources({
  months,batches,xyRows,manualSales,movements,products
@@ -50,7 +56,7 @@ export function reconcileInvestorSalesSources({
   if(!m.product_id||numeric(m.unit_cost_lyd)===null||Number(m.unit_cost_lyd)<=0||!m.created_at)continue;
   byProduct.set(m.product_id,[...(byProduct.get(m.product_id)??[]),m]);
  }
- for(const records of byProduct.values())records.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+ for(const records of byProduct.values())records.sort((a,b)=>Date.parse(String(b.created_at))-Date.parse(String(a.created_at)));
  const byName=new Map<string,ProductNameRef[]>();
  for(const p of products)byName.set(normalized(p.name),[...(byName.get(normalized(p.name))??[]),p]);
  for(const month of months){
@@ -89,7 +95,7 @@ export function reconcileInvestorSalesSources({
      if(matches.length===1)productId=matches[0].id;
     }
     const previous=(byProduct.get(productId??"")??[])
-     .find(m=>String(m.created_at)<=String(sale.sale_time)&&Number(m.unit_cost_lyd)>0);
+     .find(m=>Date.parse(String(m.created_at))<=Date.parse(String(sale.sale_time))&&Number(m.unit_cost_lyd)>0);
     if(previous){
      actualCost=money(Number(previous.unit_cost_lyd)*qty);
      datedCostMatches++;
