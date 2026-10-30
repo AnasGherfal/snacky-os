@@ -137,6 +137,7 @@ export function buildInvestorMonthlyLedger(input: {
   if (goalUsd !== null && creditedUsd > goalUsd + .005) needsReview = true;
   const confirmed = months.filter(row => row.dueLyd !== null && row.paidLyd !== null);
   const totalDueLyd = total(confirmed.map(m => m.dueLyd!));
+  const totalEstimatedLyd = total(months.filter(m => m.source === 'draft' && m.estimatedShareLyd !== null).map(m => m.estimatedShareLyd!));
   const totalPaidLyd = total(confirmed.map(m => m.paidLyd!));
   const payableMonths = !needsReview && goalUsd !== null && creditedUsd < goalUsd
     ? confirmed.filter(r => r.outstandingLyd! > 0.005).map(r => ({
@@ -144,7 +145,7 @@ export function buildInvestorMonthlyLedger(input: {
       }))
     : [];
   return {
-    months, totalDueLyd, totalPaidLyd,
+    months, totalDueLyd, totalEstimatedLyd, totalPaidLyd,
     totalOutstandingLyd: Math.max(0, cents(totalDueLyd - totalPaidLyd)),
     creditedUsd, goalUsd: goalUsd ?? 0,
     remainingGoalUsd: Math.max(0, cents((goalUsd ?? 0) - creditedUsd)),
