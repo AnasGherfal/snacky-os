@@ -16,7 +16,7 @@ const labels = {
  unverified: ["Needs confirmation","بحاجة للتأكيد","border-rose-200 bg-rose-50 text-rose-800"]
 } as const;
 function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
- const info=labels[row.status];
+ const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Provisional','تقديري','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
  return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold leading-tight sm:text-xs ${info[2]}`}>{ar?info[1]:info[0]}</span>;
 }
 export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
