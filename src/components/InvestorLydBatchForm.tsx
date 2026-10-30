@@ -12,6 +12,7 @@ type Props={
  remainingGoalUsd:number;
  today:string;
  ar:boolean;
+ embedded?:boolean;
 };
 const amount=(n:number)=>new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
 function SubmitPayout({disabled,ar}:{disabled:boolean;ar:boolean}){
@@ -20,7 +21,7 @@ function SubmitPayout({disabled,ar}:{disabled:boolean;ar:boolean}){
   {pending?(ar?"جارٍ تسجيل الدفع…":"Recording payment…"):(ar?"تسجيل دفعة تمت بالفعل":"Record completed LYD payment")}
  </button>;
 }
-export function InvestorLydBatchForm({agreementId,submissionId,months,remainingGoalUsd,today,ar}:Props){
+export function InvestorLydBatchForm({agreementId,submissionId,months,remainingGoalUsd,today,ar,embedded=false}:Props){
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const [chosen,setChosen]=useState<Record<string,string>>({});
  const [rate,setRate]=useState("");
@@ -36,8 +37,8 @@ export function InvestorLydBatchForm({agreementId,submissionId,months,remainingG
  const usdCredit=rate.trim()!==""&&Number.isFinite(numericRate)&&numericRate>0?Math.round(total/numericRate*100)/100:null;
  const overGoal=usdCredit!==null&&usdCredit>remainingGoalUsd+0.005;
  const invalid=selectedCount===0||selectedCount!==values.length||usdCredit===null||usdCredit<=0||overGoal;
- return <details className="rounded-xl border border-slate-200 bg-white p-4">
-  <summary className="cursor-pointer font-semibold text-slate-950">{tr("Record a completed LYD payment · one or several months","تسجيل دفعة بالدينار تمت بالفعل · لشهر أو عدة أشهر")}</summary>
+ return <details className={embedded ? "border-0 bg-white" : "rounded-xl border border-slate-200 bg-white p-4"} open={embedded}>
+  <summary className={embedded ? "hidden" : "cursor-pointer font-semibold text-slate-950"}>{tr("Record a completed LYD payment · one or several months","تسجيل دفعة بالدينار تمت بالفعل · لشهر أو عدة أشهر")}</summary>
   <p className="mt-3 text-sm text-slate-600">{tr("Select the months this payment settles. You may pay part of a month's remaining LYD balance. One payment creates one Finance cash-out and separate month allocations.","اختر الأشهر التي تغطيها الدفعة. يمكنك دفع جزء من باقي مستحق الشهر بالدينار. تُسجل حركة صرف مالية واحدة مع توزيع المبلغ على الأشهر المختارة.")}</p>
   <form action={recordActualInvestorLydBatch} className="mt-4 space-y-4">
    <input type="hidden" name="agreement_id" value={agreementId}/>
