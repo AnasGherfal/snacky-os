@@ -2,6 +2,7 @@ import {
  calculateInvestorOperatingExpenses,
  type InvestorCashOutAudit, type InvestorCostPolicyRow
 } from "@/lib/investor-finance-outflow";
+import type { InvestorSalesProof } from "@/lib/investor-sales-proof";
 
 export type InvestorMonthlySource = {
  month_start:string;calculation_status:string;
@@ -17,6 +18,8 @@ export type ReconciledInvestorDraft = InvestorMonthlySource & {
  financeAdjustmentsLyd?:number;
  financeUnreviewedCount?:number;
  financeMirroredImports?:number;
+ sourceSalesCostEvidence?:number;
+ sourceSalesCostUnresolved?:number;
 };
 const cents=(x:number)=>Math.round((x+Number.EPSILON)*100)/100;
 const validMoney=(x:unknown)=>x!=null&&Number.isFinite(Number(x))?cents(Number(x)):null;
@@ -27,9 +30,10 @@ const validMoney=(x:unknown)=>x!=null&&Number.isFinite(Number(x))?cents(Number(x
  * ledger with a guess when a native USD cash-out rate is unavailable.
  */
 export function reconcileRecordedInvestorDrafts({
- statements,sourceAudit,policies,profitShare
+ statements,sourceAudit,policies,profitShare,salesByMonth
 }:{statements:InvestorMonthlySource[];sourceAudit:InvestorCashOutAudit;
- policies:DatedCostPolicy[];profitShare:number}):ReconciledInvestorDraft[]{
+ policies:DatedCostPolicy[];profitShare:number;
+ salesByMonth?:Record<string,InvestorSalesProof>}):ReconciledInvestorDraft[]{
  const ordered=[...statements].sort((a,b)=>a.month_start.localeCompare(b.month_start));
  let carry=0;
  let priorComplete=true;
@@ -43,19 +47,24 @@ export function reconcileRecordedInvestorDrafts({
     &&(p.item_type==="rent"||p.item_type==="salary_adjustment"));
   const financeRows=sourceAudit.rows.filter(r=>String(r.transaction_date??"").slice(0,7)===period);
   const expenses=calculateInvestorOperatingExpenses(financeRows,selectedPolicies);
-  const gross=validMoney(source.gross_profit_lyd);
+  const proof=salesByMonth?.[source.month_start];
+  // Source-backed XY + dated inventory costs supersede old saved draft gross
+  // profit. Never fall back to stale draft totals when verification was requested.
+  const gross=validMoney(salesByMonth?proof?.grossProfitLyd:source.gross_profit_lyd);
   const capex=source.profit_basis==="operating_profit_after_capex"?
     validMoney(source.capital_purchases_lyd):0;
   const verifiable=priorComplete && gross!==null && capex!==null &&
     Number.isFinite(profitShare)&&profitShare>0&&profitShare<=100 &&
-    (summary?.missingFxCount??0)===0 && expenses.missingFxOrAmount===0;
+    expenses.missingFxOrAmount===0 && (!salesByMonth || (proof?.sourceIssues.length??1)===0);
   if(!verifiable){
    priorComplete=false;
    result.push({...source,operating_profit_lyd:null,investor_share_due_lyd:null,
     recordedFinanceMoneyOutLyd:summary?.recordedMoneyOutLyd??null,
     financeAdjustmentsLyd:summary?.adjustmentLyd??0,
     financeUnreviewedCount:summary?.reviewedCount??0,
-    financeMirroredImports:summary?.duplicateImportCount??0});
+    financeMirroredImports:summary?.duplicateImportCount??0,
+    sourceSalesCostEvidence:proof?.datedCostMatches??0,
+    sourceSalesCostUnresolved:proof?.unresolvedCostCount??0});
    continue;
   }
   const operating=cents(gross-expenses.totalOperatingExpensesLyd);
@@ -66,7 +75,9 @@ export function reconcileRecordedInvestorDrafts({
    recordedFinanceMoneyOutLyd:summary?.recordedMoneyOutLyd??0,
    financeAdjustmentsLyd:summary?.adjustmentLyd??0,
    financeUnreviewedCount:summary?.reviewedCount??0,
-   financeMirroredImports:summary?.duplicateImportCount??0});
+   financeMirroredImports:summary?.duplicateImportCount??0,
+   sourceSalesCostEvidence:proof?.datedCostMatches??0,
+   sourceSalesCostUnresolved:proof?.unresolvedCostCount??0});
  }
  return result;
 }

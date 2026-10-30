@@ -158,7 +158,9 @@ export function calculateInvestorOperatingExpenses(
   }
   if(isInvestorCapitalPurchase(row)){excludedCapitalCount++;continue;}
   const desc=normal(row.description);
-  if(policyRent && (canonical.key==="rent"||/ايجار|إيجار|مخزن|warehouse/.test(desc))){
+  // A payment explicitly labeled rent is already included in the monthly
+  // contractual rent accrual. Other warehouse costs are not rent.
+  if(policyRent && (canonical.key==="rent"||/^(?:ايجار|إيجار|اجار)(?:\s|$)|^rent(?:\s|$)/u.test(desc))){
    excludedRentPaidCount++;continue;
   }
   const val=amount(row),currency=normal(row.currency||"LYD");

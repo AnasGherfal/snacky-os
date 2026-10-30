@@ -24,7 +24,8 @@ test('investor profit calculation is positive-profit only and excludes distribut
 test('growth and statements use confirmed manual sales and inventory movement cost',()=>{
  const actions=read('src/lib/investor-actions.ts'),growth=read('src/app/finance/growth-decisions/page.tsx');
  for(const source of [actions,growth]){assert.match(source,/route_manual_sales/);assert.match(source,/manualRouteSalesAsProfitRows/);assert.match(source,/inventory_movements/);}
- assert.match(actions,/manual sales revenue/);assert.match(actions,/sales_dashboard_monthly_summary/);assert.match(actions,/sales_dashboard_summary/);assert.doesNotMatch(actions,/from\("vms_sales_clean"\)/);assert.match(growth,/operationalReadClient/);
+ assert.match(actions,/manual sales records/);
+ assert.match(actions,/dated manual-sale cost sources/);assert.match(actions,/sales_dashboard_monthly_summary/);assert.match(actions,/sales_dashboard_summary/);assert.doesNotMatch(actions,/from\("vms_sales_clean"\)/);assert.match(growth,/operationalReadClient/);
 });
 test('growth uses the same sales dashboard RPCs instead of the missing clean view',()=>{
  const growth=read('src/app/finance/growth-decisions/page.tsx');

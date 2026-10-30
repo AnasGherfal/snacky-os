@@ -15,6 +15,7 @@ on:
       - "scripts/test-investor-lyd*"
       - "scripts/test-investor-monthly-table.mjs"
       - "scripts/test-investor-finance-outflow.mjs"
+      - "scripts/test-investor-sales-proof.mjs"
       - "src/components/DecisionCharts.tsx"
       - "src/components/Sidebar.tsx"
       - "src/components/Topbar.tsx"
@@ -47,7 +48,7 @@ jobs:
       - name: January–March visible LYD investor table and payment reconciliation
         run: node --experimental-strip-types --test scripts/test-investor-monthly-table.mjs
       - name: Verify all Finance investor money-out, duplicates and budget adjustments
-        run: node --experimental-strip-types --test scripts/test-investor-finance-outflow.mjs
+        run: node --experimental-strip-types --test scripts/test-investor-finance-outflow.mjs scripts/test-investor-sales-proof.mjs
       - name: Test pickup checklist
         run: npm run test:route-pickup-checklist
       - name: Test route inventory regression
