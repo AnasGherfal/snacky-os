@@ -85,6 +85,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOu
      <thead><tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
       <th scope="col" className="min-w-[92px] px-2 py-3 text-start font-semibold sm:px-4">{tr("Month","الشهر")}</th>
       <th scope="col" className="hidden px-3 py-3 text-end font-semibold lg:table-cell">{tr("Net profit · LYD","صافي الربح · د.ل")}</th>
+      <th scope="col" className="hidden min-w-[160px] px-3 py-3 text-end font-semibold md:table-cell">{tr("All Finance money out · LYD","كل الصرف المسجّل · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Share · LYD","الحصة · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Paid · LYD","المدفوع · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Unpaid · LYD","المتبقي · د.ل")}</th>
@@ -95,8 +96,10 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOu
        <th scope="row" className="px-2 py-3 text-start font-semibold sm:px-4">
         <span className="block whitespace-nowrap">{monthTitle(row.month,ar)}</span>
         <span className="mt-1 block sm:hidden"><Badge row={row} ar={ar}/></span>
+        {cashOutByMonth?.[row.month.slice(0,7)]?<span className="mt-1 block text-[10px] text-slate-500 md:hidden">{tr("Money out", "الصرف")}: <CashOutDisplay month={cashOutByMonth[row.month.slice(0,7)]} ar={ar}/></span>:null}
        </th>
        <td dir="ltr" className="hidden px-3 py-3 text-end tabular-nums lg:table-cell">{row.netProfitLyd===null?"—":money(row.netProfitLyd)}</td>
+       <td dir="ltr" className="hidden px-3 py-3 text-end text-xs tabular-nums md:table-cell"><CashOutDisplay month={cashOutByMonth?.[row.month.slice(0,7)]} ar={ar}/></td>
        <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Not approved","غير معتمد")}</span>:null}</td>
        <td dir="ltr" className="px-1 py-3 text-end tabular-nums sm:px-3">{money(row.paidLyd)}</td>
        <td dir="ltr" className="px-1 py-3 text-end font-semibold tabular-nums sm:px-3">{money(row.outstandingLyd)}</td>
@@ -106,6 +109,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOu
      {ledger.months.length>0?<tfoot className="border-t-2 border-slate-200 bg-slate-50 text-slate-950"><tr>
       <th scope="row" className="px-2 py-3 text-start font-bold sm:px-4">{tr("Total approved","مجموع المعتمد")}</th>
       <td className="hidden lg:table-cell"/>
+      <td className="hidden md:table-cell"/>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalDueLyd)}</td>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalPaidLyd)}</td>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalOutstandingLyd)}</td>
