@@ -1,4 +1,5 @@
 import type { InvestorLedgerResult, InvestorLedgerMonth } from "@/lib/investor-monthly-ledger";
+import type { InvestorCashOutMonth } from "@/lib/investor-finance-outflow";
 
 const money = (v: number | null) => v === null ? "—" : new Intl.NumberFormat("en-US", {minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
 const dollar = (v: number) => "$" + money(v);
@@ -12,17 +13,42 @@ const labels = {
  partial: ["Partly paid","مدفوع جزئياً","border-sky-200 bg-sky-50 text-sky-800"],
  paid: ["Paid","مدفوع","border-emerald-200 bg-emerald-50 text-emerald-800"],
  nothing_due: ["No payout due","لا يوجد مستحق","border-slate-200 bg-slate-50 text-slate-600"],
- pending: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
+ pending: ["Requires review","بحاجة للمراجعة","border-amber-200 bg-amber-50 text-amber-800"],
+ in_progress: ["In progress","قيد الحساب","border-slate-200 bg-slate-50 text-slate-600"],
  unverified: ["Needs confirmation","بحاجة للتأكيد","border-rose-200 bg-rose-50 text-rose-800"]
 } as const;
 function Badge({row,ar}:{row:InvestorLedgerMonth;ar:boolean}) {
- const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Provisional','تقديري','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
+ const info=row.status==='pending' && row.estimatedShareLyd!==null ? ['Calculated · not approved','محسوب · غير معتمد','border-amber-200 bg-amber-50 text-amber-800'] as const : labels[row.status];
  return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold leading-tight sm:text-xs ${info[2]}`}>{ar?info[1]:info[0]}</span>;
 }
-export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
- ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean
+function CashOutDisplay({month,ar}:{month?:InvestorCashOutMonth;ar:boolean}) {
+ if(!month)return <span className="text-slate-400">—</span>;
+ const tr=(en:string,arabic:string)=>ar?arabic:en;
+ return <span className="block whitespace-nowrap">
+  <span className="font-semibold tabular-nums">{month.recordedMoneyOutLyd===null?
+   "≥"+money(month.knownMoneyOutLyd):money(month.recordedMoneyOutLyd)}</span>
+  {month.missingFxCount>0?<span className="mt-1 block whitespace-normal text-[10px] font-medium text-rose-700">
+   {tr("Unconverted", "غير محوّل")}: {money(month.missingFxNativeUsd)} USD
+  </span>:null}
+  {month.adjustmentLyd>0?<span className="mt-1 block whitespace-normal text-[10px] font-medium text-emerald-800">
+   {tr("Includes budget adjustment", "تشمل تعديل الميزانية")}: {money(month.adjustmentLyd)}
+  </span>:null}
+  {month.reviewedCount>0?<span className="mt-1 block whitespace-normal text-[10px] text-amber-700">
+   {month.reviewedCount} {tr("entries need review", "حركات تحتاج مراجعة")}
+  </span>:null}
+ </span>;
+}
+
+export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,cashOutByMonth,cashOutIssues}:{
+ ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean;
+ cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[]
 }) {
  const tr=(en:string,arabic:string)=>ar?arabic:en;
+ const cashMonths=Object.values(cashOutByMonth??{});
+ const countAudit=(key:"duplicateImportCount"|"reviewedCount"|"missingFxCount")=>
+  cashMonths.reduce((n,m)=>n+m[key],0);
+ const knownMirrored=cashMonths.reduce((n,m)=>n+m.duplicateImportLyd,0);
+ const allAdjustments=cashMonths.reduce((n,m)=>n+m.adjustmentLyd,0);
  return <div className="space-y-4" dir={ar?"rtl":"ltr"}>
   <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-label={tr("Investment summary","ملخص الاستثمار")}>
    <div className="relative overflow-hidden px-4 py-5 text-white sm:px-6" style={{backgroundColor:"var(--snacky-accent)"}}>
@@ -43,7 +69,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 px-1 py-4 text-center sm:px-3 sm:py-5">
     {[
      [tr("Approved share","حصة الأرباح المعتمدة"),ledger.totalDueLyd],
-     [tr("Provisional estimate","تقدير مبدئي"),ledger.totalEstimatedLyd],
+     [tr("Calculated · not approved","محسوب · غير معتمد"),ledger.totalEstimatedLyd],
      [tr("Actually paid","المدفوع فعلياً"),ledger.totalPaidLyd],
      [tr("Approved unpaid","المتبقي من المعتمد"),ledger.totalOutstandingLyd]
     ].map(([label,value],i)=><div key={String(label)} className="min-w-0 px-1 sm:px-3">
@@ -64,6 +90,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
      <thead><tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
       <th scope="col" className="min-w-[92px] px-2 py-3 text-start font-semibold sm:px-4">{tr("Month","الشهر")}</th>
       <th scope="col" className="hidden px-3 py-3 text-end font-semibold lg:table-cell">{tr("Net profit · LYD","صافي الربح · د.ل")}</th>
+      <th scope="col" className="hidden min-w-[160px] px-3 py-3 text-end font-semibold md:table-cell">{tr("All Finance money out · LYD","كل الصرف المسجّل · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Share · LYD","الحصة · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Paid · LYD","المدفوع · د.ل")}</th>
       <th scope="col" className="px-1 py-3 text-end font-semibold sm:px-3">{tr("Unpaid · LYD","المتبقي · د.ل")}</th>
@@ -74,9 +101,11 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
        <th scope="row" className="px-2 py-3 text-start font-semibold sm:px-4">
         <span className="block whitespace-nowrap">{monthTitle(row.month,ar)}</span>
         <span className="mt-1 block sm:hidden"><Badge row={row} ar={ar}/></span>
+        {cashOutByMonth?.[row.month.slice(0,7)]?<span className="mt-1 block text-[10px] text-slate-500 md:hidden">{tr("Money out", "الصرف")}: <CashOutDisplay month={cashOutByMonth[row.month.slice(0,7)]} ar={ar}/></span>:null}
        </th>
        <td dir="ltr" className="hidden px-3 py-3 text-end tabular-nums lg:table-cell">{row.netProfitLyd===null?"—":money(row.netProfitLyd)}</td>
-       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Est.","تقديري")}</span>:null}</td>
+       <td dir="ltr" className="hidden px-3 py-3 text-end text-xs tabular-nums md:table-cell"><CashOutDisplay month={cashOutByMonth?.[row.month.slice(0,7)]} ar={ar}/></td>
+       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Not approved","غير معتمد")}</span>:null}</td>
        <td dir="ltr" className="px-1 py-3 text-end tabular-nums sm:px-3">{money(row.paidLyd)}</td>
        <td dir="ltr" className="px-1 py-3 text-end font-semibold tabular-nums sm:px-3">{money(row.outstandingLyd)}</td>
        <td className="hidden px-3 py-3 text-start sm:table-cell"><Badge row={row} ar={ar}/></td>
@@ -85,6 +114,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
      {ledger.months.length>0?<tfoot className="border-t-2 border-slate-200 bg-slate-50 text-slate-950"><tr>
       <th scope="row" className="px-2 py-3 text-start font-bold sm:px-4">{tr("Total approved","مجموع المعتمد")}</th>
       <td className="hidden lg:table-cell"/>
+      <td className="hidden md:table-cell"/>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalDueLyd)}</td>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalPaidLyd)}</td>
       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(ledger.totalOutstandingLyd)}</td>
@@ -94,11 +124,21 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    </div>
    {!ledger.months.length?<p className="px-5 py-5 text-sm text-slate-600">{tr("No monthly source records are available for this agreement yet.","لا توجد سجلات شهرية لهذه الاتفاقية بعد.")}</p>:null}
    {ledger.months.some(m=>m.status==="pending")?<p className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-600 sm:px-5">
-    {tr("Estimated monthly shares reflect recorded costs and remain subject to review.","الحصص التقديرية مبنية على التكاليف المسجلة، وقد تتغير بعد مراجعة الحسابات.")}
+    {tr("Monthly calculations now include the recorded Finance outflows and agreed rent/payroll. A draft is not eligible for payment until every source is verified and the month is finalized.","تشمل الحسابات الشهرية حركات الصرف المسجلة والإيجارات والمرتبات المتفق عليها. ولا تُدفع المسودة حتى التحقق من مصادرها واعتماد الشهر.")}
    </p>:null}
    {ledger.needsReview?<p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
     {tr("Some records need reconciliation. Confirmed amounts remain visible; further payments are blocked until resolved.","بعض السجلات تحتاج مطابقة. المبالغ المؤكدة ظاهرة؛ ولا يمكن تسجيل دفعات جديدة قبل المعالجة.")}
    </p>:null}
+   {cashMonths.length?<details className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 text-sm sm:px-5">
+    <summary className="cursor-pointer font-semibold text-slate-700">{tr("Finance reconciliation and money-out evidence","تدقيق الصرف والحركات المالية")}</summary>
+    <div className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+     <p>{tr("Every active Finance money-out row counts in the cash register, whatever its description—including budget adjustments. Original source imports are only counted once when both copies have the same date, source row and amount.","تدخل جميع حركات الصرف النشطة في سجل المال الخارج مهما كان وصفها، بما فيها تعديل الميزانية. تُحسب حركة الاستيراد مرة واحدة عندما تتطابق النسختان في التاريخ ورقم السطر والمبلغ.")}</p>
+     {allAdjustments>0?<p className="font-semibold text-emerald-800">{tr("Budget adjustment money out included","صرف تعديل الميزانية المحتسب")}: {money(allAdjustments)} LYD</p>:null}
+     <p>{tr("Exact mirrored import entries excluded","نسخ الاستيراد المطابقة التي لم تتكرر")}: {countAudit("duplicateImportCount")} ({money(knownMirrored)} LYD). {tr("Outstanding Finance review entries","الحركات المالية التي تحتاج مراجعة")}: {countAudit("reviewedCount")}. {tr("Missing USD/LYD rates","أسعار صرف مفقودة")}: {countAudit("missingFxCount")}.</p>
+     <p>{tr("Monthly profit is still calculated under the agreed operating-profit formula. Inventory purchases already enter the calculation through cost of goods sold, confirmed rent is accrued by month, and account transfers are recorded as cash movement—not deducted again as operating expenses.","تُحسب حصة الربح وفق الاتفاق المبني على الربح التشغيلي. مشتريات المخزون محسوبة ضمن تكلفة المنتجات المباعة، وتُحمّل الإيجارات وفق الشهر، وتظهر تحويلات الحسابات ضمن حركة الصرف ولا تُخصم كمصاريف تشغيلية مرة ثانية.")}</p>
+     {cashOutIssues?.length?<p className="font-semibold text-rose-800">{tr("Some cash debits cannot be valued without source evidence; no rate or amount was invented.","لا يمكن تقييم بعض حركات الصرف دون دليل المصدر، ولم يُفترض أي سعر أو مبلغ.")}</p>:null}
+    </div>
+   </details>:null}
   </section>
   <section className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
    <div className="flex flex-wrap items-center justify-between gap-2"><div>
