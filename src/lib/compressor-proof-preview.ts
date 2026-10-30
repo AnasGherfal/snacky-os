@@ -7,7 +7,7 @@ import sharp from "sharp";
  */
 export const COMPRESSOR_PREVIEW_TARGET_BYTES = 60 * 1024;
 export const COMPRESSOR_PREVIEW_MAX_BYTES = 120 * 1024;
-const SOURCE_MAX_BYTES = 7 * 1024 * 1024;
+const SOURCE_MAX_BYTES = 10 * 1024 * 1024;
 const ATTEMPTS = [
   { edge: 800, quality: 43 },
   { edge: 720, quality: 37 },

@@ -42,3 +42,14 @@ test("recent compressor safety evidence can only be archived with separately ena
   assert.match(archive,/source_version_conflict_before_release/);
   assert.match(archive,/post_delete_archive_integrity_error/);
 });
+\n
+test("all compressor uploads are converted on the server, including uncompressed stale clients",()=>{
+ const actions=fs.readFileSync("src/lib/operator-actions.ts","utf8");
+ assert.match(actions,/if \(photoPurpose === "compressor"\) \{/);
+ assert.match(actions,/compactCompressorIndicator\(new Uint8Array\(await file\.arrayBuffer\(\)\)\)/);
+ assert.match(actions,/\.upload\(objectPath, storedFile,/);
+ assert.match(actions,/contentType: storedFile\.type/);
+ assert.match(actions,/\.digest\("hex"\)/);
+ assert.match(actions,/storedFile = new File\(/);
+ assert.match(actions,/if \(photoPurpose === "compressor"\) \{[\s\S]*?storedFile = new File\(/);
+});
