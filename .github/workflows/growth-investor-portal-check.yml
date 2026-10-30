@@ -13,6 +13,7 @@ on:
       - "src/components/Investor*.tsx"
       - "supabase/migrations/*investor*"
       - "scripts/test-investor-lyd*"
+      - "scripts/test-investor-monthly-table.mjs"
       - "src/components/DecisionCharts.tsx"
       - "src/components/Sidebar.tsx"
       - "src/components/Topbar.tsx"
@@ -42,6 +43,8 @@ jobs:
         run: npm ci
       - name: Test growth and investor portal
         run: node --experimental-strip-types --test scripts/test-growth-investor-portal.mjs
+      - name: January–March visible LYD investor table and payment reconciliation
+        run: node --experimental-strip-types --test scripts/test-investor-monthly-table.mjs
       - name: Test pickup checklist
         run: npm run test:route-pickup-checklist
       - name: Test route inventory regression
