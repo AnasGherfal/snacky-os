@@ -80,7 +80,7 @@ test("one shared visible table serves investor and owner; advanced views cannot 
  assert.match(overview,/buildInvestorMonthlyLedger/);
  assert.match(overview,/investor_historical_months/);
  assert.match(overview,/investor_lyd_payout_allocations/);
- assert.match(overview,/\.eq\("calculation_status","finalized"\)/);
+ assert.doesNotMatch(overview,/\.eq\("calculation_status","finalized"\)/);
  assert.match(overview,/InvestorMonthlyTable/);
  assert.match(table,/<table/);
  assert.match(table,/ledger\.months\.map/);
