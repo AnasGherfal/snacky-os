@@ -185,3 +185,17 @@ test("unconfigured source release cannot invoke Storage even with an accepted re
  assert.equal(response.body.error,"source_release_disabled");
  assert.equal(h.observed.length,0);
 });
+
+test("photo canary query is read-only and cannot silently approve a source release",()=>{
+ const sql=readFileSync("scripts/sql/refill-photo-canary-review.sql","utf8");
+ assert.match(sql,/BEGIN TRANSACTION READ ONLY/);
+ assert.doesNotMatch(sql,/\\b(?:INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER)\\b(?=\\s+(?:FROM|INTO|TABLE|storage|public|snacky_private))/i);
+ assert.match(sql,/REVIEW_REQUIRED/);
+ assert.match(sql,/source_release_approved/);
+ assert.match(sql,/photoPath/);
+ assert.match(sql,/photoUrl/);
+ assert.match(sql,/route_stop_safety_checks/);
+ assert.match(sql,/machine_photo_path/);
+ assert.match(sql,/latest|later\\.refill_at/);
+ assert.match(sql,/resolved_at IS NULL AND i\\.archived_at IS NULL/);
+});
