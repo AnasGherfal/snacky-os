@@ -86,14 +86,14 @@ export function auditInvestorFinanceMoneyOut(sourceRows:InvestorFinanceOutflow[]
   rows.push(r);month.actualRowCount++;
   if(r.review_status==="needs_review"||r.needs_review)month.reviewedCount++;
   const currency=normal(r.currency||"LYD");
-  const rate=currency==="LYD"?1:Number(r.exchange_rate_usd_to_lyd??NaN);
+  const rate=currency==="lyd"?1:Number(r.exchange_rate_usd_to_lyd??NaN);
   if(val===null||!Number.isFinite(rate)||rate<=0){
    month.recordedMoneyOutLyd=null;month.missingFxCount++;missingFxCount++;
-   if(currency==="USD"&&val!==null)month.missingFxNativeUsd=round(month.missingFxNativeUsd+val);
+   if(currency==="usd"&&val!==null)month.missingFxNativeUsd=round(month.missingFxNativeUsd+val);
    issues.push("One or more Finance debits have missing amount, currency or documented FX rate");
    continue;
   }
-  if(currency!=="LYD"&&currency!=="USD"){
+  if(currency!=="lyd"&&currency!=="usd"){
    month.recordedMoneyOutLyd=null;month.missingFxCount++;missingFxCount++;
    issues.push("Unknown Finance currency");continue;
   }
@@ -162,7 +162,7 @@ export function calculateInvestorOperatingExpenses(
    excludedRentPaidCount++;continue;
   }
   const val=amount(row),currency=normal(row.currency||"LYD");
-  const fx=currency==="LYD"?1:currency==="USD"?Number(row.exchange_rate_usd_to_lyd??NaN):NaN;
+  const fx=currency==="lyd"?1:currency==="usd"?Number(row.exchange_rate_usd_to_lyd??NaN):NaN;
   if(val===null||!Number.isFinite(fx)||fx<=0){
    missingFxOrAmount++;warnings.push("Recorded expense lacks amount or documented currency rate");continue;
   }
