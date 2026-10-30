@@ -19,7 +19,7 @@ const tabs: Array<{ id: Tab; en: string; ar: string }> = [
 export function InvestorAdminTabs({ ar, review, payment, manage, initialTab = "review" }: Props) {
   const [active, setActive] = useState<Tab>(initialTab);
   const content = { review, payment, manage };
-  return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label={ar ? "إدارة المستثمر" : "Investor management"}>
+  return <section dir={ar ? "rtl" : "ltr"} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label={ar ? "إدارة المستثمر" : "Investor management"}>
     <div className="border-b border-slate-100 bg-slate-50/60 px-3 pt-3 sm:px-5">
       <div role="tablist" aria-label={ar ? "إجراءات إدارة المستثمر" : "Investor actions"} className="flex w-full gap-1 overflow-x-auto">
         {tabs.map(tab => <button
