@@ -43,11 +43,12 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
    <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 px-1 py-4 text-center sm:px-3 sm:py-5">
     {[
      [tr("Approved share","حصة الأرباح المعتمدة"),ledger.totalDueLyd],
+     [tr("Provisional estimate","تقدير مبدئي"),ledger.totalEstimatedLyd],
      [tr("Actually paid","المدفوع فعلياً"),ledger.totalPaidLyd],
-     [tr("Still unpaid","المتبقي غير المدفوع"),ledger.totalOutstandingLyd]
+     [tr("Approved unpaid","المتبقي من المعتمد"),ledger.totalOutstandingLyd]
     ].map(([label,value],i)=><div key={String(label)} className="min-w-0 px-1 sm:px-3">
      <p className="text-[10px] leading-4 text-slate-500 sm:text-xs">{label}</p>
-     <strong dir="ltr" className={`mt-1 block whitespace-nowrap text-base font-bold tabular-nums sm:text-2xl ${i===2?"text-amber-700":"text-slate-900"}`}>{money(Number(value))}</strong>
+     <strong dir="ltr" className={`mt-1 block whitespace-nowrap text-base font-bold tabular-nums sm:text-2xl ${i===1?"text-amber-700":i===3?"text-emerald-800":"text-slate-900"}`}>{money(Number(value))}</strong>
      <span className="text-[10px] text-slate-400">{tr("LYD","د.ل")}</span>
     </div>)}
    </div>
@@ -75,7 +76,7 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
         <span className="mt-1 block sm:hidden"><Badge row={row} ar={ar}/></span>
        </th>
        <td dir="ltr" className="hidden px-3 py-3 text-end tabular-nums lg:table-cell">{row.netProfitLyd===null?"—":money(row.netProfitLyd)}</td>
-       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd)}</td>
+       <td dir="ltr" className="px-1 py-3 text-end font-bold tabular-nums sm:px-3">{money(row.dueLyd ?? row.estimatedShareLyd)}{row.estimatedShareLyd!==null?<span className="mt-0.5 block text-[10px] font-medium text-amber-700">{tr("Est.","تقديري")}</span>:null}</td>
        <td dir="ltr" className="px-1 py-3 text-end tabular-nums sm:px-3">{money(row.paidLyd)}</td>
        <td dir="ltr" className="px-1 py-3 text-end font-semibold tabular-nums sm:px-3">{money(row.outstandingLyd)}</td>
        <td className="hidden px-3 py-3 text-start sm:table-cell"><Badge row={row} ar={ar}/></td>
