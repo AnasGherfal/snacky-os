@@ -43,6 +43,8 @@ jobs:
         run: node --experimental-strip-types --test scripts/test-investor-access-accounting.mjs scripts/test-growth-investor-portal.mjs
       - name: January–March visible LYD investor table and payment reconciliation
         run: node --experimental-strip-types --test scripts/test-investor-monthly-table.mjs
+      - name: Verify all Finance investor money-out, duplicates and budget adjustments
+        run: node --experimental-strip-types --test scripts/test-investor-finance-outflow.mjs
       - name: Actual investor migrations and atomic ledger tests in isolated PostgreSQL
         env:
           PGHOST: localhost
