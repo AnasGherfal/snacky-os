@@ -21,6 +21,11 @@ export async function compactCompressorIndicator(original: Uint8Array): Promise<
   const input = sharp(source, { failOn: "error", limitInputPixels: 45_000_000 });
   const meta = await input.metadata();
   if (!meta.width || !meta.height || !["jpeg", "png", "webp"].includes(meta.format)) throw Error("compressor_image_invalid");
+  // Archive fallback also serves proofs that were already stored as tiny WebP.
+  // Preserve their original bytes rather than re-encoding or returning a false 503.
+  if (meta.format === "webp" && meta.width <= 800 && meta.height <= 800 && source.length <= COMPRESSOR_PREVIEW_MAX_BYTES) {
+    return new Uint8Array(source);
+  }
   let chosen: Buffer | null = null;
   for (const attempt of ATTEMPTS) {
     const output = await sharp(source, { failOn: "error", limitInputPixels: 45_000_000 })

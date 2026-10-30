@@ -18,6 +18,12 @@ test("historical compressor proxy shrinks real JPEG image while retaining whole-
   const x=Math.floor(1300*600/3024), y=Math.floor(1800*800/4032), offset=(y*pixelInfo.width+x)*pixelInfo.channels;
   assert.ok(data[offset+1]>data[offset]+20,"The power indicator must remain visibly green");
 });
+test("already compact WebP is served byte-identically, including after archival release", async () => {
+  const webp = await compactCompressorIndicator(original);
+  const again = await compactCompressorIndicator(webp);
+  assert.deepEqual(again, webp, "Do not re-encode an already compact proof");
+});
+
 test("image decoder rejects missing or invalid original content rather than silently altering evidence", async () => {
   await assert.rejects(compactCompressorIndicator(new Uint8Array()));
   await assert.rejects(compactCompressorIndicator(new Uint8Array([1,2,3,4])));
