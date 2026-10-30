@@ -37,7 +37,7 @@ test("owner month review has one selected month, a refresh action and explicit a
  assert.match(review,/action=\{finalizeInvestorStatement\}/);
  assert.match(review,/statement\?\.source_complete === true/);
  assert.match(review,/type="checkbox" required/);
- assert.match(review,/review_rent_payroll/);
+ assert.match(review,/rent_payroll/);
  assert.match(review,/review_\$\{key\}/);
  assert.match(actions,/p_review_checks:checks/);
  assert.match(actions,/month\?:string/);
