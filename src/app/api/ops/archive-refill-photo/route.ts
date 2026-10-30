@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
 import { authorizedSchedulerToken, createPrivateBlobStore, photoArchiveReceiptKey, readVerifiedOriginal, sha256, storeVerifiedOriginal, validatePath } from "@/lib/private-blob-originals";
 
 export const runtime = "nodejs";
@@ -7,6 +8,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Job = {path:string;expectedSize:number;expectedUpdatedAt:string;expectedEtag:string;release?:boolean;includeSafety?:boolean};
+function isCompactCompressorJob(job: Job) {
+  // Only historical complete-stop safety proof photos; never quantity screenshots.
+  return job.includeSafety === true &&
+    /^[0-9a-f]{8}-[0-9a-f-]{27}\/compressor\/[A-Za-z0-9._-]+\.(?:jpg|jpeg|png|webp)$/i.test(job.path) &&
+    process.env.SNACKY_COMPRESSOR_HISTORICAL_COMPACTION_ENABLED === "true";
+}
 const maxBytes=7*1024*1024;
 const minAgeMs=30*24*60*60*1000;
 function matchesTime(value:unknown,original:string){
@@ -28,24 +35,30 @@ function fileAgeEligible(info: {updatedAt?:string|null;createdAt?:string|null}, 
 async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabaseAdminClient>>, job:Job) {
   const path=validatePath(job.path);
   if(!/\.(jpg|jpeg|png|webp)$/i.test(path)) throw Error("not_supported_image");
-  const [history,safety,quantity]=await Promise.all([
+  const proxy=`/api/storage/refill-photos/${path}`;
+  // PostgREST does not support ::text casts in horizontal filters. The column
+  // is JSONB containing an array of {photoPath,photoUrl,...} objects.
+  // IMPORTANT: stringify the array; supabase-js otherwise serializes JS arrays
+  // as PostgreSQL arrays, which is not the JSONB @> operand we need.
+  const [history,safety,quantityPath,quantityUrl]=await Promise.all([
     supabase.from("machine_refill_history").select("id,route_id,route_stop_id,machine_id,machine_photo_url,issues_found,linked_issue_id").eq("machine_photo_path",path).limit(10),
     supabase.from("route_stop_safety_checks").select("id,route_id,route_stop_id,machine_id,proof_photo_url").eq("proof_photo_path",path).limit(10),
-    supabase.from("route_stop_quantity_confirmations").select("id").filter("evidence_files::text","like",`%${path}%`).limit(1),
+    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files",JSON.stringify([{photoPath:path}])).limit(1),
+    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files",JSON.stringify([{photoUrl:proxy}])).limit(1),
   ]);
-  if(history.error||safety.error||quantity.error){
+  if(history.error||safety.error||quantityPath.error||quantityUrl.error){
     console.warn("[photo-storage] Reference lookup failed",{
       history:history.error?.code??null,
       safety:safety.error?.code??null,
-      quantity:quantity.error?.code??null,
+      quantityPath:quantityPath.error?.code??null,
+      quantityUrl:quantityUrl.error?.code??null,
     });
     throw Error("photo_reference_check_failed");
   }
   const h=history.data??[],s=safety.data??[];
   if(h.length+s.length<1||h.length+s.length>=10)throw Error("photo_reference_ambiguous");
-  if(quantity.data?.length)throw Error("quantity_screenshot_protected");
+  if(quantityPath.data?.length||quantityUrl.data?.length)throw Error("quantity_screenshot_protected");
   if(s.length&&!job.includeSafety)throw Error("safety_proof_not_enabled");
-  const proxy=`/api/storage/refill-photos/${path}`;
   if(h.some(row=>row.issues_found||row.linked_issue_id||row.machine_photo_url!==proxy) ||
      s.some(row=>row.proof_photo_url!==proxy))throw Error("protected_or_nonproxy_reference");
   const routeIds=[...new Set([...h,...s].map(row=>String(row.route_id??"")).filter(Boolean))];
@@ -61,7 +74,10 @@ async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabase
   if(routes.data?.length!==routeIds.length||stops.data?.length!==stopIds.length||
      routes.data.some(row=>row.status!=="completed")||
      stops.data.some(row=>row.status!=="completed")||
-     issues.data?.length)throw Error("open_route_or_issue_hold");
+     (issues.data?.length && !isCompactCompressorJob(job)))throw Error("open_route_or_issue_hold");
+  // For compressor proofs only, original evidence is retained bit-for-bit in the
+  // verified private archive, so an unresolved machine issue need not block
+  // a reviewed low-resolution display copy. A separate release gate still applies.
 }
 export async function POST(request: Request){
   if(!authorizedSchedulerToken(String(request.headers.get("authorization")??"")))return response(401,{ok:false,error:"unauthorized"});
@@ -77,6 +93,13 @@ export async function POST(request: Request){
        throw Error("invalid_job");
     if(job.release!==true&&job.release!==false&&job.release!==undefined)throw Error("invalid_job");
   }catch{return response(400,{ok:false,error:"invalid_job"});}
+  // A copy-only rehearsal is permitted when migration is enabled, but source
+  // removal requires a distinct explicit release gate as well as release:true.
+  // Neither value is inferred from a successful copy or archive receipt.
+  if(job.release===true&&process.env.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true")
+    return response(409,{ok:false,error:"source_release_disabled"});
+  if(job.release===true&&isCompactCompressorJob(job)&&process.env.SNACKY_COMPRESSOR_SOURCE_RELEASE_ENABLED!=="true")
+    return response(409,{ok:false,error:"compressor_source_release_disabled"});
   const supabase=getSupabaseAdminClient();
   if(!supabase)return response(503,{ok:false,error:"storage_client_unavailable"});
   try{
@@ -85,7 +108,7 @@ export async function POST(request: Request){
     const {data:oldInfo,error:infoError}=await bucket.info(job.path);
     if(infoError||!oldInfo)throw Error("source_file_missing");
     const expectedEtag=String(job.expectedEtag).replaceAll('"',"");
-    if(!fileAgeEligible(oldInfo)||oldInfo.size!==job.expectedSize||
+    if(!(fileAgeEligible(oldInfo)||isCompactCompressorJob(job))||oldInfo.size!==job.expectedSize||
        infoEtag(oldInfo)!==expectedEtag||
        !matchesTime(oldInfo.updatedAt,job.expectedUpdatedAt))
        throw Error("source_metadata_changed");
@@ -99,6 +122,9 @@ export async function POST(request: Request){
     },store);
     const check=await readVerifiedOriginal(job.path,store);
     if(!check||check.receipt.sha256!==sha256(source))throw Error("archive_verification_failed");
+    // A compressor source must have a viable small visual replacement BEFORE
+    // any source release. Unreadable/oversized conversions retain Supabase bytes.
+    if(isCompactCompressorJob(job))await compactCompressorIndicator(source);
     if(!job.release) return response(200,{ok:true,status:"copy_verified_source_retained",bytes:source.length,verified:true});
     await ensureEligible(supabase,job);
     const {data:checkInfo,error:checkErr}=await bucket.info(job.path);

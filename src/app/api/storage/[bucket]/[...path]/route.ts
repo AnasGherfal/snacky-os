@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { archivedPhotoResponse } from "@/lib/photo-archive-server";
+import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
 import { readVerifiedOriginal } from "@/lib/private-blob-originals";
 import { isMissingStorageObject } from "@/lib/photo-archive-core";
 
@@ -101,6 +102,10 @@ export async function GET(
 ) {
   const { bucket, path } = await params;
   const objectPath = path.join("/");
+  const isCompressor = bucket === REFILL_PHOTO_BUCKET && /^[0-9a-f-]{36}\/compressor\//i.test(objectPath);
+  const url = new URL(request.url);
+  const archiveCheck = url.searchParams.get("archive") === "verify";
+  const compactPreview = url.searchParams.get("preview") === "compact";
 
   if (!PRIVATE_STORAGE_BUCKETS.has(bucket) || !objectPath) {
     return NextResponse.json({ error: "Storage object not found" }, { status: 404 });
@@ -115,12 +120,51 @@ export async function GET(
     return NextResponse.json({ error: "Private storage is not configured" }, { status: 503 });
   }
 
+  // All calls pass the existing route-based photo authorization first.
+  // A compact response is a *display derivative* of verified original bytes.
+  // The full original remains unchanged in a private archive for audit review.
+  async function displayCompressor(raw: Uint8Array) {
+    const bytes = await compactCompressorIndicator(raw);
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": "image/webp",
+        "Content-Length": String(bytes.byteLength),
+        "Cache-Control": "private, no-store",
+        "Vary": "Cookie, Authorization",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Snacky-Photo-Preview": "low-resolution-webp",
+      },
+    });
+  }
+
+  // Owner/assigned-operator can compare the compact preview with the
+  // original while it is still in Supabase. This never uploads or deletes.
+  if (isCompressor && compactPreview) {
+    try {
+      const { data, error } = await supabase.storage.from(bucket).download(objectPath);
+      if (error || !data || data.size > 7 * 1024 * 1024) {
+        return NextResponse.json({error:"Original compressor photo unavailable for preview"}, {status:404});
+      }
+      return await displayCompressor(new Uint8Array(await data.arrayBuffer()));
+    } catch {
+      return NextResponse.json({error:"Compressor preview unavailable"}, {status:422});
+    }
+  }
+
   // A read-only rehearsal exercises the real access checks BEFORE any original is removed.
   // Only the private proxy can read archived images; never expose Blob URLs or credentials.
   async function blobArchive() {
     if (bucket !== REFILL_PHOTO_BUCKET || !process.env.BLOB_READ_WRITE_TOKEN) return null;
     const original = await readVerifiedOriginal(objectPath);
     if (!original) return null;
+    if (isCompressor && !archiveCheck) {
+      try { return await displayCompressor(new Uint8Array(original.bytes)); }
+      catch {
+        // Keep the original verified proof readable if a particular camera
+        // photo cannot be made tiny. Never turn valid audit evidence into 503.
+      }
+    }
     return new Response(new Uint8Array(original.bytes), {
       headers: {
         "Content-Type": original.receipt.mime,
@@ -134,7 +178,6 @@ export async function GET(
     });
   }
   // It cannot bypass authentication and has no write/delete behavior.
-  const archiveCheck = new URL(request.url).searchParams.get("archive") === "verify";
   if (archiveCheck && bucket === REFILL_PHOTO_BUCKET) {
     try {
       const archived = await blobArchive() ?? await archivedPhotoResponse(bucket, objectPath);
