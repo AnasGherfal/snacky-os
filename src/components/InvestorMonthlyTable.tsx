@@ -30,19 +30,12 @@ function CashOutDisplay({month,ar}:{month?:InvestorCashOutMonth;ar:boolean}){
   </span>:null}
  </span>;
 }
-export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=false,cashOutByMonth,cashOutIssues,salesByMonth,ownerSourceEntries}:{
- ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean;admin?:boolean;
- cashOutByMonth?:Record<string,InvestorCashOutMonth>;cashOutIssues?:string[];
- salesByMonth?:Record<string,InvestorSalesProof>;
- ownerSourceEntries?:Array<{id:string;date:string;description:string;amount:number;currency:string}>
+export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar}:{
+ ledger:InvestorLedgerResult;investorName:string;sharePercent:number|string|null;ar:boolean
 }){
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const totalShare=cents(ledger.totalDueLyd+ledger.totalEstimatedLyd);
  const totalBalance=Math.max(0,cents(totalShare-ledger.totalPaidLyd));
- const cashMonths=Object.values(cashOutByMonth??{});
- const duplicates=cashMonths.reduce((n,m)=>n+m.duplicateImportCount,0);
- const cashReviewCount=cashMonths.reduce((n,m)=>n+m.reviewedCount,0);
- const adjustments=cashMonths.reduce((n,m)=>n+m.adjustmentLyd,0);
  return <div className="space-y-4" dir={ar?"rtl":"ltr"}>
   <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
    <div className="relative overflow-hidden px-5 py-6 text-white sm:px-7" style={{backgroundColor:"var(--snacky-accent)"}}>
@@ -114,9 +107,42 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=
    </div>
    {!ledger.months.length?<p className="px-5 py-6 text-sm text-slate-600">{tr("No monthly records yet.","لا توجد سجلات شهرية حتى الآن.")}</p>:null}
   </section>
-  {admin&&cashMonths.length>0?<details className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
+  <section className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
+   <div className="flex flex-wrap items-center justify-between gap-3">
+    <div><h3 className="font-bold text-slate-950">{tr("Contractual payout goal","سقف التوزيعات المتفق عليه")}</h3>
+     <p className="mt-1 text-xs text-slate-500">{tr("Only actual LYD payments are credited at their payment-day exchange rate","يُحتسب فقط ما دُفع فعلياً بالدينار وفق سعر الصرف يوم الدفع")}</p>
+    </div>
+    <strong dir="ltr" className="text-sm tabular-nums">{dollar(ledger.creditedUsd)} / {dollar(ledger.goalUsd)}</strong>
+   </div>
+   <div role="progressbar" aria-valuenow={ledger.progressPercent} aria-valuemin={0} aria-valuemax={100}
+    aria-label={tr("Payout goal progress","التقدم نحو سقف التوزيعات")} className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100">
+    <div className="h-full rounded-full" style={{width:ledger.progressPercent+"%",backgroundColor:"var(--snacky-accent)"}}/>
+   </div>
+   <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-slate-600">
+    <span>{ledger.progressPercent.toFixed(1)}% {tr("of goal paid","من الهدف تم دفعه")}</span>
+    <span>{tr("Remaining goal","المتبقي من الهدف")}: <strong dir="ltr">{dollar(ledger.remainingGoalUsd)}</strong></span>
+   </div>
+  </section>
+ </div>;
+}
+
+type InvestorEvidenceProps={
+ ar:boolean;
+ cashOutByMonth?:Record<string,InvestorCashOutMonth>;
+ cashOutIssues?:string[];
+ salesByMonth?:Record<string,InvestorSalesProof>;
+ ownerSourceEntries?:Array<{id:string;date:string;description:string;amount:number;currency:string}>
+};
+export function InvestorOwnerEvidence({ar,cashOutByMonth,cashOutIssues,salesByMonth,ownerSourceEntries}:InvestorEvidenceProps){
+ const tr=(en:string,arabic:string)=>ar?arabic:en;
+ const cashMonths=Object.values(cashOutByMonth??{});
+ const duplicates=cashMonths.reduce((n,m)=>n+m.duplicateImportCount,0);
+ const cashReviewCount=cashMonths.reduce((n,m)=>n+m.reviewedCount,0);
+ const adjustments=cashMonths.reduce((n,m)=>n+m.adjustmentLyd,0);
+ return <div dir={ar?"rtl":"ltr"}>
+  {cashMonths.length>0?<details className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
    <summary className="cursor-pointer text-sm font-semibold text-slate-800">
-    {tr("Internal accounting source evidence","مستندات مطابقة الحسابات الداخلية")}
+    {tr("Source records","السجلات المصدرية")}
    </summary>
    <div className="mt-4 space-y-3">
     <p className="text-xs leading-5 text-slate-600">
@@ -165,21 +191,6 @@ export function InvestorMonthlyTable({ledger,investorName,sharePercent,ar,admin=
     </p>:null}
    </div>
   </details>:null}
-  <section className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
-   <div className="flex flex-wrap items-center justify-between gap-3">
-    <div><h3 className="font-bold text-slate-950">{tr("Contractual payout goal","سقف التوزيعات المتفق عليه")}</h3>
-     <p className="mt-1 text-xs text-slate-500">{tr("Only actual LYD payments are credited at their payment-day exchange rate","يُحتسب فقط ما دُفع فعلياً بالدينار وفق سعر الصرف يوم الدفع")}</p>
-    </div>
-    <strong dir="ltr" className="text-sm tabular-nums">{dollar(ledger.creditedUsd)} / {dollar(ledger.goalUsd)}</strong>
-   </div>
-   <div role="progressbar" aria-valuenow={ledger.progressPercent} aria-valuemin={0} aria-valuemax={100}
-    aria-label={tr("Payout goal progress","التقدم نحو سقف التوزيعات")} className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100">
-    <div className="h-full rounded-full" style={{width:ledger.progressPercent+"%",backgroundColor:"var(--snacky-accent)"}}/>
-   </div>
-   <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-slate-600">
-    <span>{ledger.progressPercent.toFixed(1)}% {tr("of goal paid","من الهدف تم دفعه")}</span>
-    <span>{tr("Remaining goal","المتبقي من الهدف")}: <strong dir="ltr">{dollar(ledger.remainingGoalUsd)}</strong></span>
-   </div>
-  </section>
+
  </div>;
 }
