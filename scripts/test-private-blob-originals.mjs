@@ -119,6 +119,7 @@ function archiveHandlerHarness(options = {}) {
   storage:{from(){throw Error("Should not reach Storage while quantity evidence unresolved");}},
  };
  const imports = {
+  "@/lib/compressor-proof-preview": {compactCompressorIndicator:()=>{throw Error("Compressor preview not expected in quantity protection or release-gate tests");}},
   "next/server": {NextResponse:{json:(data,init)=>new Response(JSON.stringify(data),{status:init.status,headers:init.headers})}},
   "@/lib/supabase-server": {getSupabaseAdminClient:()=>{observed.push({admin:true});return supabase;}},
   "@/lib/private-blob-originals": {
