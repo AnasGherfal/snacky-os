@@ -7,6 +7,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
 import { StopCompletionReadinessCard } from "@/components/operator/StopCompletionReadinessCard";
+import { RouteStopCashCard } from "@/components/operator/RouteStopCashCard";
 import { getStopCompletionReadiness } from "@/lib/operator-stop-readiness";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
@@ -671,6 +672,9 @@ export default function MachineStopPage() {
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [cashRequired, setCashRequired] = useState(false);
+  const [cashReady, setCashReady] = useState(false);
+  const [cashState, setCashState] = useState<"collected" | "exception" | "pending" | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
   const [notes, setNotes] = useState("");
@@ -1588,6 +1592,11 @@ export default function MachineStopPage() {
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (cashRequired && !cashReady) {
+      setError(tr("Record cash collection or a valid exception first.", "سجّل سحب النقدية أو سبب تعذر السحب قبل إنهاء التعبئة."));
+      document.getElementById("cash-collection")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     // A quantity snapshot is automatically saved ON Complete Stop below.
     // Do not block on a separate screenshot/power-off confirmation step.
     localDraft.saveNow();
@@ -1691,7 +1700,7 @@ export default function MachineStopPage() {
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
-        cashCollected: false,
+        cashCollected: cashState === "collected",
         cashBagId: "",
         notes,
         completionPhotoUrl: uploadedProof?.photoUrl,
@@ -1837,6 +1846,8 @@ export default function MachineStopPage() {
     compressorInstalled: compressorSafetyInstalled,
     compressorProofReady,
     submitting,
+    cashRequired,
+    cashReady,
   });
   const canSubmitStop = stopReadiness.canComplete;
 
@@ -2915,6 +2926,17 @@ export default function MachineStopPage() {
           }}
         />
 
+        <RouteStopCashCard
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          onReadyChange={(required, ready, state) => {
+            setCashRequired(required);
+            setCashReady(ready);
+            setCashState(state);
+          }}
+        />
+
         <CashAndIssueSections
           machineId={stopData.machineId}
           notes={notes}
@@ -3206,14 +3228,6 @@ function CashAndIssueSections({
   const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   return (
     <>
-      <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="text-lg font-semibold">{tr("Cash is recorded separately", "يتم تسجيل سحب النقد بشكل مستقل")}</h2>
-        <p className="mt-1 text-sm text-slate-600">{tr("Cash removal is not part of route completion. Use the dedicated cash-removal screen whenever money physically leaves the machine.", "سحب النقد ليس جزءاً من إكمال المسار. استخدم شاشة سحب النقد المخصصة عند إخراج المال فعلياً من الماكينة.")}</p>
-        <Link href={`/cash-collections/new?machine_id=${encodeURIComponent(machineId)}`} className="btn-secondary mt-4 inline-flex">
-          {tr("Open cash-removal screen", "فتح شاشة سحب النقد")}
-        </Link>
-      </section>
-
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
         <h2 className="mb-4 text-lg font-semibold">{tr("Issue Report", "بلاغ عطل")}</h2>
         <div className="grid gap-4 md:grid-cols-2">

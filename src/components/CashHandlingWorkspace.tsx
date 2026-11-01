@@ -24,14 +24,14 @@ function browserState(storageKey: string) {
   } catch { return { selected, pending: null, memoryOnly: true }; }
 }
 
-export function CashHandlingWorkspace({ userId }: { userId: string }) {
+export function CashHandlingWorkspace({ userId, defaultSafeLabel = 'Safe A' }: { userId: string; defaultSafeLabel?: string }) {
   const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot);
   const { locale } = useI18n();
-  return hydrated ? <CashHandlingClient key={userId} userId={userId} />
+  return hydrated ? <CashHandlingClient key={userId} userId={userId} defaultSafeLabel={defaultSafeLabel} />
     : <p role="status">{locale === 'ar' ? 'جارٍ تحميل سجلات النقد…' : 'Loading cash records…'}</p>;
 }
 
-function CashHandlingClient({ userId }: { userId: string }) {
+function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defaultSafeLabel: string }) {
   const storageKey = `snacky.cash-handover.pending.v1.${userId}`;
   const [initial] = useState(() => browserState(storageKey));
   const { locale } = useI18n(), ar = locale === 'ar';
@@ -126,15 +126,15 @@ function CashHandlingClient({ userId }: { userId: string }) {
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
         <h1>{text('Cash', 'النقدية')}</h1>
-        <p>{text('Noury removes and deposits · Ahmed transports · Owner receives and counts later. Every step follows the same sealed-box ID.', 'نوري يسحب العلبة ويخزنها · أحمد يستلمها وينقلها · المالك يستلم ويعد النقد لاحقاً. جميع الخطوات مربوطة برقم العلبة نفسه.')}</p></div>
-      <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
+        <p>{text('Any assigned operator removes and deposits · authorized recipient verifies · authorized counter counts. Every step follows the same sealed-bag ID.', 'أي مشغّل مكلّف يسحب النقدية ويسلّمها، ويؤكد المستلم المعتمد الاستلام، ثم يعدّها الشخص المخوّل. كل خطوة مرتبطة برقم الكيس نفسه.')}</p></div>
+      <div className={styles.buttons}>{view?.owner ? <><Link className={styles.secondary} href="/cash-collections/pilot">{text("Refill cash pilot", "إعدادات النقدية عند التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections?status=counted">{text("Review counted cash vs XY", "مطابقة النقدية مع XY")}</Link></> : null}{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
     <div className={styles.notice} role="note">
       <strong>{text('One connected cash-box workflow · No cash amount at pickup', 'مسار نقدية واحد متصل · بدون إدخال مبالغ عند السحب')}</strong>
-      <p>{text('1. Noury: remove the cash box from the machine, record its seal and photo, then leave it in locked storage and save the location with a photo.', '١. نوري: اسحب علبة النقد من الماكينة وسجّل رقمها وصورتها، ثم ضعها في المخزن المقفل وسجّل المكان مع صورة.')}</p>
-      <p>{text('2. Ahmed: collect the identified sealed box from storage, check its seal, transport it to the owner’s counting location, then record delivery. Do not open or count it.', '٢. أحمد: استلم العلبة المختومة من المخزن وتأكد من رقمها والختم، وانقلها لمكان عدّ المالك ثم سجّل التوصيل. ممنوع فتحها أو عدّها.')}</p>
+      <p>{text('1. Collector: remove cash from one machine, record the sealed bag and photo, then deposit it in locked storage.', '١. المشغّل: اسحب النقدية من ماكينة واحدة، وسجّل رقم الكيس وصورته، ثم أودعه في الخزنة المخصصة.')}</p>
+      <p>{text('2. Authorized courier: verify the sealed bag ID, record the handover and transport if required. Do not open or count.', '٢. المستلم المصرح له: طابق رقم الكيس والختم وسجّل الاستلام والتوصيل عند الحاجة، دون فتحه أو عدّه.')}</p>
       <p>{text('3. Owner: only after physically receiving the same sealed box, confirm receipt in Cash. You may leave it pending until you are there and ready to count. Enter the actual amount once after counting.', '٣. المالك: بعد استلام نفس العلبة فعلياً تأكد من الاستلام في النقدية. تقدر تتركها معلّقة حتى تكون موجود ومستعد للعد، وبعدها تدخل المبلغ الحقيقي مرة واحدة.')}</p>
     </div>
     {error ? <div role="alert" className={styles.error}>{cashError(error, ar)}</div> : null}
@@ -170,8 +170,8 @@ function CashHandlingClient({ userId }: { userId: string }) {
           <div className={styles.cardTop}><span className={styles.badge}>{(cashStateLabels[row.state] ?? [row.state, row.state])[ar ? 1 : 0]}</span>{row.seal_exception ? <span className={styles.warning}>{text('Seal exception', 'ملاحظة على الختم')}</span> : null}</div>
           <h3>{row.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h3>
           <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{cashReferenceMissing(row) ? text('Not recorded', 'غير مسجل') : row.bag}</bdi></p>
-          {row.state === 'dropped' ? <p className={styles.hint}>{text('NEXT: Ahmed picks up from storage', 'التالي: أحمد يستلم من المخزن')}</p> : null}
-          {row.state === 'picked_up' ? <p className={styles.hint}>{text('NEXT: Ahmed delivers the box; owner has not received it yet', 'التالي: أحمد يسلّم العلبة والمالك لم يستلمها بعد')}</p> : null}
+          {row.state === 'dropped' ? <p className={styles.hint}>{text('NEXT: Authorized courier picks up from storage', 'التالي: المسؤول المخوّل يستلم من المخزن')}</p> : null}
+          {row.state === 'picked_up' ? <p className={styles.hint}>{text('NEXT: Assigned courier delivers; owner has not received the bag yet', 'التالي: المسؤول المخوّل يسلّم الكيس، والمالك لم يستلمه بعد')}</p> : null}
           {row.state === 'delivered' ? <p className={styles.hint}>{text('NEXT: Owner physically receives and confirms — counting may wait', 'التالي: المالك يستلم ويؤكد، ويمكن تأجيل العد')}</p> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{row.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{row.assignee ?? text('Not assigned', 'غير مسند')}</dd></div>
             <div><dt>{text('Collected', 'وقت السحب')}</dt><dd>{date(row.collected_at)}</dd></div><div><dt>{text('Storage', 'المخزن')}</dt><dd>{row.storage ?? '—'}</dd></div></dl>
@@ -221,7 +221,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
           {box.state === 'dropped' ? <p className={styles.notice}>{text('The collector recorded the box in storage. The assigned courier must check the seal and acknowledge physical pickup.', 'المشغل سجّل وضع العلبة في المخزن. المندوب المكلّف يراجع الختم ورقم العلبة ويؤكد الاستلام الفعلي.')}</p> : null}
           {box.state === 'picked_up' ? <p className={styles.notice}>{text('The courier holds the sealed cash box. Transport it to the owner location and record delivery. It has NOT yet been received by the owner.', 'العلبة المختومة بعهدة المندوب. انقلها لموقع المالك وسجّل التوصيل. لم يؤكد المالك استلامها بعد.')}</p> : null}
           {box.state === 'received' ? <p className={styles.notice}>{text('Owner has the sealed box; count it when ready.', 'العلبة المختومة مع المالك ويمكن عدّها لاحقاً.')}</p> : null}
-          {box.state === 'delivered' ? <p className={styles.notice}>{text('Ahmed marked this box delivered. The owner must physically verify the same seal and confirm receipt. DO NOT count until received; counting can be delayed.', 'أحمد سجّل توصيل العلبة. لازم المالك يتحقق فعلياً من نفس الختم ويؤكد الاستلام. ممكن تأجيل العد حتى يكون جاهز.')}</p> : null}
+          {box.state === 'delivered' ? <p className={styles.notice}>{text('Courier marked this bag delivered. The owner must check its seal and confirm actual receipt before counting.', 'المسؤول سجّل توصيل الكيس. على المالك التأكد من الختم واستلام الكيس فعلياً قبل العد.')}</p> : null}
           {box.delivery_location ? <p className={styles.hint}>{text('Courier delivery location', 'موقع توصيل المندوب')}: {box.delivery_location} · {date(box.delivered_at)}</p> : null}
           {box.seal_exception ? <p className={styles.error}>{text('Seal exception recorded. Count the actual money; owner review is still required.', 'تم تسجيل ملاحظة على الختم. يُعد المبلغ الفعلي، وتبقى مراجعة المالك مطلوبة.')}</p> : null}
           {box.evidence_url ? <a className={styles.secondary} href={box.evidence_url} target="_blank" rel="noreferrer noopener">{text('View storage photo', 'عرض صورة المخزن')}</a> : box.deposited_at ? <p className={styles.hint}>{text('Refresh to load the private storage photo.', 'حدّث الصفحة لتحميل صورة المخزن الخاصة.')}</p> : null}
@@ -232,13 +232,13 @@ function CashHandlingClient({ userId }: { userId: string }) {
               {['assign', 'dropoff'].includes(action) ? <label>{text('Responsible courier / cash coordinator', 'المسؤول عن نقل النقدية')}
                 {action === 'dropoff' && box.assigned_to ? <><input type="hidden" name="assigned_to" value={box.assigned_to} /><span>{box.assignee}</span></> : <select name="assigned_to" defaultValue={box.assigned_to ?? suggestedAhmed?.id ?? ''} required><option value="">{text('Choose an authorized person', 'اختر شخصاً مخولاً')}</option>{view.counters.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select>}</label> : null}
               {action === 'dropoff' ? <>
-                <p className={styles.hint}>{text('Assign Ahmed for pickup and delivery. Only save this after Noury actually leaves the sealed box in storage; it is NOT yet a handover to Ahmed.', 'اختار أحمد ليستلم ويوصل العلبة. نوري يسجل الخطوة بعد ما يضع العلبة فعلياً في المخزن، وهذا لا يعني أن أحمد استلمها.')}</p>
+                <p className={styles.hint}>{text('Choose an authorized person for pickup. Save this only after the collector deposits the sealed bag in the specified safe. It is not proof of receipt.', 'اختار الشخص المخوّل بالاستلام، ثم سجّل الإيداع بعد وضع الكيس المختوم داخل الخزنة. هذا ليس إثبات استلام الطرف الآخر.')}</p>
                 <p className={styles.hint}>{text('Record this only after leaving the sealed box in the designated secure place. This is not a receipt by another employee.', 'سجّل ذلك بعد وضع العلبة المختومة في المكان الآمن المحدد. هذا ليس تأكيد استلام من موظف آخر.')}</p>
-                <label>{text('Exact storage / safe location', 'موقع المخزن / الخزنة بالتحديد')}<input name="storage_location" required minLength={2} maxLength={180} /></label>
+                <label>{text('Exact storage / safe location', 'موقع المخزن / الخزنة بالتحديد')}<input name="storage_location" required minLength={2} maxLength={180} defaultValue={defaultSafeLabel} /></label>
                 <label>{text('Photo of the box in storage', 'صورة العلبة في المخزن')}<input type="file" accept="image/jpeg,image/png,image/webp" required onChange={e => { photo.current = e.target.files?.[0] ?? null; }} /></label>
               </> : null}
               {action === 'deliver' ? <>
-                <p className={styles.hint}>{text('Ahmed: record the actual arrival of the sealed box at the owner counting location. This does NOT claim the owner accepted it and does NOT record an amount.', 'أحمد: سجّل وصول العلبة المختومة لمكان عد المالك. هذا لا يعني أن المالك استلمها ولا يُسجّل أي مبلغ.')}</p>
+                <p className={styles.hint}>{text('Authorized courier: record delivery of the sealed bag. This does not mean the owner accepted or counted it.', 'المسؤول المخوّل: سجّل وصول الكيس المختوم. هذا لا يعني استلام المالك أو عدّ المبلغ.')}</p>
                 <label>{text('Exact delivery location', 'موقع تسليم العلبة بالتحديد')}<input name="delivery_location" required minLength={2} maxLength={180} placeholder={text('Owner counting location / secure handoff', 'مكان عدّ المالك / نقطة التسليم الآمنة')} /></label>
               </> : null}
               {action === 'takeover' ? <p className={styles.hint}>{text('Owner: ONLY confirm receipt after you are physically present, have checked the seal ID, and have the box in your custody. You can count it later.', 'المالك: أكّد الاستلام فقط لما تكون موجود فعلياً وتراجع رقم الختم وتستلم العلبة بيدك. تقدر تعد النقد لاحقاً.')}</p> : null}

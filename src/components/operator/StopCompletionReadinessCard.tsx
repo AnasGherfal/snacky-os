@@ -8,6 +8,7 @@ const titles: Record<StopReadinessKind, {en:string; ar:string}> = {
   "smart-return": { en: "Return replaced products", ar: "إرجاع المنتجات المستبدلة" },
   "smart-xy": { en: "Save Smart Route XY changes", ar: "حفظ تغييرات XY للجولة الذكية" },
   compressor: { en: "Compressor ON proof", ar: "إثبات تشغيل الضاغط" },
+  cash: { en: "Cash bag or documented exception", ar: "سحب النقدية أو تسجيل سبب التعذر" },
 };
 
 export function StopCompletionReadinessCard({

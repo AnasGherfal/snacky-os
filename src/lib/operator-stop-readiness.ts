@@ -2,7 +2,7 @@
  * Stock, proof and cash commit remain authoritative on the server.
  * No additional XY screenshot or manual quantity-save step is introduced.
  */
-export type StopReadinessKind = "cleaning" | "photo" | "smart-return" | "smart-xy" | "compressor";
+export type StopReadinessKind = "cleaning" | "photo" | "smart-return" | "smart-xy" | "compressor" | "cash";
 export type StopReadinessStep = {
   kind: StopReadinessKind;
   anchor: string;
@@ -21,6 +21,8 @@ export type StopReadinessInput = {
   compressorInstalled: boolean;
   compressorProofReady: boolean;
   submitting: boolean;
+  cashRequired?: boolean;
+  cashReady?: boolean;
 };
 
 export function getStopCompletionReadiness(input: StopReadinessInput) {
@@ -44,6 +46,9 @@ export function getStopCompletionReadiness(input: StopReadinessInput) {
       kind: "smart-xy", anchor: "smart-route-changes",
       done: input.smartXyOutstanding === 0,
     });
+  }
+  if (input.cashRequired) {
+    steps.push({ kind: "cash", anchor: "cash-collection", done: Boolean(input.cashReady) });
   }
   if (input.compressorInstalled) {
     steps.push({

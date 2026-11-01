@@ -1,5 +1,6 @@
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { CashRemovalBoxPlanner } from "@/components/CashRemovalBoxPlanner";
+import { OperatorCashRemovalQuickPlanner } from "@/components/OperatorCashRemovalQuickPlanner";
 import { FormField, FormSection, PrimaryButton, SecondaryButton } from "@/components/ui";
 
 type MachineOption = {
@@ -14,6 +15,7 @@ export function CashRemovalForm({
   clientSubmissionId,
   cancelHref,
   requiresAmounts = true,
+  operatorSimpleMode = false,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   machines: MachineOption[];
@@ -21,6 +23,7 @@ export function CashRemovalForm({
   clientSubmissionId: string;
   cancelHref: string;
   requiresAmounts?: boolean;
+  operatorSimpleMode?: boolean;
 }) {
   const libyaNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16);
 
@@ -29,11 +32,11 @@ export function CashRemovalForm({
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
 
       <FormSection
-        title="Cash removed from machines"
-        description={requiresAmounts ? "Record known machine amounts and group machines by the physical cash box or sealed bag." : "Remove the cash box without counting it. Record the machine, seal/box ID, photo, and time. Money will be counted separately after handover."}
+        title={operatorSimpleMode ? "تسجيل سحب النقدية" : "Cash removed from machines"}
+        description={operatorSimpleMode ? "ماكينة واحدة وكيس مستقل في كل مرة. سجل سحب النقدية فقط، وسيتم العد بعد التسليم." : requiresAmounts ? "Record known machine amounts and group machines by the physical cash box or sealed bag." : "Remove the cash box without counting it. Record the machine, seal/box ID, photo, and time. Money will be counted separately after handover."}
       >
         <div className="space-y-5">
-          <CashRemovalBoxPlanner machines={machines} selectedMachineId={selectedMachineId} requiresAmounts={requiresAmounts} />
+          {operatorSimpleMode ? <OperatorCashRemovalQuickPlanner machines={machines} selectedMachineId={selectedMachineId} /> : <CashRemovalBoxPlanner machines={machines} selectedMachineId={selectedMachineId} requiresAmounts={requiresAmounts} />}
 
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Actual removal date and time" required>
@@ -71,7 +74,7 @@ export function CashRemovalForm({
       </FormSection>
 
       <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-        <PrimaryButton>{requiresAmounts ? "Record cash removal" : "Confirm cash box removed"}</PrimaryButton>
+        <PrimaryButton>{operatorSimpleMode ? "تأكيد سحب النقدية" : requiresAmounts ? "Record cash removal" : "Confirm cash box removed"}</PrimaryButton>
         <SecondaryButton href={cancelHref}>Cancel</SecondaryButton>
       </div>
     </LocalDraftForm>

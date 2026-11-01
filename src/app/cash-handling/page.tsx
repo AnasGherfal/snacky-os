@@ -6,6 +6,7 @@ import { CashHandlingWorkspace } from "@/components/CashHandlingWorkspace";
 import { CashRemovalForm } from "@/components/CashRemovalForm";
 import { ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
 import { createCashRemoval } from "@/lib/cash-actions";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
@@ -79,10 +80,15 @@ export default async function CashHandlingPage({
           clientSubmissionId={params.submission_id && cashUuid.test(params.submission_id) ? params.submission_id : crypto.randomUUID()}
           cancelHref="/cash-handling"
           requiresAmounts={!isOperatorRole(context)}
+          operatorSimpleMode={isOperatorRole(context)}
         />
       </div>
     );
   }
+
+  const admin = getSupabaseAdminClient();
+  const cashPolicy = admin ? await admin.from("cash_refill_policy").select("safe_label").eq("id",1).maybeSingle() : null;
+  const safeLabel = cashPolicy?.data?.safe_label?.trim() || "Safe A";
 
   return (
     <div className="space-y-4">
@@ -91,7 +97,7 @@ export default async function CashHandlingPage({
           {params.success}
         </div>
       ) : null}
-      <CashHandlingWorkspace userId={profile.id} />
+      <CashHandlingWorkspace userId={profile.id} defaultSafeLabel={safeLabel} />
     </div>
   );
 }

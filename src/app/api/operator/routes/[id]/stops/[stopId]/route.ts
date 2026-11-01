@@ -1359,6 +1359,32 @@ export async function POST(
       }
     }
 
+    // Pilot-only cash gate: check before any inventory or stop-completion
+    // side effects. The database trigger also enforces this atomically.
+    const cashAdmin = getSupabaseAdminClient();
+    if (cashAdmin) {
+      const pilot = await cashAdmin.from("cash_refill_policy")
+        .select("enabled,pilot_machine_ids").eq("id",1).maybeSingle();
+      if (pilot.error) {
+        return NextResponse.json({ success:false, code:"CASH_POLICY_UNAVAILABLE",
+          error:"Could not verify cash policy. Please retry." }, { status:503, headers:jsonHeaders() });
+      }
+      const pilotMachines = Array.isArray(pilot.data?.pilot_machine_ids) ? pilot.data.pilot_machine_ids : [];
+      if (pilot.data?.enabled && pilotMachines.length > 0 && pilotMachines.includes(machineId)) {
+        const cashRow = await cashAdmin.from("route_stop_cash_receipts")
+          .select("state").eq("route_stop_id",stopId).eq("route_id",routeId).eq("machine_id",machineId).maybeSingle();
+        if (cashRow.error) {
+          return NextResponse.json({ success:false, code:"CASH_STATUS_UNAVAILABLE",
+            error:"Could not verify the cash collection for this stop." }, { status:503, headers:jsonHeaders() });
+        }
+        if (!["collected","exception"].includes(String(cashRow.data?.state ?? ""))) {
+          return NextResponse.json({ success:false, code:"CASH_RECORD_REQUIRED",
+            error:"Record the sealed cash collection or a documented exception before finishing this stop." },
+            { status:428, headers:jsonHeaders() });
+        }
+      }
+    }
+
     const result = await completeStop({
       stopId,
       routeId,
