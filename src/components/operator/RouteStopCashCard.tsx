@@ -8,7 +8,7 @@ type CashStatus = "pending" | "collected" | "exception" | null;
 type Payload = {
   ok: boolean; required?: boolean; completed?: boolean; status?: CashStatus;
   bagId?: string | null; collectionId?: string | null;
-  requestId?: string | null; error?: string;
+  requestId?: string | null; error?: string; code?: string;
 };
 
 export function RouteStopCashCard({
