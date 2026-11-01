@@ -37,11 +37,12 @@ export async function GET(_request: Request, { params }: Params) {
   const ctx = await scope(id, stopId);
   if (!ctx) return respond(403, { ok: false, error: "Access denied or cash settings unavailable." });
   const { data, error } = await ctx.admin.from("route_stop_cash_receipts")
-    .select("state, bag_id, collection_id, exception_reason").eq("route_stop_id", stopId).maybeSingle();
+    .select("state, bag_id, collection_id, exception_reason, request_id").eq("route_stop_id", stopId).maybeSingle();
   if (error) return respond(503, { ok: false, error: "Could not load cash collection status." });
   return respond(200, {
     ok: true, required: ctx.required, status: data?.state ?? null,
     bagId: data?.bag_id ?? null, collectionId: data?.collection_id ?? null,
+    requestId: data?.state === "pending" ? data.request_id : null,
     exceptionReason: data?.exception_reason ?? null,
     completed: ctx.stop.status === "completed",
   });
@@ -144,7 +145,8 @@ async function savePhysicalCollection(input: CollectionInput) {
         removal_evidence_file_name: evidence?.fileName,
         machines: [{ machine_id: ctx.stop.machine_id, removed_amount_lyd: null }],
       }],
-      p_removed_at: new Date().toISOString(),
+      p_removed_at: (await ctx.admin.from("route_stop_cash_receipts")
+        .select("created_at").eq("route_stop_id", stopId).single()).data?.created_at ?? new Date().toISOString(),
       p_removal_type: removalType,
       p_compartments: compartments,
       p_notes: notes || null,
