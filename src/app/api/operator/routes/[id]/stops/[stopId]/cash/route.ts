@@ -4,6 +4,7 @@ import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { uploadCashEvidence, removeCashEvidence } from "@/lib/cash-evidence";
+import { readCompanyBody } from "@/lib/company-request";
 
 export const dynamic = "force-dynamic";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -16,7 +17,7 @@ async function scope(routeId: string, stopId: string) {
   const profile = await getCurrentProfile();
   const db = await getAuthenticatedSupabaseServerClient();
   const admin = getSupabaseAdminClient();
-  if (!profile?.team_member_id || !db || !admin || !canExecuteRoutes(profile)) return null;
+  if (!profile?.team_member_id || profile.active_status !== "active" || !db || !admin || !canExecuteRoutes(profile)) return null;
   const access = await buildOperatorRouteAccessContext(db, profile);
   const routeResult = await db.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
   if (routeResult.error || !routeResult.data || !canAccessOperatorRoute(access, routeResult.data.operator_id)) return null;
@@ -62,7 +63,14 @@ export async function POST(request: Request, { params }: Params) {
   if (!ctx) return respond(403, { ok: false, error: "Not authorized." });
   if (["completed", "skipped", "canceled"].includes(ctx.stop.status)) return respond(409, { ok: false, error: "Stop already closed." });
   let form: FormData;
-  try { form = await request.formData(); } catch { return respond(400, { ok: false, error: "Invalid form." }); }
+  try {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.startsWith("multipart/form-data")) throw Error("Invalid content type");
+    const bytes = await readCompanyBody(request, 3 * 1024 * 1024 + 18000);
+    form = await new Request(request.url, {
+      method: "POST", headers: { "content-type": contentType }, body: new Uint8Array(bytes).buffer,
+    }).formData();
+  } catch { return respond(400, { ok: false, error: "Invalid form or photo exceeds 3 MB." }); }
   const decision = String(form.get("decision") ?? "");
   const requestId = String(form.get("request_id") ?? "");
   if (!uuid.test(requestId) || !["collected", "exception"].includes(decision)) return respond(400, { ok: false, error: "Invalid cash request." });
