@@ -50,6 +50,13 @@ export default async function CashRefillPilotPage({
   ]);
   if (policyQuery.error || machinesQuery.error) return <p>تعذر تحميل إعدادات النقدية.</p>;
   const policy = policyQuery.data;
+  const xyQuery = await db.from("vms_transactions_raw")
+    .select("payment_time,delivery_time")
+    .order("payment_time", { ascending: false, nullsFirst: false })
+    .limit(1).maybeSingle();
+  const xyTime = xyQuery.data?.payment_time ?? xyQuery.data?.delivery_time ?? null;
+  const xyAgeHours = xyTime ? (Date.now() - new Date(xyTime).getTime()) / 3600000 : Infinity;
+  const xyFresh = !xyQuery.error && Number.isFinite(xyAgeHours) && xyAgeHours <= 36;
   const selected = new Set(policy?.pilot_machine_ids ?? []);
   const params = await searchParams;
   return (
@@ -61,7 +68,19 @@ export default async function CashRefillPilotPage({
       </header>
       {params.updated ? <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">تم حفظ إعدادات التجربة.</p> : null}
       {params.error ? <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">تعذر الحفظ. تحقق من الخزنة والماكينات المختارة.</p> : null}
-      <form action={updateCashPilot} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5">
+      <section className={xyFresh ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4" : "rounded-xl border border-amber-200 bg-amber-50 p-4"}>
+        <h2 className="font-bold text-slate-950">مطابقة XY</h2>
+        <p className="mt-1 text-sm leading-6">
+          {xyFresh ? "توجد معاملات مفصلة حديثة من XY. ستظهر المقارنة بعد العد والتحقق من الفترة."
+            : "لا توجد معاملات XY حديثة مؤكدة للمقارنة النقدية. سيُحفظ سحب النقدية والعدّ، لكن الفروقات ستظل غير مؤكدة حتى تتوفر معاملات كاملة لفترة السحب."}
+        </p>
+        <p className="mt-2 text-xs text-slate-700">آخر معاملة في قاعدة البيانات: <bdi>{xyTime ? new Date(xyTime).toLocaleString("en-GB", { timeZone:"Africa/Tripoli" }) : "غير متوفر"}</bdi></p>
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Link href="/vms-import" className="text-sm font-semibold text-emerald-950 underline">رفع معاملات VMS</Link>
+          <Link href="/cash-collections?status=counted" className="text-sm font-semibold text-emerald-950 underline">مراجعة مطابقة النقدية</Link>
+        </div>
+      </section>
+            <form action={updateCashPilot} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5">
         <label className="flex items-center gap-3 text-sm font-semibold">
           <input type="checkbox" name="enabled" defaultChecked={Boolean(policy?.enabled)}/>
           تفعيل شرط تسجيل النقدية قبل إنهاء التعبئة للماكينات المختارة
