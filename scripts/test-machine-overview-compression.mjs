@@ -9,7 +9,7 @@ test("small already prepared overviews retain exact original bytes", async () =>
     .jpeg({quality:80}).toBuffer();
   assert.ok(small.length < OVERVIEW_PREPARED_LIMIT_BYTES);
   const result = await compactMachineOverview(new Uint8Array(small));
-  assert.deepEqual(result, small);
+  assert.deepEqual(result, new Uint8Array(small));
 });
 
 test("large older-client camera overview is bounded and preserves the full frame without cropping", async () => {
