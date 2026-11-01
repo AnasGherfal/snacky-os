@@ -138,10 +138,10 @@ function archiveHandlerHarness(options = {}) {
  });
  return {
   observed,
-  async post(release=false){
+  async post(release=false, source_release_approved=undefined){
    const response=await outputs.POST(new Request("https://snacky.invalid/api/ops/archive-refill-photo",{
     method:"POST",headers:{"authorization":"Bearer valid","content-type":"application/json"},
-    body:JSON.stringify({path:routePath,expectedSize:400000,expectedUpdatedAt:"2026-09-01T12:00:00.000Z",expectedEtag:"a".repeat(32),release}),
+    body:JSON.stringify({path:routePath,expectedSize:400000,expectedUpdatedAt:"2026-09-01T12:00:00.000Z",expectedEtag:"a".repeat(32),release,source_release_approved}),
    }));
    return {status:response.status,body:await response.json()};
   },
@@ -184,6 +184,16 @@ test("unconfigured source release cannot invoke Storage even with an accepted re
  const response=await h.post(true);
  assert.equal(response.status,409);
  assert.equal(response.body.error,"source_release_disabled");
+ assert.equal(h.observed.length,0);
+});
+
+test("release-enabled environment still refuses sources without explicit owner approval",async()=>{
+ const h=archiveHandlerHarness({releaseEnabled:true});
+ for(const approval of [undefined,false]){
+  const result=await h.post(true,approval);
+  assert.equal(result.status,409);
+  assert.equal(result.body.error,"source_release_not_approved");
+ }
  assert.equal(h.observed.length,0);
 });
 
