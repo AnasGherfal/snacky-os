@@ -7,6 +7,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
 import { StopCompletionReadinessCard } from "@/components/operator/StopCompletionReadinessCard";
+import { RouteStopCashCard } from "@/components/operator/RouteStopCashCard";
 import { getStopCompletionReadiness } from "@/lib/operator-stop-readiness";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
@@ -671,6 +672,9 @@ export default function MachineStopPage() {
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [cashRequired, setCashRequired] = useState(false);
+  const [cashReady, setCashReady] = useState(false);
+  const [cashState, setCashState] = useState<"collected" | "exception" | "pending" | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
   const [notes, setNotes] = useState("");
@@ -1588,6 +1592,11 @@ export default function MachineStopPage() {
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (cashRequired && !cashReady) {
+      setError(tr("Record cash collection or a valid exception first.", "سجّل سحب النقدية أو سبب تعذر السحب قبل إنهاء التعبئة."));
+      document.getElementById("cash-collection")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     // A quantity snapshot is automatically saved ON Complete Stop below.
     // Do not block on a separate screenshot/power-off confirmation step.
     localDraft.saveNow();
@@ -1691,7 +1700,7 @@ export default function MachineStopPage() {
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
-        cashCollected: false,
+        cashCollected: cashState === "collected",
         cashBagId: "",
         notes,
         completionPhotoUrl: uploadedProof?.photoUrl,
@@ -1837,6 +1846,8 @@ export default function MachineStopPage() {
     compressorInstalled: compressorSafetyInstalled,
     compressorProofReady,
     submitting,
+    cashRequired,
+    cashReady,
   });
   const canSubmitStop = stopReadiness.canComplete;
 
@@ -2912,6 +2923,17 @@ export default function MachineStopPage() {
             setStopData((current) => current
               ? { ...current, adjustments: [adjustment, ...(current.adjustments ?? [])] }
               : current);
+          }}
+        />
+
+        <RouteStopCashCard
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          onReadyChange={(required, ready, state) => {
+            setCashRequired(required);
+            setCashReady(ready);
+            setCashState(state);
           }}
         />
 
