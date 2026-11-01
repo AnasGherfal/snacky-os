@@ -36,7 +36,7 @@ const date = (value: string) => new Intl.DateTimeFormat("en-GB", {
 
 export default async function RefillCashAuditPage() {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || profile.active_status !== "active" || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const db = getSupabaseAdminClient();
   if (!db) return <p>تعذر الاتصال بقاعدة البيانات.</p>;
 
