@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { timingSafeEqual } from "node:crypto";
 import {
   sha256, photoArchiveReceiptKey, createPrivateBlobStore,
   storeVerifiedOriginal, readVerifiedOriginal,
@@ -119,6 +120,7 @@ function archiveHandlerHarness(options = {}) {
   storage:{from(){throw Error("Should not reach Storage while quantity evidence unresolved");}},
  };
  const imports = {
+  "node:crypto": {timingSafeEqual},
   "@/lib/compressor-proof-preview": {compactCompressorIndicator:()=>{throw Error("Compressor preview not expected in quantity protection or release-gate tests");}},
   "next/server": {NextResponse:{json:(data,init)=>new Response(JSON.stringify(data),{status:init.status,headers:init.headers})}},
   "@/lib/supabase-server": {getSupabaseAdminClient:()=>{observed.push({admin:true});return supabase;}},
@@ -134,7 +136,7 @@ function archiveHandlerHarness(options = {}) {
  if(options.releaseEnabled)env.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED="true";
  vm.runInNewContext(encoded,{
   exports:outputs,require:id=>{assert.ok(Object.hasOwn(imports,id),id);return imports[id];},
-  process:{env},Request,Response,Date,Promise,JSON,String,Number,Error,console,
+  process:{env},Request,Response,Date,Promise,JSON,String,Number,Error,Buffer,console,
  });
  return {
   observed,
@@ -195,6 +197,21 @@ test("release-enabled environment still refuses sources without explicit owner a
   assert.equal(result.body.error,"source_release_not_approved");
  }
  assert.equal(h.observed.length,0);
+});
+
+test("60-day maintenance credential is disabled without branch policy and preserves existing release barriers",()=>{
+ const source=readFileSync("src/app/api/ops/archive-refill-photo/route.ts","utf8");
+ assert.match(source,/SNACKY_ARCHIVE_60DAY_POLICY_ENABLED/);
+ assert.match(source,/SNACKY_ARCHIVE_MAINTENANCE_TOKEN/);
+ assert.match(source,/configured.length < 48/);
+ assert.match(source,/timingSafeEqual/);
+ assert.match(source,/const minAgeMs=60\*24\*60\*60\*1000/);
+ assert.match(source,/SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED/);
+ assert.match(source,/SNACKY_ARCHIVE_60DAY_ISSUE_RELEASE_ENABLED/);
+ assert.match(source,/job.source_release_approved===true/);
+ assert.match(source,/h.length===0 && s.length===1/);
+ assert.match(source,/Date.parse\(job.expectedUpdatedAt\) < Date.now\(\)-minAgeMs/);
+ assert.match(source,/bucket.remove\(\[job.path\]\)/);
 });
 
 test("photo canary query is read-only and cannot silently approve a source release",()=>{
