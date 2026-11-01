@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
@@ -15,7 +16,16 @@ function isCompactCompressorJob(job: Job) {
     process.env.SNACKY_COMPRESSOR_HISTORICAL_COMPACTION_ENABLED === "true";
 }
 const maxBytes=7*1024*1024;
-const minAgeMs=30*24*60*60*1000;
+// The operator-approved retention policy starts at 60 full days, counting
+// both creation and last update; no newer original may be released.
+const minAgeMs=60*24*60*60*1000;
+function authorizedMaintenanceToken(header: string) {
+  const configured = process.env.SNACKY_ARCHIVE_MAINTENANCE_TOKEN ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  if (process.env.SNACKY_ARCHIVE_60DAY_POLICY_ENABLED !== "true" ||
+      configured.length < 48 || bearer.length !== configured.length) return false;
+  return timingSafeEqual(Buffer.from(sha256(bearer), "hex"), Buffer.from(sha256(configured), "hex"));
+}
 function matchesTime(value:unknown,original:string){
   return typeof value==="string" && Number.isFinite(Date.parse(value)) &&
     Date.parse(value)===Date.parse(original);
@@ -71,16 +81,30 @@ async function ensureEligible(supabase:NonNullable<ReturnType<typeof getSupabase
     supabase.from("issues").select("id").in("machine_id",machineIds).is("resolved_at",null).is("archived_at",null).limit(1),
   ]);
   if(routes.error||stops.error||issues.error)throw Error("operational_hold_check_failed");
+  // Explicitly approved 60-day historical safety proof can move to an immutable
+  // private original even if the machine still has an unresolved issue. This is
+  // disabled unless a second server-side switch is on. The issue and its proof
+  // reference remain untouched, and the authenticated proxy retains access.
+  const approvedHistoricalSafety = process.env.SNACKY_ARCHIVE_60DAY_ISSUE_RELEASE_ENABLED==="true" &&
+    job.includeSafety===true && job.source_release_approved===true &&
+    h.length===0 && s.length===1 &&
+    Number.isFinite(Date.parse(job.expectedUpdatedAt)) &&
+    Date.parse(job.expectedUpdatedAt) < Date.now()-minAgeMs;
   if(routes.data?.length!==routeIds.length||stops.data?.length!==stopIds.length||
      routes.data.some(row=>row.status!=="completed")||
      stops.data.some(row=>row.status!=="completed")||
-     (issues.data?.length && !isCompactCompressorJob(job)))throw Error("open_route_or_issue_hold");
+     (issues.data?.length && !isCompactCompressorJob(job) && !approvedHistoricalSafety))
+    throw Error("open_route_or_issue_hold");
   // For compressor proofs only, original evidence is retained bit-for-bit in the
   // verified private archive, so an unresolved machine issue need not block
   // a reviewed low-resolution display copy. A separate release gate still applies.
 }
 export async function POST(request: Request){
-  if(!authorizedSchedulerToken(String(request.headers.get("authorization")??"")))return response(401,{ok:false,error:"unauthorized"});
+  // Maintenance access is separate from the longstanding scheduler credential,
+  // only exists on a branch-scoped preview, and is always disabled by default.
+  const authorization = String(request.headers.get("authorization")??"");
+  if(!authorizedSchedulerToken(authorization)&&!authorizedMaintenanceToken(authorization))
+    return response(401,{ok:false,error:"unauthorized"});
   if(process.env.SNACKY_PHOTO_ARCHIVE_MIGRATION_ENABLED!=="true")return response(409,{ok:false,error:"migration_disabled"});
   let job:Job;
   try{
