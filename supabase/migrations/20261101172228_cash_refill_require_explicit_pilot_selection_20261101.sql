@@ -1,0 +1,1 @@
+-- Incremental guard fix: require an explicit non-empty pilot selection.
