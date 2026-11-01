@@ -113,3 +113,87 @@ export async function POST(request: Request, { params }: Params) {
   }
   return savePhysicalCollection({ ctx, requestId, bagId, photo, compartments, removalType, notes, routeId: id, stopId });
 }
+
+type CollectionInput = {
+  ctx: NonNullable<Awaited<ReturnType<typeof scope>>>;
+  requestId: string;
+  bagId: string;
+  photo: File;
+  compartments: string[];
+  removalType: string;
+  notes: string;
+  routeId: string;
+  stopId: string;
+};
+
+async function savePhysicalCollection(input: CollectionInput) {
+  const { ctx, requestId, bagId, photo, compartments, removalType, notes, routeId, stopId } = input;
+  let evidence: Awaited<ReturnType<typeof uploadCashEvidence>> = null;
+  try {
+    evidence = await uploadCashEvidence(photo, { scopeId: requestId, stage: "removed", required: true });
+  } catch {
+    return respond(400, { ok: false, error: "Could not upload seal photo. Retry this collection." });
+  }
+
+  let result: { collection_ids?: string[]; replayed?: boolean } | null = null;
+  try {
+    const response = await ctx.db.rpc("record_standalone_cash_removal_group_v1", {
+      p_boxes: [{
+        box_key: "box-1", cash_bag_id: bagId,
+        removal_evidence_path: evidence?.path,
+        removal_evidence_file_name: evidence?.fileName,
+        machines: [{ machine_id: ctx.stop.machine_id, removed_amount_lyd: null }],
+      }],
+      p_removed_at: new Date().toISOString(),
+      p_removal_type: removalType,
+      p_compartments: compartments,
+      p_notes: notes || null,
+      p_client_submission_id: requestId,
+    });
+    if (response.error) throw response.error;
+    result = response.data as typeof result;
+  } catch {
+    // The existing cash RPC is idempotent by request ID. Even if a response is
+    // lost, reuse the SAME ID and bag; never create a replacement cash record.
+    return respond(503, {
+      ok: false, retryable: true,
+      error: "Collection not confirmed. Do not take cash a second time. Retry this entry.",
+    });
+  }
+  const collectionId = result?.collection_ids?.[0];
+  if (!collectionId || !uuid.test(collectionId) || result?.collection_ids?.length !== 1) {
+    return respond(503, { ok: false, retryable: true, error: "Collection receipt unavailable. Retry the same entry." });
+  }
+
+  try {
+    const source = await ctx.admin.from("cash_collections")
+      .select("id, machine_id, operator_id, cash_bag_id, route_id").eq("id", collectionId).maybeSingle();
+    const saved = source.data;
+    if (source.error || !saved || saved.machine_id !== ctx.stop.machine_id
+      || saved.operator_id !== ctx.profile.team_member_id
+      || saved.cash_bag_id !== bagId || (saved.route_id && saved.route_id !== routeId)) {
+      return respond(409, { ok: false, error: "Cash ledger mismatch. Contact the owner for reconciliation." });
+    }
+    if (!saved.route_id) {
+      const link = await ctx.admin.from("cash_collections")
+        .update({ route_id: routeId }).eq("id", collectionId).is("route_id", null);
+      if (link.error) throw link.error;
+    }
+    const linked = await ctx.admin.from("route_stop_cash_receipts")
+      .update({ state: "collected", collection_id: collectionId, bag_id: bagId, updated_at: new Date().toISOString() })
+      .eq("route_stop_id", stopId).eq("request_id", requestId).eq("state", "pending")
+      .select("route_stop_id").maybeSingle();
+    if (linked.error || !linked.data) throw linked.error ?? new Error("Cash link not saved.");
+  } catch {
+    return respond(503, { ok: false, retryable: true, error: "Collection saved; retry to finish linking it to the route." });
+  }
+
+  if (result?.replayed && evidence) {
+    // A retry's uploaded photo is not used by the already-committed collection.
+    await removeCashEvidence(evidence);
+  }
+  return respond(200, {
+    ok: true, state: "collected", collectionId, bagId,
+    replayed: Boolean(result?.replayed),
+  });
+}
