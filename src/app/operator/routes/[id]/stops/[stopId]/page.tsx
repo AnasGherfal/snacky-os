@@ -3229,14 +3229,6 @@ function CashAndIssueSections({
   return (
     <>
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="text-lg font-semibold">{tr("Cash is recorded separately", "يتم تسجيل سحب النقد بشكل مستقل")}</h2>
-        <p className="mt-1 text-sm text-slate-600">{tr("Cash removal is not part of route completion. Use the dedicated cash-removal screen whenever money physically leaves the machine.", "سحب النقد ليس جزءاً من إكمال المسار. استخدم شاشة سحب النقد المخصصة عند إخراج المال فعلياً من الماكينة.")}</p>
-        <Link href={`/cash-collections/new?machine_id=${encodeURIComponent(machineId)}`} className="btn-secondary mt-4 inline-flex">
-          {tr("Open cash-removal screen", "فتح شاشة سحب النقد")}
-        </Link>
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
         <h2 className="mb-4 text-lg font-semibold">{tr("Issue Report", "بلاغ عطل")}</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="block">
