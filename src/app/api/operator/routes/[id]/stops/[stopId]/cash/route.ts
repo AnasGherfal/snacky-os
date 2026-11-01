@@ -153,7 +153,7 @@ async function savePhysicalCollection(input: CollectionInput) {
       p_client_submission_id: requestId,
     });
     if (response.error) throw response.error;
-    result = response.data as typeof result;
+    result = response.data as { collection_ids?: string[]; replayed?: boolean } | null;
   } catch {
     // The existing cash RPC is idempotent by request ID. Even if a response is
     // lost, reuse the SAME ID and bag; never create a replacement cash record.
