@@ -57,7 +57,14 @@ export function RouteStopCashCard({
   }, [endpoint]);
 
   if (loading) return <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm" dir="rtl">جارٍ التحقق من خطوة النقدية...</p>;
-  if (!required) return null;
+  if (!required) return (
+    <section id="cash-collection" dir="rtl" className="rounded-xl border border-slate-200 bg-white p-4">
+      <h2 className="font-semibold text-slate-900">النقدية</h2>
+      <p className="mt-1 text-sm text-slate-600">يمكن تسجيل سحب النقدية من خلال قسم النقدية. خطوة السحب الإلزامية غير مفعّلة على هذه الماكينة بعد.</p>
+      <Link className="btn-secondary mt-3 inline-flex" href={`/cash-handling?collect=1&machine_id=${encodeURIComponent(machineId)}`}>تسجيل سحب نقدية</Link>
+      {error ? <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p> : null}
+    </section>
+  );
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
