@@ -28,7 +28,7 @@ async function scope(routeId: string, stopId: string) {
     .select("enabled, pilot_machine_ids").eq("id", 1).maybeSingle();
   if (policyResult.error) return null;
   const pilot = Array.isArray(policyResult.data?.pilot_machine_ids) ? policyResult.data.pilot_machine_ids : [];
-  const required = Boolean(policyResult.data?.enabled) && (pilot.length === 0 || pilot.includes(stop.machine_id));
+  const required = Boolean(policyResult.data?.enabled) && pilot.length > 0 && pilot.includes(stop.machine_id);
   return { profile, db, admin, stop, required };
 }
 
