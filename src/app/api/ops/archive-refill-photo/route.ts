@@ -97,14 +97,14 @@ export async function POST(request: Request){
   // A copy-only rehearsal is permitted when migration is enabled, but source
   // removal requires a distinct explicit release gate as well as release:true.
   // Neither value is inferred from a successful copy or archive receipt.
-  // A global flag never substitutes for per-source owner approval. Candidate
-  // manifests default to source_release_approved:false and cannot delete.
-  if(job.release===true&&job.source_release_approved!==true)
-    return response(409,{ok:false,error:"source_release_not_approved"});
   if(job.release===true&&process.env.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true")
     return response(409,{ok:false,error:"source_release_disabled"});
   if(job.release===true&&isCompactCompressorJob(job)&&process.env.SNACKY_COMPRESSOR_SOURCE_RELEASE_ENABLED!=="true")
     return response(409,{ok:false,error:"compressor_source_release_disabled"});
+  // A global flag never substitutes for per-source owner approval. Candidate
+  // manifests default to source_release_approved:false and cannot delete.
+  if(job.release===true&&job.source_release_approved!==true)
+    return response(409,{ok:false,error:"source_release_not_approved"});
   const supabase=getSupabaseAdminClient();
   if(!supabase)return response(503,{ok:false,error:"storage_client_unavailable"});
   try{
