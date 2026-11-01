@@ -1,6 +1,7 @@
 "use server";
 
 import { createHash } from "node:crypto";
+import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
@@ -353,9 +354,23 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   }
 
   const originalName = file.name || "refill-photo";
-  const extension = safeFileSegment(originalName.split(".").pop() || "jpg", "jpg");
+  let storedFile: File = file;
+  if (photoPurpose === "compressor") {
+    // A server-side lower bound on storage use, including stale app clients.
+    // Ordinary machine overview photos stay at their higher quality.
+    try {
+      const compact = await compactCompressorIndicator(new Uint8Array(await file.arrayBuffer()));
+      storedFile = new File([new Uint8Array(compact)], originalName.replace(/\.[^.]+$/, "") + ".webp", {
+        type: "image/webp",
+        lastModified: file.lastModified,
+      });
+    } catch {
+      throw new Error("The compressor ON indicator photo could not be reduced clearly. Retake a close photo of the illuminated ON switch.");
+    }
+  }
+  const extension = safeFileSegment(storedFile.name.split(".").pop() || "jpg", "jpg");
   const photoDigest = createHash("sha256")
-    .update(new Uint8Array(await file.arrayBuffer()))
+    .update(new Uint8Array(await storedFile.arrayBuffer()))
     .digest("hex")
     .slice(0, 24);
   const objectName = `${safeFileSegment(stopId, "stop")}-${photoDigest}.${extension}`;
@@ -378,9 +393,9 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   }
 
   try {
-    const { error } = await storageClient.storage.from(REFILL_PHOTO_BUCKET).upload(objectPath, file, {
+    const { error } = await storageClient.storage.from(REFILL_PHOTO_BUCKET).upload(objectPath, storedFile, {
       cacheControl: "31536000",
-      contentType: file.type,
+      contentType: storedFile.type,
       upsert: true,
     });
     if (error) throw error;

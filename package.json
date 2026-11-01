@@ -87,7 +87,8 @@
     "react-dom": "19.2.6",
     "web-push": "3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "3.3.5",
@@ -105,6 +106,7 @@
     "postcss": "8.5.23",
     "nanoid": "3.3.18",
     "sharp": "0.35.5",
-    "baseline-browser-mapping": "2.11.0"
+    "baseline-browser-mapping": "2.11.0",
+    "minimatch": "11.0.1"
   }
 }

@@ -181,6 +181,7 @@ function routeHarness(options = {}) {
           return options.storage ?? { data: null, error: { statusCode: 404, message: 'Object not found' } };
         },
       }) } }) },
+    '@/lib/compressor-proof-preview': { compactCompressorIndicator: async bytes => bytes },
     '@/lib/photo-archive-server': { archivedPhotoResponse: async () => { events.push('archive'); if (options.corrupt) throw Error('corrupt'); return options.noArchive ? null : new Response(image, { headers: { 'X-Snacky-Photo-Source': 'verified-private-archive' } }); } },
     '@/lib/photo-archive-core': { isMissingStorageObject: core.isMissingStorageObject },
     '@/lib/private-blob-originals': { readVerifiedOriginal: async () => { events.push('private-blob'); return null; } },
