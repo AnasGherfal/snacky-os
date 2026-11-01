@@ -31,7 +31,7 @@ test("large older-client camera overview is bounded and preserves the full frame
   assert.equal(meta.format, "webp");
   assert.ok(reduced.length < input.length && reduced.length <= OVERVIEW_MAX_STORED_BYTES);
   assert.ok(meta.width >= 1600 && meta.width <= 2000);
-  assert.equal(Math.round(meta.width / meta.height * 100), Math.round(width / height * 100));
+  assert.ok(Math.abs(meta.width / meta.height - width / height) < 0.005, "Full-frame aspect ratio must survive pixel rounding");
 });
 
 test("malformed source and oversized input are rejected, never silently stored", async () => {
