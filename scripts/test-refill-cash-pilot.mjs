@@ -52,3 +52,24 @@ test("storage and counting use existing custody system rather than duplicate led
   assert.match(cash, /snacky_cash_handover_command_v1/);
   assert.match(cash, /calculate_cash_collection_expectation/);
 });
+
+test("cash pilot fails closed on status-loading errors instead of claiming cash is optional", () => {
+  const card = read("src/components/operator/RouteStopCashCard.tsx");
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  assert.match(page, /const \[cashRequired, setCashRequired\] = useState\(true\)/);
+  assert.match(card, /setStatusError\(true\)/);
+  assert.match(card, /onReadyRef\.current\(true, false, null\)/);
+  assert.match(card, /if \(statusError\) return/);
+  assert.match(card, /setStatusReloadKey/);
+});
+
+test("reused cash bags have a safe recovery only when no original collection committed", () => {
+  const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/cash/route.ts");
+  const card = read("src/components/operator/RouteStopCashCard.tsx");
+  assert.match(api, /code === "23505"/);
+  assert.match(api, /eq\("removal_group_id", requestId\)/);
+  assert.match(api, /if \(!committed\.error && !committed\.data\?\.length\)/);
+  assert.match(api, /BAG_ALREADY_USED/);
+  assert.match(card, /requestRef\.current = null/);
+  assert.match(card, /result\.code === "BAG_ALREADY_USED"/);
+});
