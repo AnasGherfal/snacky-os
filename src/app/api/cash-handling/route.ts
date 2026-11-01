@@ -88,6 +88,22 @@ export async function POST(request: Request) {
     // Do not delete evidence after an ambiguous transport failure: the database
     // may have committed and a retry must recover the same recorded handover.
     if (error) return rpcFailure(error);
-    return cashReceiptMatches(command, data) ? json(data) : json({ ok: false, code: 'uncertain', retryable: true }, 503);
+    if (!cashReceiptMatches(command, data)) return json({ ok: false, code: 'uncertain', retryable: true }, 503);
+    // Once an independent physical count is committed, calculate the exact
+    // cash-only XY interval when the actor is allowed to review financials.
+    // This is best-effort: missing VMS rows remain unverified, never zero.
+    // Do not automatically approve, reconcile or deduct a variance.
+    if (command.action === 'count' && command.collection_id && hasAnyRole(ctx.profile, ['owner','admin','finance'])) {
+      try {
+        const xy = await ctx.db.rpc('calculate_cash_collection_expectation', {
+          p_collection_id: command.collection_id,
+          p_client_submission_id: crypto.randomUUID(),
+        });
+        if (xy.error) console.warn('[cash] XY expectation pending after count', { code: xy.error.code });
+      } catch {
+        console.warn('[cash] XY expectation could not be checked automatically');
+      }
+    }
+    return json(data);
   } catch { return json({ ok: false, code: 'uncertain', retryable: true }, 503); }
 }
