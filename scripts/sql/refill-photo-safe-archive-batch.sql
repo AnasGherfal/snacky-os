@@ -14,7 +14,7 @@ WITH objects AS (
     AND (o.metadata->>'size')::bigint BETWEEN 200000 AND 7*1024*1024
     AND trim(both '"' from o.metadata->>'eTag') ~ '^[0-9a-fA-F]{32,64}$'
     AND o.name ~ '^[0-9a-fA-F-]{36}/[a-zA-Z0-9._/-]+\.(jpg|jpeg|png|webp)$'
-), references AS (
+), refs AS (
   SELECT o.*, 'routine_overview'::text AS kind, h.id AS reference_id,
     h.route_id,h.route_stop_id,h.machine_id,false AS include_safety,
     h.refill_at AS reference_at
@@ -44,7 +44,7 @@ WITH objects AS (
       WHERE h.machine_photo_path=o.path)
 ), eligible AS (
   SELECT ref.*,m.name AS machine_name
-  FROM references ref
+  FROM refs ref
   JOIN public.routes r ON r.id=ref.route_id AND r.status::text='completed'
   JOIN public.route_stops st ON st.id=ref.route_stop_id AND st.status::text='completed'
   JOIN public.machines m ON m.id=ref.machine_id
