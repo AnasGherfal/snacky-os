@@ -58,6 +58,17 @@ export default async function CashHandlingPage({
       );
     }
 
+    const operator = isOperatorRole(context);
+    const admin = operator ? getSupabaseAdminClient() : null;
+    const pilotPolicy = admin ? await admin.from("cash_refill_policy")
+      .select("enabled,pilot_machine_ids").eq("id",1).maybeSingle() : null;
+    if (operator && (!admin || pilotPolicy?.error)) {
+      return <ErrorState title="Cash policy unavailable" body="Could not verify cash collection settings. Retry later." />;
+    }
+    const pilotMachineIds = pilotPolicy?.data?.enabled && Array.isArray(pilotPolicy.data.pilot_machine_ids)
+      ? pilotPolicy.data.pilot_machine_ids : [];
+    const blockedMachine = Boolean(params.machine_id && pilotMachineIds.includes(params.machine_id));
+    const visibleMachines = operator ? (machines ?? []).filter(machine => !pilotMachineIds.includes(machine.id)) : (machines ?? []);
     return (
       <div className="mx-auto max-w-4xl space-y-5">
         <PageHeader
@@ -70,9 +81,16 @@ export default async function CashHandlingPage({
             {params.error}
           </div>
         ) : null}
+        {blockedMachine ? (
+          <div dir="rtl" className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+            <p className="font-bold text-amber-950">تسجيل النقدية لهذه الماكينة يتم أثناء التعبئة فقط.</p>
+            <p className="mt-2 text-sm text-amber-900">افتح الجولة المكلف بها ثم سجّل رقم الكيس وصورة الختم في خطوة النقدية.</p>
+            <SecondaryButton href="/operator/routes">الانتقال إلى الجولات</SecondaryButton>
+          </div>
+        ) : (
         <CashRemovalForm
           action={createCashRemoval}
-          machines={(machines ?? []).map((machine) => ({
+          machines={visibleMachines.map((machine) => ({
             id: machine.id,
             label: formatMachineDisplayName(machine, { includeArea: true }),
           }))}
@@ -80,8 +98,9 @@ export default async function CashHandlingPage({
           clientSubmissionId={params.submission_id && cashUuid.test(params.submission_id) ? params.submission_id : crypto.randomUUID()}
           cancelHref="/cash-handling"
           requiresAmounts={!isOperatorRole(context)}
-          operatorSimpleMode={isOperatorRole(context)}
+          operatorSimpleMode={operator}
         />
+        )}
       </div>
     );
   }
