@@ -83,3 +83,13 @@ test("owner can inspect refill cash exceptions and unresolved pending bags", () 
   assert.match(owner, /isOwnerAdminRole/);
   assert.match(workspace, /\/cash-collections\/refills/);
 });
+
+test("operators cannot create a second standalone cash record for pilot machines", () => {
+  const actions = read("src/lib/cash-actions.ts");
+  const screen = read("src/app/cash-handling/page.tsx");
+  assert.match(actions, /plan\.boxes\.some\(box =>/);
+  assert.match(actions, /pilotMachines\.includes\(machine\.machine_id\)/);
+  assert.match(actions, /record the same cash twice/i);
+  assert.match(screen, /visibleMachines = operator/);
+  assert.match(screen, /blockedMachine/);
+});
