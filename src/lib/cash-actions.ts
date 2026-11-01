@@ -18,6 +18,7 @@ import {
 import { logActivity } from "@/lib/activity-log";
 import { removeCashEvidence, uploadCashEvidence, type CashEvidenceUpload } from "@/lib/cash-evidence";
 import { verifiedCashExpectation } from "@/lib/cash-custody";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -183,6 +184,22 @@ export async function createCashRemoval(formData: FormData) {
   const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
   const requiresAmounts = !isOperatorRole(profileContext(profile));
   const plan = parseCashRemovalPlan(formData, path, submissionId, requiresAmounts);
+  if (isOperatorRole(profileContext(profile))) {
+    // Pilot machines have one route-stop cash entry point; otherwise the same
+    // physical collection can be recorded in both the legacy and refill ledgers.
+    const admin = getSupabaseAdminClient();
+    if (!admin) failCashRemoval(path, "Could not verify the refill cash policy. Retry later.", submissionId);
+    const check = await admin.from("cash_refill_policy")
+      .select("enabled,pilot_machine_ids").eq("id",1).maybeSingle();
+    if (check.error) failCashRemoval(path, "Could not verify cash collection policy. Retry later.", submissionId);
+    const pilotMachines = Array.isArray(check.data?.pilot_machine_ids) ? check.data.pilot_machine_ids : [];
+    if (check.data?.enabled && plan.boxes.some(box =>
+      box.machines.some(machine => pilotMachines.includes(machine.machine_id)))) {
+      failCashRemoval(path,
+        "This machine requires cash collection inside its assigned refill stop. Do not record the same cash twice.",
+        submissionId);
+    }
+  }
   const compartments = Array.from(new Set(formData.getAll("compartments").map(clean).filter(Boolean)));
   const removalType = clean(formData.get("removal_type"));
   const notes = optionalText(formData.get("notes"));
