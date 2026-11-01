@@ -326,6 +326,26 @@ export default async function FinancePage({
     openingBalances,
     cutoffDate,
   });
+
+  // Owner-reported real cash and bank funds are NOT ledger transactions.
+  // Keep the physical position separate from income, profit and the opening balance.
+  const cashBankCountResult = profile && hasAnyRole(profile, ["owner"])
+    ? await supabase.from("owner_cash_bank_counts")
+        .select("as_of_date,cash_on_hand_lyd,bank_lyd,created_at")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : null;
+  const cashBankCount =
+    cashBankCountResult && !cashBankCountResult.error
+      ? cashBankCountResult.data
+      : null;
+  const physicalCashAndBank = cashBankCount
+    ? Number(cashBankCount.cash_on_hand_lyd) + Number(cashBankCount.bank_lyd)
+    : null;
+  const cashVsLedgerDifference = physicalCashAndBank === null
+    ? null
+    : Math.round((physicalCashAndBank - balances.snacky_lyd) * 100) / 100;
   const exchangeRate = Number(settings?.exchange_rate_usd_to_lyd ?? 0);
   const periodRows = ledgerRows.filter(
     (row) =>
@@ -502,6 +522,53 @@ export default async function FinancePage({
           tone={balances.snacky_usd < 0 ? "negative" : "strong"}
         />
       </section>
+
+      {cashBankCount && physicalCashAndBank !== null && cashVsLedgerDifference !== null ? (
+        <section className="surface-card mb-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-slate-900">
+              Snacky cash &amp; bank / النقد والمصرف
+            </h2>
+            <span className="text-xs font-medium text-slate-500">
+              Owner-reported count · {cashBankCount.as_of_date}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <StatCard
+              label="Cash on hand / النقد"
+              value={formatFinanceMoney(Number(cashBankCount.cash_on_hand_lyd), "LYD")}
+              note="Physically held; owner-reported"
+              tone="strong"
+            />
+            <StatCard
+              label="In bank / المصرف"
+              value={formatFinanceMoney(Number(cashBankCount.bank_lyd), "LYD")}
+              note="Bank balance reported by owner"
+            />
+            <StatCard
+              label="Cash + bank / الإجمالي"
+              value={formatFinanceMoney(physicalCashAndBank, "LYD")}
+              note="Physical funds only; not income or profit"
+              tone="positive"
+            />
+          </div>
+          <p className="mt-4 text-sm text-slate-700">
+            Current posted Snacky LYD ledger:{" "}
+            <strong>{formatFinanceMoney(balances.snacky_lyd, "LYD")}</strong>.
+            {" "}Difference (physical count minus ledger):{" "}
+            <strong className={Math.abs(cashVsLedgerDifference) > 0.009 ? "text-amber-800" : "text-emerald-700"}>
+              {cashVsLedgerDifference > 0 ? "+" : cashVsLedgerDifference < 0 ? "-" : ""}
+              {formatFinanceMoney(Math.abs(cashVsLedgerDifference), "LYD")}
+            </strong>.
+          </p>
+          <p className="mt-2 text-xs text-amber-900">
+            This is an append-only owner statement, not a new receipt, revenue, expense,
+            or bank transfer. Differences require transaction review, not automatic
+            balancing entries. Cash held by others and outstanding debts were not
+            reported in this count and are not assumed to be zero.
+          </p>
+        </section>
+      ) : null}
 
       {exchangeRate > 0 ? (
         <section className="surface-card mb-6">
