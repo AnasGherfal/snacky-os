@@ -9,7 +9,7 @@ WITH objects AS (
     trim(both '"' from o.metadata->>'eTag') AS expected_etag
   FROM storage.objects o
   WHERE o.bucket_id='refill-photos'
-    AND greatest(o.created_at,o.updated_at) < now()-interval '30 days'
+    AND greatest(o.created_at,o.updated_at) < now()-interval '60 days'
     AND (o.metadata->>'size') ~ '^[0-9]+$'
     AND (o.metadata->>'size')::bigint BETWEEN 200000 AND 7*1024*1024
     AND trim(both '"' from o.metadata->>'eTag') ~ '^[0-9a-fA-F]{32,64}$'
