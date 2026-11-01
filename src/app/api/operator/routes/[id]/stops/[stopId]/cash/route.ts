@@ -162,7 +162,31 @@ async function savePhysicalCollection(input: CollectionInput) {
     });
     if (response.error) throw response.error;
     result = response.data as { collection_ids?: string[]; replayed?: boolean } | null;
-  } catch {
+  } catch (failure) {
+    const code = failure && typeof failure === "object" && "code" in failure
+      ? String((failure as { code?: unknown }).code ?? "") : "";
+    if (code === "23505") {
+      // Unique-bag rejections are definitive, but only release the pending
+      // stop after checking that no original collection committed for this
+      // submission. Ambiguous network failures always remain retryable.
+      const committed = await ctx.admin.from("cash_collections")
+        .select("id").eq("removal_group_id", requestId).limit(1);
+      if (!committed.error && !committed.data?.length) {
+        const released = await ctx.admin.from("route_stop_cash_receipts")
+          .delete()
+          .eq("route_stop_id", stopId)
+          .eq("request_id", requestId)
+          .eq("state", "pending")
+          .select("route_stop_id");
+        if (!released.error && released.data?.length === 1) {
+          if (evidence) await removeCashEvidence(evidence);
+          return respond(409, {
+            ok: false, code: "BAG_ALREADY_USED", retryable: false,
+            error: "رقم الكيس مستخدم من قبل. استخدم كيساً جديداً برقم مختلف وسجل السحب.",
+          });
+        }
+      }
+    }
     // The existing cash RPC is idempotent by request ID. Even if a response is
     // lost, reuse the SAME ID and bag; never create a replacement cash record.
     return respond(503, {
