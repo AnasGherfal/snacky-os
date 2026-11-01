@@ -126,15 +126,15 @@ function CashHandlingClient({ userId }: { userId: string }) {
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
         <h1>{text('Cash', 'النقدية')}</h1>
-        <p>{text('Noury removes and deposits · Ahmed transports · Owner receives and counts later. Every step follows the same sealed-box ID.', 'نوري يسحب العلبة ويخزنها · أحمد يستلمها وينقلها · المالك يستلم ويعد النقد لاحقاً. جميع الخطوات مربوطة برقم العلبة نفسه.')}</p></div>
+        <p>{text('Any assigned operator removes and deposits · authorized recipient verifies · authorized counter counts. Every step follows the same sealed-bag ID.', 'أي مشغّل مكلّف يسحب النقدية ويسلّمها، ويؤكد المستلم المعتمد الاستلام، ثم يعدّها الشخص المخوّل. كل خطوة مرتبطة برقم الكيس نفسه.')}</p></div>
       <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
     <div className={styles.notice} role="note">
       <strong>{text('One connected cash-box workflow · No cash amount at pickup', 'مسار نقدية واحد متصل · بدون إدخال مبالغ عند السحب')}</strong>
-      <p>{text('1. Noury: remove the cash box from the machine, record its seal and photo, then leave it in locked storage and save the location with a photo.', '١. نوري: اسحب علبة النقد من الماكينة وسجّل رقمها وصورتها، ثم ضعها في المخزن المقفل وسجّل المكان مع صورة.')}</p>
-      <p>{text('2. Ahmed: collect the identified sealed box from storage, check its seal, transport it to the owner’s counting location, then record delivery. Do not open or count it.', '٢. أحمد: استلم العلبة المختومة من المخزن وتأكد من رقمها والختم، وانقلها لمكان عدّ المالك ثم سجّل التوصيل. ممنوع فتحها أو عدّها.')}</p>
+      <p>{text('1. Collector: remove cash from one machine, record the sealed bag and photo, then deposit it in locked storage.', '١. المشغّل: اسحب النقدية من ماكينة واحدة، وسجّل رقم الكيس وصورته، ثم أودعه في الخزنة المخصصة.')}</p>
+      <p>{text('2. Authorized courier: verify the sealed bag ID, record the handover and transport if required. Do not open or count.', '٢. المستلم المصرح له: طابق رقم الكيس والختم وسجّل الاستلام والتوصيل عند الحاجة، دون فتحه أو عدّه.')}</p>
       <p>{text('3. Owner: only after physically receiving the same sealed box, confirm receipt in Cash. You may leave it pending until you are there and ready to count. Enter the actual amount once after counting.', '٣. المالك: بعد استلام نفس العلبة فعلياً تأكد من الاستلام في النقدية. تقدر تتركها معلّقة حتى تكون موجود ومستعد للعد، وبعدها تدخل المبلغ الحقيقي مرة واحدة.')}</p>
     </div>
     {error ? <div role="alert" className={styles.error}>{cashError(error, ar)}</div> : null}
