@@ -119,8 +119,6 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
   const locked = busy || Boolean(pending), box = selected ? view?.rows.find(r => r.id === selected) : null;
   const declaredRemoval = box ? summarizeDeclaredRemoval(box.machines) : null;
   const label = (a: CashAction) => cashActionLabels[a][ar ? 1 : 0];
-  const suggestedAhmed = view?.counters.find((person) => /ahmed.*zegallai|احمد.*زغ|أحمد.*زغ/i.test(person.name))
-    ?? view?.counters.find((person) => /^ahmed|^أحمد|^احمد/i.test(person.name));
 
   return <section className={styles.workspace} dir={ar ? 'rtl' : 'ltr'} data-testid="cash-handling">
     <header className={styles.header}>
@@ -230,7 +228,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
             <h3>{label(action)}</h3>
             <fieldset disabled={locked}>
               {['assign', 'dropoff'].includes(action) ? <label>{text('Responsible courier / cash coordinator', 'المسؤول عن نقل النقدية')}
-                {action === 'dropoff' && box.assigned_to ? <><input type="hidden" name="assigned_to" value={box.assigned_to} /><span>{box.assignee}</span></> : <select name="assigned_to" defaultValue={box.assigned_to ?? suggestedAhmed?.id ?? ''} required><option value="">{text('Choose an authorized person', 'اختر شخصاً مخولاً')}</option>{view.counters.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select>}</label> : null}
+                {action === 'dropoff' && box.assigned_to ? <><input type="hidden" name="assigned_to" value={box.assigned_to} /><span>{box.assignee}</span></> : <select name="assigned_to" defaultValue={box.assigned_to ?? ''} required><option value="">{text('Choose an authorized person', 'اختر شخصاً مخولاً')}</option>{view.counters.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select>}</label> : null}
               {action === 'dropoff' ? <>
                 <p className={styles.hint}>{text('Choose an authorized person for pickup. Save this only after the collector deposits the sealed bag in the specified safe. It is not proof of receipt.', 'اختار الشخص المخوّل بالاستلام، ثم سجّل الإيداع بعد وضع الكيس المختوم داخل الخزنة. هذا ليس إثبات استلام الطرف الآخر.')}</p>
                 <p className={styles.hint}>{text('Record this only after leaving the sealed box in the designated secure place. This is not a receipt by another employee.', 'سجّل ذلك بعد وضع العلبة المختومة في المكان الآمن المحدد. هذا ليس تأكيد استلام من موظف آخر.')}</p>
@@ -251,7 +249,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
                 <p className={styles.notice}>{text('Physically count the cash in this sealed box before submitting. Previous amounts recorded at removal and XY estimates are NOT cash counts.', 'عدّ النقد الموجود في العلبة المختومة فعلياً قبل الحفظ. المبالغ المسجلة وقت السحب وتقديرات XY ليست عداً للنقد.')}</p>
                 <label>{text('Actual cash physically counted · LYD', 'إجمالي النقد المعدود فعلياً · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
                 <p className={styles.hint}>{text('Enter one actual counted box total, even when several machines shared the box. Never invent a per-machine breakdown. Reconcile with removal declarations and XY separately afterward.', 'أدخل إجمالي العلبة الذي عدَدته فعلياً حتى لو احتوت نقداً من عدة ماكينات. لا تخمّن حصة كل ماكينة. تتم المقارنة مع السحب وXY بشكل منفصل لاحقاً.')}</p>
-                <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
+                <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} defaultValue={defaultSafeLabel} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
               </> : null}
               <label className={styles.checkbox}><input type="checkbox" required />{action === 'count'
                 ? text('I physically counted this box and entered the real total, not a copied removal declaration.', 'أؤكد أنني عددت نقد العلبة فعلياً وأدخلت المبلغ الحقيقي، وليس مبلغاً منقولاً من سجل السحب.')
