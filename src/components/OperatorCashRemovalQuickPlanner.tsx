@@ -8,6 +8,7 @@ type MachineOption = { id: string; label: string };
  * Operator-first cash removal: one machine = one sealed, traceable collection.
  * Reuses the existing validated cash_removal_plan server contract and custody RPC.
  * No amount is entered at pickup: a separate authorized counter records it later.
+ * Use an opaque, serialized tamper-evident bag; photos show only its seal and ID.
  */
 export function OperatorCashRemovalQuickPlanner({
   machines,
@@ -36,7 +37,7 @@ export function OperatorCashRemovalQuickPlanner({
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
         <p className="font-bold text-emerald-950">سحب النقدية من ماكينة واحدة</p>
         <p className="mt-1 text-sm leading-6 text-emerald-900">
-          اختار الماكينة، سجّل رقم الكيس وصوّر الختم. لا تحتاج تعدّ الفلوس هنا؛ العدّ يتم بعد التسليم.
+          اختار الماكينة، واستخدم كيساً أمنياً معتماً ومرقماً، وسجّل الرقم وصوّر الختم فقط. لا تصوّر أو تظهر الفلوس؛ العدّ يتم بعد التسليم.
         </p>
       </div>
 
@@ -64,7 +65,7 @@ export function OperatorCashRemovalQuickPlanner({
       </label>
 
       <label className="grid gap-2 text-sm font-semibold text-slate-800">
-        ٣. صورة الكيس بعد الإغلاق
+        ٣. صورة رقم الكيس والختم بعد الإغلاق
         <input
           className="field-input"
           type="file"
@@ -76,7 +77,7 @@ export function OperatorCashRemovalQuickPlanner({
       </label>
 
       <p className="text-xs leading-6 text-slate-600">
-        كل ماكينة في كيس مستقل. بعد الحفظ سلّم الكيس في المكان الآمن من صفحة النقدية، ثم يتم تسجيل الاستلام والعدّ من الشخص المصرّح له.
+        كل ماكينة في كيس أمني معتم ومستقل؛ لا تكتب المبلغ على الكيس. بعد الحفظ سلّم الكيس في المكان الآمن من صفحة النقدية، ثم يتم تسجيل الاستلام والعدّ من الشخص المصرّح له.
       </p>
     </div>
   );
