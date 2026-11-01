@@ -19,6 +19,8 @@ export function RouteStopCashCard({
 }) {
   const endpoint = `/api/operator/routes/${routeId}/stops/${stopId}/cash`;
   const [loading, setLoading] = useState(true);
+  const [statusError, setStatusError] = useState(false);
+  const [statusReloadKey, setStatusReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [required, setRequired] = useState(false);
   const [status, setStatus] = useState<CashStatus>(null);
@@ -39,6 +41,9 @@ export function RouteStopCashCard({
   useEffect(() => {
     let canceled = false;
     setLoading(true);
+    setStatusError(false);
+    setError("");
+    onReadyRef.current(true, false, null);
     fetch(endpoint, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as Payload;
@@ -51,12 +56,26 @@ export function RouteStopCashCard({
         if (data.requestId) requestRef.current = data.requestId;
         onReadyRef.current(Boolean(data.required), ["collected","exception"].includes(String(data.status)), data.status ?? null);
       })
-      .catch(() => { if (!canceled) setError("تعذر تحميل النقدية. يرجى تحديث الصفحة."); })
+      .catch(() => {
+        if (!canceled) {
+          setStatusError(true);
+          onReadyRef.current(true, false, null);
+          setError("تعذر التأكد من خطوة النقدية. لا يمكن إنهاء التعبئة قبل إعادة المحاولة.");
+        }
+      })
       .finally(() => { if (!canceled) setLoading(false); });
     return () => { canceled = true; };
-  }, [endpoint]);
+  }, [endpoint, statusReloadKey]);
 
   if (loading) return <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm" dir="rtl">جارٍ التحقق من خطوة النقدية...</p>;
+  if (statusError) return (
+    <section id="cash-collection" dir="rtl" className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+      <h2 className="font-semibold text-rose-950">تعذر التحقق من تسجيل النقدية</h2>
+      <p role="alert" className="mt-2 text-sm text-rose-800">{error}</p>
+      <button type="button" onClick={() => setStatusReloadKey((value) => value + 1)}
+        className="btn-secondary mt-3 min-h-11">إعادة التحقق</button>
+    </section>
+  );
   if (!required) return (
     <section id="cash-collection" dir="rtl" className="rounded-xl border border-slate-200 bg-white p-4">
       <h2 className="font-semibold text-slate-900">النقدية</h2>
@@ -91,7 +110,14 @@ export function RouteStopCashCard({
       }
       const response = await fetch(endpoint, { method: "POST", body: form, cache: "no-store" });
       const result = await response.json() as Payload & { state?: CashStatus; retryable?: boolean };
-      if (!response.ok || !result.ok) throw Error(result.error ?? "تعذر حفظ النقدية. حاول مرة أخرى.");
+      if (!response.ok || !result.ok) {
+        if (result.code === "BAG_ALREADY_USED") {
+          requestRef.current = null;
+          setStatus(null);
+          onReadyRef.current(true, false, null);
+        }
+        throw Error(result.error ?? "تعذر حفظ النقدية. حاول مرة أخرى.");
+      }
       const next = result.state ?? null;
       setStatus(next);
       setCollectionId(result.collectionId ?? null);
