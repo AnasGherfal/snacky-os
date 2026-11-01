@@ -79,6 +79,7 @@ export default async function CashHandlingPage({
           clientSubmissionId={params.submission_id && cashUuid.test(params.submission_id) ? params.submission_id : crypto.randomUUID()}
           cancelHref="/cash-handling"
           requiresAmounts={!isOperatorRole(context)}
+          operatorSimpleMode={isOperatorRole(context)}
         />
       </div>
     );
