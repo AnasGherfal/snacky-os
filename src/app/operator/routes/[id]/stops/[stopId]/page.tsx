@@ -672,7 +672,8 @@ export default function MachineStopPage() {
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [cashRequired, setCashRequired] = useState(false);
+  // Fail closed until the authoritative cash-policy status has loaded.
+  const [cashRequired, setCashRequired] = useState(true);
   const [cashReady, setCashReady] = useState(false);
   const [cashState, setCashState] = useState<"collected" | "exception" | "pending" | null>(null);
   const [error, setError] = useState("");

@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 async function updateCashPilot(formData: FormData) {
   "use server";
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || profile.active_status !== "active" || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const db = getSupabaseAdminClient();
   if (!db) redirect("/cash-collections/pilot?error=database");
   const machineIds = Array.from(new Set(formData.getAll("machine_id").map(String)));
@@ -41,7 +41,7 @@ export default async function CashRefillPilotPage({
   searchParams,
 }: { searchParams: Promise<{ updated?: string; error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || profile.active_status !== "active" || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const db = getSupabaseAdminClient();
   if (!db) return <p>تعذر الاتصال بقاعدة البيانات</p>;
   const [policyQuery, machinesQuery] = await Promise.all([

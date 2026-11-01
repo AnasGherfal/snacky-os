@@ -455,8 +455,14 @@ export async function calculateCashExpectation(formData: FormData) {
     summary: "Calculated collection-interval VMS expectation for the combined cash batch",
   });
   revalidateCashPaths(id);
-  const ready = Boolean((data as { ready?: boolean } | null)?.ready);
-  redirect(`${path}?success=${encodeURIComponent(ready ? "Exact VMS expectation calculated. Review and reconcile the total." : "Automatic calculation is incomplete. Review the machine diagnostics and enter one verified combined VMS total.")}`);
+  const expectation = data as { ready?: boolean; source?: string } | null;
+  const exact = Boolean(expectation?.ready) && expectation?.source === "vms_exact";
+  const message = exact
+    ? "Exact cash-only VMS expectation calculated. Review the total."
+    : expectation?.ready
+      ? "VMS payment methods are not verified. Treat this comparison as UNVERIFIED until cash-only transactions are available."
+      : "VMS cash-only evidence is incomplete. No shortage is established; review the machine diagnostics.";
+  redirect(`${path}?success=${encodeURIComponent(message)}`);
 }
 
 export async function reconcileCashCollection(formData: FormData) {
