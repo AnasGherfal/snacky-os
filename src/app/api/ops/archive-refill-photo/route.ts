@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type Job = {path:string;expectedSize:number;expectedUpdatedAt:string;expectedEtag:string;release?:boolean;includeSafety?:boolean};
+type Job = {path:string;expectedSize:number;expectedUpdatedAt:string;expectedEtag:string;release?:boolean;includeSafety?:boolean;source_release_approved?:boolean};
 function isCompactCompressorJob(job: Job) {
   // Only historical complete-stop safety proof photos; never quantity screenshots.
   return job.includeSafety === true &&
@@ -92,10 +92,15 @@ export async function POST(request: Request){
        !/^[a-fA-F0-9]{32,64}$/.test(String(job.expectedEtag??"").replaceAll('"',"")))
        throw Error("invalid_job");
     if(job.release!==true&&job.release!==false&&job.release!==undefined)throw Error("invalid_job");
+    if(job.source_release_approved!==true&&job.source_release_approved!==false&&job.source_release_approved!==undefined)throw Error("invalid_job");
   }catch{return response(400,{ok:false,error:"invalid_job"});}
   // A copy-only rehearsal is permitted when migration is enabled, but source
   // removal requires a distinct explicit release gate as well as release:true.
   // Neither value is inferred from a successful copy or archive receipt.
+  // A global flag never substitutes for per-source owner approval. Candidate
+  // manifests default to source_release_approved:false and cannot delete.
+  if(job.release===true&&job.source_release_approved!==true)
+    return response(409,{ok:false,error:"source_release_not_approved"});
   if(job.release===true&&process.env.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true")
     return response(409,{ok:false,error:"source_release_disabled"});
   if(job.release===true&&isCompactCompressorJob(job)&&process.env.SNACKY_COMPRESSOR_SOURCE_RELEASE_ENABLED!=="true")
