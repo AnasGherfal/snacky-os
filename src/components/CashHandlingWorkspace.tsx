@@ -24,14 +24,14 @@ function browserState(storageKey: string) {
   } catch { return { selected, pending: null, memoryOnly: true }; }
 }
 
-export function CashHandlingWorkspace({ userId }: { userId: string }) {
+export function CashHandlingWorkspace({ userId, defaultSafeLabel = 'Safe A' }: { userId: string; defaultSafeLabel?: string }) {
   const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot);
   const { locale } = useI18n();
-  return hydrated ? <CashHandlingClient key={userId} userId={userId} />
+  return hydrated ? <CashHandlingClient key={userId} userId={userId} defaultSafeLabel={defaultSafeLabel} />
     : <p role="status">{locale === 'ar' ? 'جارٍ تحميل سجلات النقد…' : 'Loading cash records…'}</p>;
 }
 
-function CashHandlingClient({ userId }: { userId: string }) {
+function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defaultSafeLabel: string }) {
   const storageKey = `snacky.cash-handover.pending.v1.${userId}`;
   const [initial] = useState(() => browserState(storageKey));
   const { locale } = useI18n(), ar = locale === 'ar';
@@ -234,7 +234,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
               {action === 'dropoff' ? <>
                 <p className={styles.hint}>{text('Choose an authorized person for pickup. Save this only after the collector deposits the sealed bag in the specified safe. It is not proof of receipt.', 'اختار الشخص المخوّل بالاستلام، ثم سجّل الإيداع بعد وضع الكيس المختوم داخل الخزنة. هذا ليس إثبات استلام الطرف الآخر.')}</p>
                 <p className={styles.hint}>{text('Record this only after leaving the sealed box in the designated secure place. This is not a receipt by another employee.', 'سجّل ذلك بعد وضع العلبة المختومة في المكان الآمن المحدد. هذا ليس تأكيد استلام من موظف آخر.')}</p>
-                <label>{text('Exact storage / safe location', 'موقع المخزن / الخزنة بالتحديد')}<input name="storage_location" required minLength={2} maxLength={180} /></label>
+                <label>{text('Exact storage / safe location', 'موقع المخزن / الخزنة بالتحديد')}<input name="storage_location" required minLength={2} maxLength={180} defaultValue={defaultSafeLabel} /></label>
                 <label>{text('Photo of the box in storage', 'صورة العلبة في المخزن')}<input type="file" accept="image/jpeg,image/png,image/webp" required onChange={e => { photo.current = e.target.files?.[0] ?? null; }} /></label>
               </> : null}
               {action === 'deliver' ? <>
