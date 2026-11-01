@@ -73,3 +73,13 @@ test("reused cash bags have a safe recovery only when no original collection com
   assert.match(card, /requestRef\.current = null/);
   assert.match(card, /result\.code === "BAG_ALREADY_USED"/);
 });
+
+test("owner can inspect refill cash exceptions and unresolved pending bags", () => {
+  const owner = read("src/app/cash-collections/refills/page.tsx");
+  const workspace = read("src/components/CashHandlingWorkspace.tsx");
+  assert.match(owner, /route_stop_cash_receipts/);
+  assert.match(owner, /state === "pending"/);
+  assert.match(owner, /state === "exception"/);
+  assert.match(owner, /isOwnerAdminRole/);
+  assert.match(workspace, /\/cash-collections\/refills/);
+});
