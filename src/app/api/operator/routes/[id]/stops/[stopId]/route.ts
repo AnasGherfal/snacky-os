@@ -1370,7 +1370,7 @@ export async function POST(
           error:"Could not verify cash policy. Please retry." }, { status:503, headers:jsonHeaders() });
       }
       const pilotMachines = Array.isArray(pilot.data?.pilot_machine_ids) ? pilot.data.pilot_machine_ids : [];
-      if (pilot.data?.enabled && (pilotMachines.length === 0 || pilotMachines.includes(machineId))) {
+      if (pilot.data?.enabled && pilotMachines.length > 0 && pilotMachines.includes(machineId)) {
         const cashRow = await cashAdmin.from("route_stop_cash_receipts")
           .select("state").eq("route_stop_id",stopId).eq("route_id",routeId).eq("machine_id",machineId).maybeSingle();
         if (cashRow.error) {
