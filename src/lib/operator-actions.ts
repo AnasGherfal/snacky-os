@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
+import { compactMachineOverview } from "@/lib/machine-overview-compression";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
@@ -366,6 +367,23 @@ export async function uploadRefillProofPhoto(formData: FormData) {
       });
     } catch {
       throw new Error("The compressor ON indicator photo could not be reduced clearly. Retake a close photo of the illuminated ON switch.");
+    }
+  }
+  if (photoPurpose === "completion") {
+    // A fallback for stale operator clients: the main app already compresses
+    // ordinary camera overviews on-device, but those clients can still send
+    // multi-megabyte originals. Never apply lossy compression to quantity
+    // screenshots or the dedicated compressor proof workflow.
+    try {
+      const compact = await compactMachineOverview(new Uint8Array(await file.arrayBuffer()));
+      if (compact.byteLength < file.size) {
+        storedFile = new File([new Uint8Array(compact)], originalName.replace(/\.[^.]+$/, "") + ".webp", {
+          type: "image/webp",
+          lastModified: file.lastModified,
+        });
+      }
+    } catch {
+      throw new Error("This machine overview photo is too large to save clearly. Retake the whole machine photo and retry.");
     }
   }
   const extension = safeFileSegment(storedFile.name.split(".").pop() || "jpg", "jpg");
