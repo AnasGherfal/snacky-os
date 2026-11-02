@@ -2070,6 +2070,14 @@ export default function MachineStopPage() {
                       </span>
                     </div>
 
+                    {row.slots.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-slate-600 px-3 py-3 text-sm text-slate-300">
+                        {tr(
+                          "XY has no configured selections for this physical shelf. No stock quantities are assumed.",
+                          "لا توجد خانات مُعرّفة في XY لهذا الرف الفعلي. لم نفترض أي كميات مخزون.",
+                        )}
+                      </p>
+                    ) : (
                     <div className="overflow-x-auto pb-1">
                       <div className="flex min-w-max gap-2">
                         {row.slots.map((slot) => {
@@ -2161,6 +2169,7 @@ export default function MachineStopPage() {
                         })}
                       </div>
                     </div>
+                    )}
                   </div>
                 ))}
               </div>
