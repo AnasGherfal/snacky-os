@@ -94,9 +94,10 @@ async function checkPhoto(
     return {ok:false,status:"not_exclusive_machine_photo"};
   if(file.error||!file.data) return {ok:false,status:"already_missing"};
   if(!oldPhoto(file.data)) return {ok:false,status:"photo_not_old_enough"};
-  if(!Number.isSafeInteger(file.data.size)||file.data.size<1||file.data.size>10*1024*1024)
+  const size=Number(file.data.size);
+  if(!Number.isSafeInteger(size)||size<1||size>10*1024*1024)
     return {ok:false,status:"invalid_file_metadata"};
-  return {ok:true,status:"eligible",info:file.data};
+  return {ok:true,status:"eligible",info:{...file.data,size}};
 }
 async function quantityPaths(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, list: Candidate[]) {
   const found = new Set<string>();
@@ -138,7 +139,7 @@ export async function POST(request: Request) {
     for(const entry of page){
       try {
         const first=await checkPhoto(supabase,entry,protectedPaths);
-        if(!first.ok){
+        if(!first.ok||!first.info){
           results.push({kind:entry.kind,status:first.status});
           continue;
         }
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
           continue;
         }
         const again=await checkPhoto(supabase,entry,protectedPaths);
-        if(!again.ok||version(again.info)!==version(first.info)){
+        if(!again.ok||!again.info||version(again.info)!==version(first.info)){
           results.push({kind:entry.kind,status:"source_changed_or_protected"});
           continue;
         }
