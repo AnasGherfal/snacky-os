@@ -62,15 +62,30 @@ async function candidates(supabase: NonNullable<ReturnType<typeof getSupabaseAdm
   return Array.from(list.entries())
     .map(([path,kind])=>({path,kind})).sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 }
+// Supabase Storage .info() returns camel-cased createdAt / lastModified and
+// a LOWERCASE etag. Some server versions additionally return updatedAt/eTag.
+// Do not silently classify every real Storage file as too new when updatedAt
+// is absent. If both modification timestamps exist, the newer one controls.
+function fileEtag(info: any) {
+  return String(info?.etag ?? info?.eTag ?? info?.metadata?.etag ??
+    info?.metadata?.eTag ?? "").replaceAll('"', "").trim();
+}
+function fileModificationTime(info: any) {
+  const observed=[info?.lastModified,info?.updatedAt]
+    .filter(value=>value!==null&&value!==undefined&&value!=="")
+    .map(value=>Date.parse(String(value)));
+  if(!observed.length||observed.some(value=>!Number.isFinite(value)))return NaN;
+  return Math.max(...observed);
+}
 function version(info: any) {
-  return [Number(info?.size),String(info?.eTag??info?.metadata?.eTag??"").replaceAll('"',"").trim(),
-    Date.parse(String(info?.updatedAt??""))].join(":");
+  return [Number(info?.size),fileEtag(info),Date.parse(String(info?.createdAt??"")),
+    fileModificationTime(info),String(info?.version??""),String(info?.id??"")].join(":");
 }
 function oldPhoto(info: any) {
   const created=Date.parse(String(info?.createdAt??""));
-  const updated=Date.parse(String(info?.updatedAt??""));
-  return Number.isFinite(created)&&Number.isFinite(updated)&&
-    created<Date.now()-minAgeMs && updated<Date.now()-minAgeMs;
+  const modified=fileModificationTime(info);
+  return Number.isFinite(created)&&Number.isFinite(modified)&&
+    created<Date.now()-minAgeMs && modified<Date.now()-minAgeMs;
 }
 async function checkPhoto(
   supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
@@ -97,6 +112,9 @@ async function checkPhoto(
   const size=Number(file.data.size);
   if(!Number.isSafeInteger(size)||size<1||size>10*1024*1024)
     return {ok:false,status:"invalid_file_metadata"};
+  // Require a concrete source version before any irreversible Storage deletion.
+  if(fileEtag(file.data).length<8)
+    return {ok:false,status:"unverifiable_source_version"};
   return {ok:true,status:"eligible",info:{...file.data,size}};
 }
 async function quantityPaths(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, list: Candidate[]) {
@@ -113,9 +131,15 @@ async function quantityPaths(supabase: NonNullable<ReturnType<typeof getSupabase
   throw Error("quantity_evidence_limit_exceeded");
 }
 export async function POST(request: Request) {
-  if (!originValid(request)) return json(403,{ok:false,error:"cross_origin_request_blocked"});
+  if (!originValid(request)) {
+    console.warn("[photo-cleanup] request_rejected",{reason:"invalid_origin"});
+    return json(403,{ok:false,error:"cross_origin_request_blocked"});
+  }
   const profile = await getCurrentProfile();
-  if (!owner(profile)) return json(403,{ok:false,error:"owner_only"});
+  if (!owner(profile)) {
+    console.warn("[photo-cleanup] request_rejected",{reason:"owner_only"});
+    return json(403,{ok:false,error:"owner_only"});
+  }
   let body: {action?:unknown;cursor?:unknown;acknowledgement?:unknown};
   try {
     if(Number(request.headers.get("content-length")??0)>1000)throw Error();
@@ -161,13 +185,23 @@ export async function POST(request: Request) {
         deleted++;
         reclaimedBytes+=first.info.size;
         results.push({kind:entry.kind,status:"deleted",bytes:first.info.size});
-      }catch{
+      }catch(error){
+        console.warn("[photo-cleanup] candidate_failed",{
+          action:body.action,reason:error instanceof Error?error.message:"unknown_error",
+        });
         results.push({kind:entry.kind,status:"failed_closed_no_confirmation"});
       }
     }
     const nextCursor=offset+page.length<list.length && page.length?page.at(-1)!.path:null;
+    const statusCounts: Record<string,number> = {};
+    for(const result of results) statusCounts[result.status]=(statusCounts[result.status]??0)+1;
+    // No paths, credentials or personal data in operational diagnostics.
+    console.info("[photo-cleanup] batch_completed",{
+      action:body.action,processed:page.length,eligible,deleted,reclaimedBytes,statusCounts,
+    });
     return json(200,{ok:true,action:body.action,candidates:list.length,
-      processed:page.length,eligible,deleted,reclaimedBytes,nextCursor,done:nextCursor===null,results});
+      processed:page.length,eligible,deleted,reclaimedBytes,statusCounts,
+      nextCursor,done:nextCursor===null,results});
   }catch(e){
     console.error("[photo-cleanup] Scan failed",e instanceof Error?e.message:"unknown");
     return json(503,{ok:false,error:"cleanup_scan_unavailable"});
