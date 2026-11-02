@@ -19,7 +19,7 @@ async function scope(routeId: string, stopId: string) {
   const admin = getSupabaseAdminClient();
   if (!profile?.team_member_id || profile.active_status !== "active" || !db || !admin || !canExecuteRoutes(profile)) return null;
   const access = await buildOperatorRouteAccessContext(db, profile);
-  const routeResult = await db.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+  const routeResult = await db.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle();
   if (routeResult.error || !routeResult.data || !canAccessOperatorRoute(access, routeResult.data.operator_id)) return null;
   const stopResult = await db.from("route_stops").select("id, route_id, machine_id, status")
     .eq("id", stopId).maybeSingle();
@@ -30,7 +30,7 @@ async function scope(routeId: string, stopId: string) {
   if (policyResult.error) return null;
   const pilot = Array.isArray(policyResult.data?.pilot_machine_ids) ? policyResult.data.pilot_machine_ids : [];
   const required = Boolean(policyResult.data?.enabled) && pilot.length > 0 && pilot.includes(stop.machine_id);
-  return { profile, db, admin, stop, required };
+  return { profile, db, admin, route:routeResult.data, stop, required };
 }
 
 export async function GET(_request: Request, { params }: Params) {
@@ -61,7 +61,12 @@ export async function POST(request: Request, { params }: Params) {
   } catch { return respond(403, { ok: false, error: "Invalid origin." }); }
   const ctx = await scope(id, stopId);
   if (!ctx) return respond(403, { ok: false, error: "Not authorized." });
-  if (["completed", "skipped", "canceled"].includes(ctx.stop.status)) return respond(409, { ok: false, error: "Stop already closed." });
+  if (["completed","cancelled","canceled"].includes(String(ctx.route.status))) {
+    return respond(409, { ok: false, error: "This route is already closed. Request an audited manager adjustment." });
+  }
+  if (!["picked","in_progress","arrived","refilling","cash_collected","issue_reported"].includes(String(ctx.stop.status))) {
+    return respond(409, { ok: false, error: "Start the assigned machine visit before declaring cash removal." });
+  }
   let form: FormData;
   try {
     const contentType = request.headers.get("content-type") ?? "";
