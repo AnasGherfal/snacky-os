@@ -142,7 +142,7 @@ export function RouteStopCashCard({
           <strong>{status === "collected" ? "تم حفظ سحب النقدية بنجاح" : "تم تسجيل سبب تعذر السحب"}</strong>
           {status === "collected" ? <p>الكيس: <bdi className="font-mono font-bold">{bagId}</bdi></p> : null}
           <p>يمكنك الآن إكمال تعبئة الماكينة. سيتم استلام وعدّ النقدية في خطوة منفصلة.</p>
-          {collectionId ? <Link href={`/cash-handling?id=${collectionId}`} className="inline-block font-semibold underline">عرض الكيس وتسجيل الإيداع</Link> : null}
+          {collectionId ? <Link href={`/cash-handling/deposit?id=${collectionId}`} className="inline-block font-semibold underline">إيداع الكيس في الخزنة</Link> : null}
         </div>
       ) : (
         <form onSubmit={save} className="space-y-4">
