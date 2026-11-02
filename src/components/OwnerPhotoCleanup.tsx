@@ -11,7 +11,6 @@ type Progress={inspected:number;eligible:number;eligibleBytes:number;deleted:num
 
 export function OwnerPhotoCleanup(){
  const [busy,setBusy]=useState<"inspect"|"delete"|null>(null);
- const [verified,setVerified]=useState(false);
  const [acknowledge,setAcknowledge]=useState(false);
  const [scanned,setScanned]=useState(false);
  const [progress,setProgress]=useState<Progress>({inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0});
@@ -40,7 +39,7 @@ export function OwnerPhotoCleanup(){
       reclaimedBytes:next.reclaimedBytes+(data.reclaimedBytes??0),
       errors:next.errors+(data.results??[]).filter(r=>r.status==="failed_closed_no_confirmation").length};
     setProgress(next);
-    if(data.done){setVerified(true);setScanned(action==="inspect");setNotice(
+    if(data.done){setScanned(action==="inspect");setNotice(
        action==="inspect"?"Scan complete. Confirm below to permanently delete eligible photos.":
        "Cleanup finished. The total shown reflects Storage API deletions verified as absent."
      );return;}
@@ -48,7 +47,7 @@ export function OwnerPhotoCleanup(){
     cursor=data.nextCursor;
    }
    throw Error("Too many batches. No further deletion was attempted.");
-  }catch(e){setVerified(false);setNotice(e instanceof Error?e.message:"Cleanup was interrupted. You can rescan safely.");}
+  }catch(e){setNotice(e instanceof Error?e.message:"Cleanup was interrupted. You can rescan safely.");}
   finally{setBusy(null);}
  }
  return (
