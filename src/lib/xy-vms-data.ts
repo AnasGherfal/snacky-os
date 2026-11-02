@@ -69,6 +69,7 @@ export function normalizeXyLiveSelection(row: XyDataRow) {
     slotCode: xyFirstText(row, ["hdbh", "slotCode"]),
     vmsProductId: identity.vmsProductId || null,
     productName: identity.productName || xyFirstText(row, ["productName"]) || null,
+    imageUrl: identity.imageUrl || null,
     priceLyd: identity.sellingPrice !== null && identity.sellingPrice > 0 ? identity.sellingPrice : null,
     currentQty: strictXySelectionQuantity(row.hdkc ?? row.currentQty),
     capacity: strictXySelectionQuantity(row.hdrl ?? row.capacity),

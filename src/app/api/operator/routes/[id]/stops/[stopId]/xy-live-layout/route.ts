@@ -56,6 +56,19 @@ export async function GET(
     const mappingByCode = new Map(
       (mappings ?? []).map((row: any) => [clean(row.vms_product_id), row]),
     );
+    // Send the actual mapped product photograph alongside the fresh XY lane.
+    // Image URLs are public catalog fields only; the route remains operator-
+    // authorized and no private inventory or price writes occur here.
+    const mappedProductIds = Array.from(new Set(
+      (mappings ?? []).map((row: any) => clean(row.product_id)).filter(Boolean),
+    ));
+    const { data: matchingProducts, error: productsError } = mappedProductIds.length
+      ? await admin.from("products").select("id,image_url").in("id", mappedProductIds)
+      : { data: [], error: null };
+    if (productsError) console.warn("[operator:live-xy] Product photos unavailable", productsError);
+    const imageByProductId = new Map(
+      (matchingProducts ?? []).map((product: any) => [clean(product.id), clean(product.image_url) || null]),
+    );
 
     return NextResponse.json({
       ok: true,
@@ -68,6 +81,7 @@ export async function GET(
           vmsProductId: slot.vmsProductId,
           productId: mapping?.product_id ?? null,
           productName: clean(slot.productName) || clean(mapping?.snacky_product_name) || clean(slot.vmsProductId) || "Unknown XY product",
+          imageUrl: imageByProductId.get(clean(mapping?.product_id)) || clean(slot.imageUrl) || null,
           currentQty: slot.currentQty,
           capacity: slot.capacity,
           priceLyd: slot.priceLyd,

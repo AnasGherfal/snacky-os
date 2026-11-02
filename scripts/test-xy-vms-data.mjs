@@ -58,3 +58,11 @@ test("direct XY read must not disguise invalid or unknown counts as zero",()=>{
  const fractional=normalizeXyLiveSelection({hdbh:"001",spbh:"42",spjg:"400",hdkc:2.5,hdrl:8});
  assert.equal(fractional.currentQty,null);
 });
+
+test("direct XY selection exposes the native product photograph without inventing an image",()=>{
+ const url="http://wc.xyvend.cn:8086/spImg/6591_0002_1748136874733_slt.jpeg";
+ const native=normalizeXyLiveSelection({hdbh:"046",spbh:"0002",spmc:"Water",fjlj:url,hdkc:6,hdrl:8});
+ assert.equal(native.imageUrl,url);
+ const missing=normalizeXyLiveSelection({hdbh:"001",spbh:"42",spmc:"Snack",hdkc:5,hdrl:7});
+ assert.equal(missing.imageUrl,null);
+});

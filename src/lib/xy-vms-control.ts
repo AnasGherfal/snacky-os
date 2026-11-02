@@ -9,6 +9,7 @@ export type XySlotState = {
   slotCode: string;
   vmsProductId: string | null;
   productName: string | null;
+  imageUrl?: string | null;
   priceLyd: number | null;
   currentQty: number | null;
   capacity: number | null;

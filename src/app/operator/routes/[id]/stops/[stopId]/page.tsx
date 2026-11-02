@@ -10,7 +10,7 @@ import { StopCompletionReadinessCard } from "@/components/operator/StopCompletio
 import { RouteStopCashCard } from "@/components/operator/RouteStopCashCard";
 import { getStopCompletionReadiness } from "@/lib/operator-stop-readiness";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
-import { groupMachineLayoutRows } from "@/lib/xy-machine-layout-groups";
+import { groupMachineLayoutRows, unmappedMachineSelectionCodes } from "@/lib/xy-machine-layout-groups";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -829,7 +829,14 @@ export default function MachineStopPage() {
   });
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
-  const machineLayoutRows = useMemo(() => groupMachineLayoutRows(stopData?.machineLayout ?? []), [stopData?.machineLayout]);
+  const machineLayoutRows = useMemo(
+    () => groupMachineLayoutRows(stopData?.machineLayout ?? [], { machineCode: stopData?.machineCode }),
+    [stopData?.machineLayout, stopData?.machineCode],
+  );
+  const unmappedSelections = useMemo(
+    () => unmappedMachineSelectionCodes(stopData?.machineLayout ?? [], { machineCode: stopData?.machineCode }),
+    [stopData?.machineLayout, stopData?.machineCode],
+  );
   const refreshLiveXy = useCallback(async () => {
     if (!routeId || !stopId) return;
     setXyLiveState((previous) => ({ ...previous, state: "loading", error: null }));
@@ -842,6 +849,7 @@ export default function MachineStopPage() {
         ok?: boolean; fetchedAt?: string; error?: string;
         slots?: Array<{
           slotCode: string; vmsProductId: string | null; productId: string | null; productName: string;
+          imageUrl?: string | null;
           currentQty: number | null; capacity: number | null; priceLyd: number | null;
         }>;
       } | null;
@@ -859,7 +867,13 @@ export default function MachineStopPage() {
             vmsProductName: slot.productName,
             productId: slot.productId,
             productName: slot.productName,
-            imageUrl: existing?.imageUrl ?? null,
+            // Never reuse an old product photo after a different XY product is
+            // installed in this selection.
+            imageUrl: slot.imageUrl
+              ?? (fullProductCatalog ?? current.productOptions).find((p) => p.id === slot.productId)?.imageUrl
+              ?? (existing?.vmsProductId === slot.vmsProductId && existing?.productId === slot.productId
+                ? existing.imageUrl : null)
+              ?? null,
             currentQty: slot.currentQty === null ? (existing?.currentQty ?? 0) : slot.currentQty,
             liveStockKnown: slot.currentQty !== null,
             capacity: slot.capacity === null ? (existing?.capacity ?? 0) : slot.capacity,
@@ -880,7 +894,7 @@ export default function MachineStopPage() {
         error: cause instanceof Error ? cause.message : "XY offline; showing last imported snapshot.",
       });
     }
-  }, [routeId, stopId]);
+  }, [routeId, stopId, fullProductCatalog]);
 
   useEffect(() => {
     if (!loading && stopData?.machineId) void refreshLiveXy();
@@ -1980,7 +1994,10 @@ export default function MachineStopPage() {
           onChange={setSelectionFinalQtys}
           prices={selectionPrices}
           onPriceChange={setSelectionPrices}
-          productOptions={(fullProductCatalog ?? stopData.productOptions).map((p) => ({ id: p.id, name: p.name }))}
+          productOptions={(fullProductCatalog ?? stopData.productOptions).map((p) => ({
+            id: p.id, name: p.name, imageUrl: p.imageUrl,
+            sku: p.sku, barcode: p.barcode, brand: p.brand,
+          }))}
           productSelections={selectionProductIds}
           onSelectProduct={(slotCode, productId) => setSelectionProductIds((state) => ({ ...state, [slotCode]: productId }))}
           onSaveSelection={(slotCode) => void saveMachineSelection(slotCode)}
@@ -1989,6 +2006,7 @@ export default function MachineStopPage() {
           productCatalogLoading={productCatalogLoading}
           isLiveXy={xyLiveState.state === "live"}
           hiddenSelections={stopData.hiddenSelections ?? []}
+          unmappedSelections={unmappedSelections}
           onChangeProduct={(slotCode) => {
             setXySwapSourceSlotCode(null);
             setXySwapTargetSlotCode("");
@@ -2053,6 +2071,14 @@ export default function MachineStopPage() {
                       </span>
                     </div>
 
+                    {row.slots.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-slate-600 px-3 py-3 text-sm text-slate-300">
+                        {tr(
+                          "XY has no configured selections for this physical shelf. No stock quantities are assumed.",
+                          "لا توجد خانات مُعرّفة في XY لهذا الرف الفعلي. لم نفترض أي كميات مخزون.",
+                        )}
+                      </p>
+                    ) : (
                     <div className="overflow-x-auto pb-1">
                       <div className="flex min-w-max gap-2">
                         {row.slots.map((slot) => {
@@ -2144,6 +2170,7 @@ export default function MachineStopPage() {
                         })}
                       </div>
                     </div>
+                    )}
                   </div>
                 ))}
               </div>

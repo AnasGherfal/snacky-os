@@ -3,13 +3,17 @@ import fs from "node:fs";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { groupMachineLayoutRows } from "../src/lib/xy-machine-layout-groups.ts";
+import {
+  groupMachineLayoutRows,
+  physicalMachineRowForSlot,
+  unmappedMachineSelectionCodes,
+} from "../src/lib/xy-machine-layout-groups.ts";
 import { resolveXyProductChangeQuantity, isSafeStockPreservingQueuedRelabel } from "../src/lib/xy-product-change-quantity.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-test("Wide machine groups its exact XY selections in physical-row order", () => {
+test("XY odd-numbered chips belong to two separate physical shelves, numbered from zero", () => {
   const codes = [
     "001","003","005","007","009","011","013","015","017","019",
     "021","022","023","024","025","026","027","028","029","030",
@@ -17,26 +21,81 @@ test("Wide machine groups its exact XY selections in physical-row order", () => 
     "041","042","043","044","045","046","047","048","049","050",
   ];
   const rows = groupMachineLayoutRows(codes.map(slotCode => ({ slotCode })));
-  assert.equal(rows.length, 4);
   assert.deepEqual(rows.map(row => [
-    row.slots[0].slotCode, row.slots.at(-1).slotCode,
-  ]), [["001","019"],["021","030"],["031","040"],["041","050"]]);
-  assert(rows[1].slots.some(s => s.slotCode === "023"));
+    row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode,
+  ]), [
+    [0,"001","009"],[1,"011","019"],[2,"021","030"],
+    [3,"031","040"],[4,"041","050"],
+  ]);
+  assert(rows[2].slots.some(slot => slot.slotCode === "023"));
 });
 
-test("Standard ten-lane rows follow machine selection numbers", () => {
+test("Standard ten-lane rows retain original physical row numbers 0-5", () => {
   const rows = groupMachineLayoutRows(["001","002","003","009","010","011","020","021","030","031","040"]
     .map(slotCode => ({ slotCode })));
-  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]),
-    [[1,"001","010"],[2,"011","020"],[3,"021","030"],[4,"031","040"]]);
+  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]), [
+    [0,"001","010"],[1,"011","020"],[2,"021","030"],[3,"031","040"],
+  ]);
 });
 
-test("Sparse machines use visible rows 001–009, 021–030, 031–040", () => {
+test("Sparse selections do not shift an empty physical row upward", () => {
   const slots = ["001","003","005","007","009","021","023","025","027","029","030","031","032","033","034","035","036","037","038","039","040"]
     .map(slotCode => ({ slotCode }));
   const rows = groupMachineLayoutRows(slots);
-  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]),
-    [[1,"001","009"],[2,"021","030"],[3,"031","040"]]);
+  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]), [
+    [0,"001","009"],[2,"021","030"],[3,"031","040"],
+  ]);
+});
+
+test("Photo-verified Istiklal has exactly six physical rows, top 0 bottom 5", () => {
+  // Live XY lane codes checked against the user's Istiklal cabinet photograph:
+  // 0 Mr Crunch, 1 Spuds, 2 confectionery, 3 drinks, 4 currently
+  // unconfigured in XY, 5 Water. Never invent stock for missing lanes.
+  const codes = [
+    "001","003","005","007","009",
+    "011","013","015","017","019",
+    "021","022","023","024","025","026","030",
+    "031","032","033","034","035","036","037","038","039","040",
+    "046","047","048","049","050",
+  ];
+  const options = { machineCode:"SNK-2509000369" };
+  const rows = groupMachineLayoutRows(codes.map(slotCode => ({ slotCode })), options);
+  assert.deepEqual(rows.map(row => row.rowIndex), [0,1,2,3,4,5]);
+  assert.deepEqual(rows.map(row => [row.slots[0]?.slotCode ?? null, row.slots.at(-1)?.slotCode ?? null]), [
+    ["001","009"],["011","019"],["021","030"],["031","040"],
+    [null,null],["046","050"],
+  ]);
+  assert.equal(rows.flatMap(row => row.slots).length,codes.length);
+  assert.deepEqual(rows[4].slots,[],"No phantom 041-045 XY stock or edit controls");
+  assert.equal(physicalMachineRowForSlot("046",{machineCode:"2509000369"}),5);
+  assert.equal(physicalMachineRowForSlot("046",{machineCode:"SNK-2503000216"}),4);
+});
+
+test("No nonexistent row 6 and no synthetic VMS lane is treated as physical", () => {
+  const source = ["001","011","021","031","041","051","060","061","VMS-106","", "000"]
+    .map(slotCode => ({slotCode}));
+  const rows=groupMachineLayoutRows(source);
+  assert.deepEqual(rows.map(row=>row.rowIndex),[0,1,2,3,4,5]);
+  assert.equal(rows[5].slots.length,2);
+  assert.deepEqual(unmappedMachineSelectionCodes(source),["061","VMS-106","","000"]);
+  for(const row of rows)assert(row.rowIndex>=0&&row.rowIndex<=5);
+});
+
+test("Selection cards and search display real product images while writes remain keyed by XY slot", () => {
+  const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const live = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-live-layout/route.ts");
+  assert.match(editor,/ProductThumbnail imageUrl=\{visibleImage\}/);
+  assert.match(editor,/const visibleImage = pendingId \? pendingProduct\?\.imageUrl/);
+  assert.match(editor,/ProductThumbnail imageUrl=\{selectedImageUrl\}/);
+  assert.match(editor,/ProductThumbnail imageUrl=\{product.imageUrl\}/);
+  assert.match(editor,/No configured selections for this physical row|no configured selections for this physical row/);
+  assert.match(page,/groupMachineLayoutRows\(stopData\?\.machineLayout \?\? \[\], \{ machineCode: stopData\?\.machineCode \}\)/);
+  assert.match(page,/imageUrl: slot.imageUrl/);
+  assert.match(page,/imageUrl: p.imageUrl/);
+  assert.match(live,/imageByProductId/);
+  assert.match(live,/from\("products"\)\.select\("id,image_url"\)/);
+  assert.match(editor,/onSaveSelection\(slot.slotCode\)/);
 });
 
 test("Operator can fill an entire XY row then override a single selection", () => {
