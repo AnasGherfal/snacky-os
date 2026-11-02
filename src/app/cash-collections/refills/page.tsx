@@ -128,7 +128,7 @@ export default async function RefillCashAuditPage() {
         <Link className="text-emerald-800 underline" href="/cash-handling">تسليم وعدّ الأكياس</Link>
         <Link className="text-emerald-800 underline" href="/cash-handling/deposit">إيداع الأكياس</Link>
         <Link className="text-emerald-800 underline" href="/cash-handling/receive">التحقق والاستلام والعدّ</Link>
-        <Link className="text-emerald-800 underline" href="/cash-collections?status=counted">مطابقة XY</Link>
+        <Link className="text-emerald-800 underline" href="/cash-collections?status=counted">مطابقة XY</Link><Link className="text-emerald-800 underline" href="/cash-collections/timeline">فترات التحصيل حسب الماكينة</Link>
       </div>
       <section className="space-y-3">
         {!rows.length ? (
