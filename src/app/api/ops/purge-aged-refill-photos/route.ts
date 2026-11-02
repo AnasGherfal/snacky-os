@@ -60,7 +60,7 @@ async function candidates(supabase: NonNullable<ReturnType<typeof getSupabaseAdm
   // Safety proof takes precedence if a path has multiple kinds of references.
   safety.forEach(path=>list.set(path,"compressor"));
   return Array.from(list.entries())
-    .map(([path,kind])=>({path,kind})).sort((a,b)=>a.path.localeCompare(b.path));
+    .map(([path,kind])=>({path,kind})).sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 }
 function version(info: any) {
   return [Number(info?.size),String(info?.eTag??info?.metadata?.eTag??"").replaceAll('"',"").trim(),
@@ -128,9 +128,9 @@ export async function POST(request: Request) {
   if(!supabase)return json(503,{ok:false,error:"storage_unavailable"});
   try{
     const list=await candidates(supabase);
-    const start=typeof body.cursor==="string"?
-      list.findIndex(item=>item.path>body.cursor!):-1;
-    const offset=body.cursor===undefined||body.cursor===null?0:(start<0?list.length:start);
+    const cursor=typeof body.cursor==="string"?body.cursor:null;
+    const start=cursor===null?0:list.findIndex(item=>item.path>cursor);
+    const offset=start<0?list.length:start;
     const page=list.slice(offset,offset+batchLimit);
     const protectedPaths=await quantityPaths(supabase,page);
     const results: Result[]=[];
