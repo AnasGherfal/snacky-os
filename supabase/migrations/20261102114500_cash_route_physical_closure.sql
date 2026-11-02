@@ -90,7 +90,7 @@ begin
           or h.deposited_by is null or h.picked_up_by is null
           or h.deposited_by=h.picked_up_by
           or coalesce(h.pickup_seal,'')<>'intact'
-        ))))
+        )))
   ) then
     raise exception 'One or more bags are not independently received and counted with intact seals'
       using errcode='23514';
