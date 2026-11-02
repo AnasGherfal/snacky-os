@@ -540,6 +540,25 @@ export async function markPayrollRunPaid(formData: FormData) {
   if (!existingRun) fail(path, "Payroll run not found.");
   if (existingRun.status === "paid") fail(path, "Payroll run is already paid.");
 
+  // Manual payments for this operator and work month must be reconciled
+  // BEFORE marking a payroll run paid; otherwise Finance would record the
+  // same wages twice. Do not silently deduct or double-post partial payouts.
+  const manuallyPaid = await financeWriteSupabase.from("financial_transactions")
+    .select("id, amount, transaction_date")
+    .eq("source_type", "manual")
+    .eq("direction", "money_out")
+    .eq("transaction_status", "active")
+    .eq("category", "Salary / Employee Payment")
+    .contains("metadata", {
+      service_month: existingRun.period_start.slice(0, 7),
+      payee_team_member_id: existingRun.operator_id,
+    })
+    .limit(1);
+  if (manuallyPaid.error) fail(path, "Could not verify existing manual salary payments. Retry before posting payroll.");
+  if ((manuallyPaid.data ?? []).length > 0) {
+    fail(path, "A manual salary payment is already in Finance for this operator and work month. Reconcile this payment before marking payroll paid, to avoid double-counting wages.");
+  }
+
   const preview = await buildPayrollRunPreview({
     supabase,
     operatorId: existingRun.operator_id,
