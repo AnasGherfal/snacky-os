@@ -22,7 +22,7 @@ export type OperatorXyLayoutSlot = {
   plannedProductName: string | null;
   mismatch: boolean;
   liveStockKnown?: boolean;
-  sourceState?: "live" | "last_imported";
+  sourceState?: "live" | "last_imported" | "unverified";
 };
 
 export type LiveOperatorXySlot = {
@@ -97,7 +97,7 @@ export function mergeOperatorXyLiveLayout(
           plannedProductName: null,
           mismatch: false,
           liveStockKnown: false,
-          sourceState: "last_imported",
+          sourceState: "unverified",
         });
       }
       fallback.add(code);
