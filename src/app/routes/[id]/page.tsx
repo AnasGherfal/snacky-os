@@ -11,6 +11,7 @@ import { lyd } from "@/lib/format";
 import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { RouteCashPanel } from "@/components/cash/RouteCashPanel";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteInventoryFinalizableStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, autoPrepareRouteProducts, deleteDraftRoute } from "@/lib/route-actions";
@@ -827,6 +828,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </div>
           </SectionCard>
         </div>
+
+        <RouteCashPanel routeId={id} routeStatus={String(routeRow.status)} />
 
         <section className="surface-card p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
