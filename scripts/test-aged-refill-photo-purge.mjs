@@ -122,3 +122,18 @@ test("owner cleanup is scoped to protected categories; current SQL is read-only"
  assert.match(sql,/position\(c\.path in coalesce\(q\.evidence_files::text/);
  assert.doesNotMatch(sql,/(?:^|\n)\s*(?:DELETE|UPDATE|INSERT|TRUNCATE|DROP|ALTER)\b/im);
 });
+
+
+test("owner finds cleanup inside normal Settings and Admin, and scan is unmistakably read-only",()=>{
+ const settings=fs.readFileSync("src/app/settings/page.tsx","utf8");
+ const admin=fs.readFileSync("src/app/admin/page.tsx","utf8");
+ const ui=fs.readFileSync("src/components/OwnerPhotoCleanup.tsx","utf8");
+ assert.match(settings,/Storage Management/);
+ assert.match(settings,/SecondaryButton href="\/admin\/photo-cleanup"/);
+ assert.match(settings,/profile\?\.role === "owner"/);
+ assert.match(admin,/href: "\/admin\/photo-cleanup"/);
+ assert.match(ui,/Optional preview: scan eligible photos \(does NOT delete\)/);
+ assert.match(ui,/PERMANENTLY DELETE machine\/compressor photos older than 30 days/);
+ assert.match(ui,/disabled=\{!!busy\|\|!acknowledge\}/);
+ assert.doesNotMatch(ui,/!scanned/);
+});
