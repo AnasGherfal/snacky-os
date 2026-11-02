@@ -53,8 +53,8 @@ async function closeRouteCash(formData:FormData) {
 }
 
 /** Server-side route view: uses only actual receipt, custody and count records. */
-export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
-  routeId:string;routeStatus:string;forOperator?:boolean;
+export async function RouteCashPanel({routeId,routeStatus,forOperator=false,allowOwnerClose=false}:{
+  routeId:string;routeStatus:string;forOperator?:boolean;allowOwnerClose?:boolean;
 }) {
   const profile=await getCurrentProfile();
   if(!profile||profile.active_status!=="active"||!profile.team_member_id)return null;
@@ -130,11 +130,12 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 className="text-xl font-bold text-slate-950">نقدية الجولة — سجل السحب والتسليم</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-600">التاريخ والوقت من سجل سحب الماكينة. إيداع المشغّل ليس إثبات استلام، والعدّ والمطابقة مع XY مرحلتان منفصلتان.</p>
+        <p className="mt-1 text-sm leading-6 text-slate-600">إكمال جولة التعبئة مسؤولية المشغّل بمجرد حفظ سحب النقدية أو سبب التعذّر لكل ماكينة. لا ينتظر استلام الخزنة أو عدّ المالك. الإيداع والعدّ ومطابقة XY أعمال مستقلة بعد الجولة.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Link href={owner?"/cash-handling/receive":"/cash-handling/deposit"} className="btn-primary">{owner?"استلام وعدّ الأكياس":"إيداع الأكياس في الخزنة"}</Link>
         {owner?<Link href="/cash-collections/refills" className="btn-secondary">مراجعة جميع السحوبات</Link>:null}
+        {owner&&!allowOwnerClose?<Link href={`/cash-collections/routes/${routeId}`} className="btn-secondary">ملف عهدة النقدية المستقل</Link>:null}
       </div>
     </header>
     {activePilot?
@@ -145,6 +146,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
         <div className="rounded-xl bg-rose-50 p-3"><p className="text-xs text-rose-900">تحتاج متابعة</p><b className="text-xl">{unresolved}</b></div>
       </div>:
       <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">التسجيل الإلزامي أثناء التعبئة غير مفعّل حالياً. السحوبات المسجلة سابقاً تظهر أدناه إن وجدت.</div>}
+    {routeStatus==="completed" ? <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm font-semibold text-sky-950">✓ انتهت جولة المشغّل. الأكياس التي لم تُودع أو تُعدّ تظل في متابعة النقدية ولا تعيد فتح الجولة أو تمنع إكمالها.</div> : null}
     {closure?<div className={closure.closure_status==="physically_verified"?
       "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950":
       "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"}>
@@ -175,12 +177,12 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
         </div>
       </div>)}
     </div>
-    {owner&&!closure&&activePilot&&routeStatus==="completed"&&rows.length>0?
+    {owner&&allowOwnerClose&&!closure&&activePilot&&routeStatus==="completed"&&rows.length>0?
       <form action={closeRouteCash} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
         <input type="hidden" name="route_id" value={routeId}/>
         <h3 className="font-bold text-slate-900">إغلاق العهدة النقدية لهذه الجولة</h3>
         <p className="text-sm leading-6 text-slate-600">
-          يتأكد النظام من تسجيل كل ماكينة، وإيداع كل كيس ثم استلامه من شخص مختلف، وأن كل الأموال عُدّت فعلياً وختمها سليم.
+          هذا إجراء إداري اختياري لإقفال عهدة النقدية مادياً بعد نهاية جولة التعبئة. لا يؤثر إطلاقاً في حالة الجولة نفسها. يتأكد النظام من الإيداع والاستلام المستقل والعدّ.
           لا تحتاج مطابقة XY لإغلاق العهدة الجسدية، وتبقى ظاهرة على أنها غير مؤكدة إن لم تتوفر المعاملات الدقيقة.
         </p>
         {exceptionCount>0?<label className="block space-y-2 text-sm font-semibold">
