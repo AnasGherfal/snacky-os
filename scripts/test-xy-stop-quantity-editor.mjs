@@ -13,72 +13,111 @@ import { resolveXyProductChangeQuantity, isSafeStockPreservingQueuedRelabel } fr
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-test("XY odd-numbered chips belong to two separate physical shelves, numbered from zero", () => {
-  const codes = [
+test("all Snacky XY machines display six physical shelves, numbered from 0 to 5",()=>{
+  const patterns = [
+    {machineCode:"SNK-2509000370", lanes:[
+      "001","003","005","007","009","011","013","015","017","019",
+      "021","022","023","024","025","026","027","028","029","030",
+      "031","033","034","035","036","037","038","039","040",
+      "041","042","043","044","045","046","047","048","049","050",
+      "051","052","053","054","055","056","057","058","059","060"
+    ]},
+    {machineCode:"SNK-2503000217", lanes:[
+      "001","002","003","004","005","011","012","013","014",
+      "024","025","026","027","028","029","031","032","034","036","037","038","039","040",
+      "041","042","043","044","045","046","047","048","049","050",
+      "051","052","053","054","055","057","058","059","060"
+    ]},
+    {machineCode:"SNK-2503000216", lanes:[
+      "001","002","003","004","005","011","012","013","014","015",
+      "021","022","023","024","025","026","028","029","030",
+      "031","032","033","034","035","036","037","038","039","040",
+      "041","042","043","044","045","046","047","048","049","050",
+      "051","052","053","054","055","056","057","058","059","060"
+    ]},
+    {machineCode:"SNK-2510001719", lanes:[
+      "001","003","005","007","009","011","013","015","017","019",
+      "021","022","023","024","025","026","027","028","029","030",
+      "031","032","033","034","035","036","037","038","039","040",
+      "041","042","043","044","045","046","047","048","049","050",
+      "051","052","053","054","055","056","057","058","059","060"
+    ]},
+  ];
+  for(const {machineCode,lanes} of patterns){
+    const rows=groupMachineLayoutRows(lanes.map(slotCode=>({slotCode})),{machineCode});
+    assert.deepEqual(rows.map(row=>row.rowIndex),[0,1,2,3,4,5],machineCode);
+    assert.deepEqual(rows.flatMap(row=>row.slots.map(slot=>slot.slotCode)).sort(),[...lanes].sort(),machineCode);
+    assert.equal(rows[0].slots[0].slotCode,"001");
+    assert(rows.every(row=>row.rowIndex>=0&&row.rowIndex<6));
+  }
+});
+
+test("first and second five-lane chips remain separate shelves, without inventing slot codes",()=>{
+  const codes=[
     "001","003","005","007","009","011","013","015","017","019",
     "021","022","023","024","025","026","027","028","029","030",
     "031","032","033","034","035","036","037","038","039","040",
-    "041","042","043","044","045","046","047","048","049","050",
+    "041","042","043","044","045","046","047","048","049","050"
   ];
-  const rows = groupMachineLayoutRows(codes.map(slotCode => ({ slotCode })));
-  assert.deepEqual(rows.map(row => [
-    row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode,
-  ]), [
-    [0,"001","009"],[1,"011","019"],[2,"021","030"],
-    [3,"031","040"],[4,"041","050"],
+  const rows=groupMachineLayoutRows(codes.map(slotCode=>({slotCode})));
+  assert.deepEqual(rows.map(row=>row.rowIndex),[0,1,2,3,4,5]);
+  assert.deepEqual(rows.map(row=>[row.slots[0]?.slotCode??null,row.slots.at(-1)?.slotCode??null]),[
+    ["001","009"],["011","019"],["021","030"],["031","040"],["041","050"],[null,null],
   ]);
-  assert(rows[2].slots.some(slot => slot.slotCode === "023"));
+  assert(rows[2].slots.some(slot=>slot.slotCode==="023"));
 });
 
-test("Standard ten-lane rows retain original physical row numbers 0-5", () => {
-  const rows = groupMachineLayoutRows(["001","002","003","009","010","011","020","021","030","031","040"]
-    .map(slotCode => ({ slotCode })));
-  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]), [
+test("standard row numbering is always 0 to 5, even for sparsely populated machines",()=>{
+  const rows=groupMachineLayoutRows(["001","002","003","009","010","011","020","021","030","031","040"]
+    .map(slotCode=>({slotCode})));
+  assert.deepEqual(rows.map(row=>[row.rowIndex,row.slots[0]?.slotCode??null,row.slots.at(-1)?.slotCode??null]),[
     [0,"001","010"],[1,"011","020"],[2,"021","030"],[3,"031","040"],
+    [4,null,null],[5,null,null],
   ]);
+  const sparse=groupMachineLayoutRows(["001","003","005","021","030","031","040"].map(slotCode=>({slotCode})));
+  assert.deepEqual(sparse.map(row=>row.rowIndex),[0,1,2,3,4,5]);
+  assert.deepEqual(sparse[1].slots,[]);
+  assert.deepEqual(sparse[2].slots.map(slot=>slot.slotCode),["021","030"]);
 });
 
-test("Sparse selections do not shift an empty physical row upward", () => {
-  const slots = ["001","003","005","007","009","021","023","025","027","029","030","031","032","033","034","035","036","037","038","039","040"]
-    .map(slotCode => ({ slotCode }));
-  const rows = groupMachineLayoutRows(slots);
-  assert.deepEqual(rows.map(row => [row.rowIndex, row.slots[0].slotCode, row.slots.at(-1).slotCode]), [
-    [0,"001","009"],[2,"021","030"],[3,"031","040"],
-  ]);
-});
-
-test("Photo-verified Istiklal has exactly six physical rows, top 0 bottom 5", () => {
-  // Live XY lane codes checked against the user's Istiklal cabinet photograph:
-  // 0 Mr Crunch, 1 Spuds, 2 confectionery, 3 drinks, 4 currently
-  // unconfigured in XY, 5 Water. Never invent stock for missing lanes.
-  const codes = [
+test("photo reference applies as a generic sparse-water topology, never to a specific machine",()=>{
+  const codes=[
     "001","003","005","007","009",
     "011","013","015","017","019",
     "021","022","023","024","025","026","030",
     "031","032","033","034","035","036","037","038","039","040",
     "046","047","048","049","050",
   ];
-  const options = { machineCode:"SNK-2509000369" };
-  const rows = groupMachineLayoutRows(codes.map(slotCode => ({ slotCode })), options);
-  assert.deepEqual(rows.map(row => row.rowIndex), [0,1,2,3,4,5]);
-  assert.deepEqual(rows.map(row => [row.slots[0]?.slotCode ?? null, row.slots.at(-1)?.slotCode ?? null]), [
-    ["001","009"],["011","019"],["021","030"],["031","040"],
-    [null,null],["046","050"],
-  ]);
-  assert.equal(rows.flatMap(row => row.slots).length,codes.length);
-  assert.deepEqual(rows[4].slots,[],"No phantom 041-045 XY stock or edit controls");
-  assert.equal(physicalMachineRowForSlot("046",{machineCode:"2509000369"}),5);
-  assert.equal(physicalMachineRowForSlot("046",{machineCode:"SNK-2503000216"}),4);
+  for(const machineCode of ["2509000369","SNK-2509000369","SOME-OTHER-MACHINE"]){
+    const rows=groupMachineLayoutRows(codes.map(slotCode=>({slotCode})),{machineCode});
+    assert.deepEqual(rows.map(row=>row.rowIndex),[0,1,2,3,4,5]);
+    assert.deepEqual(rows.map(row=>[row.slots[0]?.slotCode??null,row.slots.at(-1)?.slotCode??null]),[
+      ["001","009"],["011","019"],["021","030"],["031","040"],
+      [null,null],["046","050"],
+    ],machineCode);
+    assert.equal(rows.flatMap(row=>row.slots).length,codes.length);
+    assert.deepEqual(rows[4].slots,[]);
+  }
+  assert.equal(physicalMachineRowForSlot("046"),4,"raw XY selection number is not itself a physical-row override");
+  assert.equal(physicalMachineRowForSlot("046",{machineCode:"2509000369"}),4);
+  assert.equal(physicalMachineRowForSlot("046",{machineCode:"OTHER"}),4);
+  assert.equal(physicalMachineRowForSlot("051"),5);
 });
 
-test("No nonexistent row 6 and no synthetic VMS lane is treated as physical", () => {
-  const source = ["001","011","021","031","041","051","060","061","VMS-106","", "000"]
-    .map(slotCode => ({slotCode}));
-  const rows=groupMachineLayoutRows(source);
+test("missing XY stock data does not fabricate six shelves or editable selections",()=>{
+  assert.deepEqual(groupMachineLayoutRows([]),[]);
+  assert.deepEqual(groupMachineLayoutRows([],{machineCode:"2509000369"}),[]);
+});
+
+test("never render row 6 or turn historical VMS product identities into editable physical lanes",()=>{
+  const source=["001","011","021","031","041","051","060","061","VMS-106","","000"]
+    .map(slotCode=>({slotCode}));
+  const rows=groupMachineLayoutRows(source,{machineCode:"ANY"});
   assert.deepEqual(rows.map(row=>row.rowIndex),[0,1,2,3,4,5]);
   assert.equal(rows[5].slots.length,2);
   assert.deepEqual(unmappedMachineSelectionCodes(source),["061","VMS-106","","000"]);
-  for(const row of rows)assert(row.rowIndex>=0&&row.rowIndex<=5);
+  assert.deepEqual(unmappedMachineSelectionCodes(source,{machineCode:"ANY"}),["061","VMS-106","","000"]);
+  assert(rows.every(row=>row.rowIndex>=0&&row.rowIndex<=5));
 });
 
 test("Selection cards and search display real product images while writes remain keyed by XY slot", () => {
