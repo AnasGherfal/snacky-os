@@ -142,7 +142,7 @@ export function RouteStopCashCard({
           <strong>{status === "collected" ? "تم حفظ سحب النقدية بنجاح" : "تم تسجيل سبب تعذر السحب"}</strong>
           {status === "collected" ? <p>الكيس: <bdi className="font-mono font-bold">{bagId}</bdi></p> : null}
           <p>يمكنك الآن إكمال تعبئة الماكينة. سيتم استلام وعدّ النقدية في خطوة منفصلة.</p>
-          {collectionId ? <Link href={`/cash-handling?id=${collectionId}`} className="inline-block font-semibold underline">عرض الكيس وتسجيل الإيداع</Link> : null}
+          {collectionId ? <Link href={`/cash-handling/deposit?id=${collectionId}`} className="inline-block font-semibold underline">إيداع الكيس في الخزنة</Link> : null}
         </div>
       ) : (
         <form onSubmit={save} className="space-y-4">
@@ -173,6 +173,7 @@ export function RouteStopCashCard({
             <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
               <p className="font-semibold">شنو فرّغت من الماكينة؟</p>
               <p className="text-xs text-slate-500">صندوق الأوراق النقدية محدد دائماً. حدد الباقي فقط عند تفريغه.</p>
+              <p className="rounded-lg bg-amber-50 p-2 text-xs font-semibold text-amber-900">إذا خليت فلوس في صندوق العملات أو الفكة، اختار سحب جزئي واشرح. باش مقارنة XY ما تحسبش المبلغ المتروك كنقص.</p>
               <label className="flex gap-2"><input type="checkbox" checked readOnly disabled/> صندوق الأوراق النقدية</label>
               <label className="flex gap-2"><input type="checkbox" checked={coinBox} onChange={e=>setCoinBox(e.target.checked)}/> صندوق العملات المعدنية</label>
               <label className="flex gap-2"><input type="checkbox" checked={recycler} onChange={e=>setRecycler(e.target.checked)}/> إعادة تدوير الأوراق النقدية</label>

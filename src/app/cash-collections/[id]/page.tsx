@@ -33,6 +33,7 @@ import { diagnoseCashMachineExpectation } from "@/lib/cash-expectation-diagnosti
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buckets";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -120,6 +121,12 @@ export default async function CashCollectionDetailPage({
   const backHref = canSeeMoney || canReceive ? "/cash-collections" : "/operator/routes";
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
+  // Read the cash-to-stop link only after page authentication; it is shown
+  // only if the caller can also read the authorized cash receipt below.
+  const cashLinkAdmin = getSupabaseAdminClient();
+  const cashLinkResult = cashLinkAdmin ? await cashLinkAdmin.from("route_stop_cash_receipts")
+    .select("route_id,route_stop_id").eq("collection_id",id).maybeSingle() : null;
+  const linkedStop = cashLinkResult?.error ? null : cashLinkResult?.data??null;
 
   if (!canSeeMoney) {
     const { data: receipt, error: receiptError } = await supabase
@@ -158,7 +165,7 @@ export default async function CashCollectionDetailPage({
               <DetailItem label="Received by">{row.receiver?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Storage location">{row.storage_location ?? "—"}</DetailItem>
               <DetailItem label="Removal evidence">{removalEvidenceUrl ? <Link className="link-secondary" href={removalEvidenceUrl} target="_blank">Open sealed-bag photo</Link> : "—"}</DetailItem>
-              <DetailItem label="Route">Not connected to a route</DetailItem>
+              <DetailItem label="Route">{linkedStop ? <Link className="link-secondary" href={`/operator/routes/${linkedStop.route_id}/stops/${linkedStop.route_stop_id}`}>Open the exact refill stop that recorded this bag</Link> : "No refill-stop link (legacy standalone removal)"}</DetailItem>
             </dl>
             <div className="mt-6">
               <div className="text-sm text-slate-500">Machines and compartments</div>
@@ -273,7 +280,7 @@ export default async function CashCollectionDetailPage({
               <DetailItem label="Reconciled at">{formatDate(row.reconciled_at)}</DetailItem>
               <DetailItem label="Reconciled by">{row.reconciler?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Finance ledger">{finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">Open {finance.transaction_status ?? "active"} entry</Link> : "Not posted"}</DetailItem>
-              <DetailItem label="Route">{row.route_id ? "Legacy reference only" : "Not connected to a route"}</DetailItem>
+              <DetailItem label="Route">{linkedStop ? <Link className="link-secondary" href={`/routes/${linkedStop.route_id}#route-cash`}>Open linked route and machine refill record</Link> : row.route_id ? <Link className="link-secondary" href={`/routes/${row.route_id}#route-cash`}>Open route reference</Link> : "Standalone collection — no route"}</DetailItem>
             </dl>
             {(row.notes || row.storage_notes || row.reconciliation_note || row.void_reason) ? <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700"><div className="font-semibold text-slate-900">Notes and resolution</div>{row.notes ? <p className="mt-2">Removal: {row.notes}</p> : null}{row.storage_notes ? <p className="mt-2">Storage: {row.storage_notes}</p> : null}{row.reconciliation_note ? <p className="mt-2">Reconciliation: {row.reconciliation_note}</p> : null}{row.variance_resolution ? <p className="mt-2">Resolution category: {row.variance_resolution.replaceAll("_", " ")}</p> : null}{row.void_reason ? <p className="mt-2 text-rose-800">Void reason: {row.void_reason}</p> : null}</div> : null}
           </SectionCard>

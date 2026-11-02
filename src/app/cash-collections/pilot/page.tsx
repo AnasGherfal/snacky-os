@@ -23,13 +23,18 @@ async function updateCashPilot(formData: FormData) {
   if (lookup.error || (lookup.data?.length ?? 0) !== machineIds.length) redirect("/cash-collections/pilot?error=machines");
   const prior = await db.from("cash_refill_policy").select("*").eq("id",1).single();
   if (prior.error) redirect("/cash-collections/pilot?error=database");
+  const now=new Date().toISOString();
+  const previousIds=Array.isArray(prior.data.pilot_machine_ids)?prior.data.pilot_machine_ids as string[]:[];
+  const changedScope=[...previousIds].sort().join("|")!==[...machineIds].sort().join("|");
+  const activatedAt=enabled&&(!prior.data.enabled||changedScope||!prior.data.activated_at)
+    ? now : prior.data.activated_at??null;
   const saved = await db.from("cash_refill_policy")
-    .update({ enabled, pilot_machine_ids: machineIds, safe_label: safe, updated_at: new Date().toISOString() })
+    .update({ enabled, pilot_machine_ids: machineIds, safe_label: safe, activated_at: activatedAt, updated_at: now })
     .eq("id",1).select("id").maybeSingle();
   if (saved.error || !saved.data) redirect("/cash-collections/pilot?error=database");
   await logActivity({
     profile, action: "update_cash_refill_pilot", entityType: "cash_refill_policy", entityId: "1",
-    beforeData: prior.data, afterData: { enabled, pilot_machine_ids: machineIds, safe_label: safe },
+    beforeData: prior.data, afterData: { enabled, pilot_machine_ids: machineIds, safe_label: safe, activated_at: activatedAt },
     summary: enabled ? "Enabled mandatory refill cash pilot on selected machines" : "Paused mandatory refill cash pilot",
   });
   revalidatePath("/cash-collections/pilot");

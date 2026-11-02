@@ -31,6 +31,12 @@ export default async function CashHandlingPage({
     activeStatus: profile.active_status,
   } as const;
   const canRemove = canRecordCashRemoval(context);
+  // Operators start with the one-purpose deposit screen; the legacy form and
+  // a selected bag remain accessible explicitly when genuinely needed.
+  if (isOperatorRole(context) && !hasAnyRole(context,["owner","admin","supervisor"])
+    && params.collect !== "1" && !params.id && !params.error && !params.success) {
+    redirect("/cash-handling/deposit");
+  }
   const showCollectionForm = canRemove && (params.collect === "1" || Boolean(params.error));
 
   if (params.collect === "1" && !canRemove) redirect("/cash-handling");
