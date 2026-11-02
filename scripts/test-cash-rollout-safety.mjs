@@ -31,3 +31,12 @@ test("interval review stays owner-only and never treats monthly sales as cash sh
  assert.match(timeline,/importCurrent/);
  assert.match(timeline,/e\.start\?date\(e\.start\)/);
 });
+
+test("cash baseline requires documented empty notes and coins, not a misleading full label",()=>{
+ const sql=read("supabase/migrations/20261102153700_cash_baseline_requires_all_compartments.sql");
+ const timeline=read("src/app/cash-collections/timeline/page.tsx");
+ assert.match(sql,/line\.compartments @> array\['notes','coins'\]/);
+ assert.match(sql,/and all_cash_compartments_documented/);
+ assert.match(timeline,/line\.compartments\?\.includes\("notes"\)/);
+ assert.match(timeline,/line\.compartments\?\.includes\("coins"\)/);
+});
