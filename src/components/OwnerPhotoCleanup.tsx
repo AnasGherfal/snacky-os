@@ -12,7 +12,7 @@ type Progress={inspected:number;eligible:number;eligibleBytes:number;deleted:num
 export function OwnerPhotoCleanup(){
  const [busy,setBusy]=useState<"inspect"|"delete"|null>(null);
  const [acknowledge,setAcknowledge]=useState(false);
- const [progress,setProgress]=useState<Progress>({inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0});
+ const [progress,setProgress]=useState<Progress>({inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0,statuses:{}});
  const [notice,setNotice]=useState("");
  const size=(bytes:number)=>(bytes/1_000_000).toFixed(1)+" MB";
 
