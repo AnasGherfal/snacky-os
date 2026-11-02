@@ -99,3 +99,38 @@ test("operators open simple safe deposit instead of advanced custody administrat
  assert.match(route,/redirect\("\/cash-handling\/deposit"\)/);
  assert.match(route,/params\.collect !== "1"/);
 });
+
+test("operator can finish route independently of storage, owner count or XY match",()=>{
+ const guard=read("supabase/migrations/20261101172228_cash_refill_require_explicit_pilot_selection_20261101.sql");
+ const operatorRoute=read("src/app/operator/routes/[id]/page.tsx");
+ const ownerRoute=read("src/app/routes/[id]/page.tsx");
+ const panel=read("src/components/cash/RouteCashPanel.tsx");
+ const privatePage=read("src/app/cash-collections/routes/[id]/page.tsx");
+ assert.match(guard,/x\.state IN \('collected','exception'\)/i);
+ assert.doesNotMatch(guard,/counted_at|actual_cash_collected|expected_cash_lyd/);
+ assert.match(operatorRoute,/<RouteCashPanel routeId=\{routeId\}/);
+ assert.match(ownerRoute,/<RouteCashPanel routeId=\{id\}/);
+ assert.match(panel,/owner&&allowOwnerClose&&!closure/);
+ assert.match(privatePage,/<RouteCashPanel routeId=\{id\} routeStatus=\{String\(result\.data\.status\)\} allowOwnerClose/);
+});
+
+test("cash shortage investigation is period-based and separated from collector blame",()=>{
+ const timeline=read("src/app/cash-collections/timeline/page.tsx");
+ assert.match(timeline,/priorFull\.collected_at/);
+ assert.match(timeline,/isVerifiedPreviousFull/);
+ assert.match(timeline,/partialSinceLastFull/);
+ assert.match(timeline,/collected_at/);
+ assert.match(timeline,/actual_cash_collected/);
+ assert.match(timeline,/vms_exact/);
+ assert.match(timeline,/receiptByCollection/);
+ assert.match(timeline,/routes\/\$\{e\.receipt\.route_id\}/);
+});
+
+test("a dropped bag with lost response can reuse prior saved seal photo",()=>{
+ const api=read("src/app/api/cash-handling/deposit/route.ts");
+ const component=read("src/components/cash/CashDepositWorkspace.tsx");
+ assert.match(api,/storage\.from\(CASH_EVIDENCE_BUCKET\)\.list\(scopeId/);
+ assert.match(api,/snacky_cash_handover_receipt_v1/);
+ assert.match(component,/storedPending\(box\.id\)/);
+ assert.match(component,/compact=photo\?await prepareCashPhoto/);
+});
