@@ -7,6 +7,7 @@ import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsD
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { formatSiteLabel, formatMachineDisplayName } from "@/lib/machine-site-display";
 import { buildRouteMachineCatalog } from "@/lib/route-machine-catalog";
+import { reconcileRoutePlanogramToVerifiedXy } from "@/lib/route-verified-xy-products";
 import { getServerI18n } from "@/lib/i18n/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import type {
@@ -92,6 +93,7 @@ type LatestStockRow = {
   machine_id: string | null;
   slot_code: string | null;
   product_id: string | null;
+  vms_product_name: string | null;
   current_qty: number | null;
   capacity: number | null;
 };
@@ -290,15 +292,16 @@ export default async function NewRoutePage() {
     }),
     safeSupabaseQuery<LatestStockRow>({
       label: "routes.new.latest_vms_stock_by_slot",
-      promise: supabase
+      promise: planningReadClient
         .from("latest_vms_stock_by_slot")
-        .select("id, import_batch_id, imported_at, source_file_name, machine_id, slot_code, product_id, current_qty, capacity"),
+        .select("id, import_batch_id, imported_at, source_file_name, machine_id, slot_code, product_id, vms_product_name, current_qty, capacity"),
     }),
     safeSupabaseQuery<MachineSlotRow>({
       label: "routes.new.machine_slots",
-      promise: supabase
+      promise: planningReadClient
         .from("machine_slots")
-        .select("id, machine_id, slot_code, product_id, par_qty, min_qty"),
+        .select("id, machine_id, slot_code, product_id, par_qty, min_qty")
+        .eq("active", true),
     }),
   ]);
   const queryIssues = [
@@ -410,6 +413,12 @@ export default async function NewRoutePage() {
     .filter((batch) => ["stock", "machine_stock_snapshot"].includes(String(batch.report_type ?? "")));
   const latestStockRows = (latestStockResult.data ?? []) as LatestStockRow[];
   const machineSlotRows = (machineSlotsResult.data ?? []) as MachineSlotRow[];
+  // Reconcile old planogram assignments against the latest verified XY slots.
+  // This is display-only: never transfer stock or auto-map unidentified SKUs.
+  const verifiedMachineProducts = reconcileRoutePlanogramToVerifiedXy({
+    planogram: machineSlotRows,
+    latestXy: latestStockRows,
+  });
   const latestActiveStockBatch = activeStockBatches(stockBatches)[0] ?? null;
   const diagnosticBatch = latestActiveStockBatch ?? stockBatches[0] ?? null;
   const batchAuditResult = diagnosticBatch?.id
@@ -686,7 +695,8 @@ export default async function NewRoutePage() {
           machines={machineCatalog}
           recommendations={activeRecommendations}
           diagnostics={diagnostics}
-          machinePlanogramRows={machineSlotRows}
+          machinePlanogramRows={verifiedMachineProducts.rows}
+          unmappedXyProductSlots={verifiedMachineProducts.unmapped}
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}

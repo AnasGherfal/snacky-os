@@ -11,6 +11,7 @@ import { RouteStopCashCard } from "@/components/operator/RouteStopCashCard";
 import { getStopCompletionReadiness } from "@/lib/operator-stop-readiness";
 import { MachineStockQuickEditor } from "@/components/operator/MachineStockQuickEditor";
 import { groupMachineLayoutRows, unmappedMachineSelectionCodes } from "@/lib/xy-machine-layout-groups";
+import { mergeOperatorXyLiveLayout } from "@/lib/operator-xy-layout-reconciliation";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -688,7 +689,7 @@ export default function MachineStopPage() {
   const [selectionFinalQtys, setSelectionFinalQtys] = useState<Record<string, number>>({});
   const [selectionPrices, setSelectionPrices] = useState<Record<string, number>>({});
   const [selectionProductIds, setSelectionProductIds] = useState<Record<string, string>>({});
-  const [xyLiveState, setXyLiveState] = useState<{ state: "loading" | "live" | "cached"; at: string | null; error: string | null }>({ state: "loading", at: null, error: null });
+  const [xyLiveState, setXyLiveState] = useState<{ state: "loading" | "live" | "partial" | "cached"; at: string | null; error: string | null }>({ state: "loading", at: null, error: null });
   const [selectionSaveStatuses, setSelectionSaveStatuses] = useState<Record<string, { status: "saving" | "pending" | "verified" | "error"; message?: string }>>({});
   const [showAdvancedLayout, setShowAdvancedLayout] = useState(false);
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
@@ -829,6 +830,9 @@ export default function MachineStopPage() {
   });
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
+  const latestStopDataRef = useRef<StopData | null>(null);
+  useEffect(() => { latestStopDataRef.current = stopData; }, [stopData]);
+
   const machineLayoutRows = useMemo(
     () => groupMachineLayoutRows(stopData?.machineLayout ?? [], { machineCode: stopData?.machineCode }),
     [stopData?.machineLayout, stopData?.machineCode],
@@ -856,38 +860,29 @@ export default function MachineStopPage() {
       if (!response.ok || !data?.ok || !Array.isArray(data.slots)) {
         throw new Error(data?.error || "Cannot reach XY for a live machine read.");
       }
+      const fetchedAt = data.fetchedAt ?? new Date().toISOString();
+      const catalog = fullProductCatalog ?? latestStopDataRef.current?.productOptions ?? [];
+      const initialMerge = mergeOperatorXyLiveLayout(
+        latestStopDataRef.current?.machineLayout ?? [], data.slots, catalog, fetchedAt,
+      );
       setStopData((current) => {
         if (!current) return current;
-        const oldSlots = new Map((current.machineLayout ?? []).map((s) => [s.slotCode, s]));
-        const currentSlots: MachineLayoutSlot[] = data.slots!.map((slot) => {
-          const existing = oldSlots.get(slot.slotCode);
-          return {
-            slotCode: slot.slotCode,
-            vmsProductId: slot.vmsProductId,
-            vmsProductName: slot.productName,
-            productId: slot.productId,
-            productName: slot.productName,
-            // Never reuse an old product photo after a different XY product is
-            // installed in this selection.
-            imageUrl: slot.imageUrl
-              ?? (fullProductCatalog ?? current.productOptions).find((p) => p.id === slot.productId)?.imageUrl
-              ?? (existing?.vmsProductId === slot.vmsProductId && existing?.productId === slot.productId
-                ? existing.imageUrl : null)
-              ?? null,
-            currentQty: slot.currentQty === null ? (existing?.currentQty ?? 0) : slot.currentQty,
-            liveStockKnown: slot.currentQty !== null,
-            capacity: slot.capacity === null ? (existing?.capacity ?? 0) : slot.capacity,
-            priceLyd: slot.priceLyd,
-            capturedAt: data.fetchedAt ?? new Date().toISOString(),
-            plannedProductId: existing?.plannedProductId ?? null,
-            plannedProductName: existing?.plannedProductName ?? null,
-            mismatch: Boolean(existing?.plannedProductId && slot.productId
-              && existing.plannedProductId !== slot.productId),
-          };
-        });
-        return { ...current, machineLayout: currentSlots };
+        const merged = mergeOperatorXyLiveLayout(
+          current.machineLayout ?? [], data.slots!, fullProductCatalog ?? current.productOptions, fetchedAt,
+        );
+        return { ...current, machineLayout: merged.slots };
       });
-      setXyLiveState({ state: "live", at: data.fetchedAt ?? new Date().toISOString(), error: null });
+      const fallbackCount = initialMerge.fallbackSlotCodes.length;
+      setXyLiveState({
+        state: fallbackCount ? "partial" : "live",
+        at: fetchedAt,
+        error: fallbackCount
+          ? tr(
+              `${fallbackCount} selection(s) use the last verified XY product assignment because the direct read was incomplete. Verify quantities at the machine.`,
+              `${fallbackCount} خانة تعرض آخر توزيع منتجات مؤكد من XY لأن القراءة المباشرة غير مكتملة. راجع الكميات على الجهاز.`,
+            )
+          : null,
+      });
     } catch (cause) {
       setXyLiveState({
         state: "cached", at: null,
@@ -1976,7 +1971,9 @@ export default function MachineStopPage() {
                         ? tr("Live XY — direct read", "XY مباشر — قراءة فعلية")
                         : xyLiveState.state === "loading"
                           ? tr("Checking XY…", "جارٍ فحص XY…")
-                          : tr("Last imported XY — NOT live", "آخر استيراد XY — ليس مباشراً")}</strong>
+                          : xyLiveState.state === "partial"
+                            ? tr("XY live · Some products from last verified import", "XY مباشر · بعض المنتجات من آخر استيراد مؤكد")
+                            : tr("Last imported XY — NOT live", "آخر استيراد XY — ليس مباشراً")}</strong>
                       <p className="mt-1 text-xs">{xyLiveState.state === "live" && xyLiveState.at
                         ? new Date(xyLiveState.at).toLocaleString(locale === "ar" ? "ar-LY" : "en-GB")
                         : xyLiveState.error || tr("Current values may be outdated.", "القيم الحالية قد تكون قديمة.")}</p>
@@ -2037,7 +2034,9 @@ export default function MachineStopPage() {
               <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
                 {xyLiveState.state === "live"
                   ? tr("Live XY · direct read", "XY مباشر · قراءة فعلية")
-                  : tr("Last imported XY · not live", "آخر استيراد XY · ليس مباشراً")}
+                  : xyLiveState.state === "partial"
+                    ? tr("XY partial · some products from last import", "XY جزئي · بعض المنتجات من آخر استيراد")
+                    : tr("Last imported XY · not live", "آخر استيراد XY · ليس مباشراً")}
               </div>
             </div>
           </div>

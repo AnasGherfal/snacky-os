@@ -16,6 +16,10 @@ on:
       - "src/lib/route-create-request.ts"
       - "src/app/api/routes/route.ts"
       - "src/app/routes/new/RouteCreateForm.tsx"
+      - "src/app/routes/new/page.tsx"
+      - "src/lib/operator-xy-layout-reconciliation.ts"
+      - "src/lib/route-verified-xy-products.ts"
+      - "scripts/test-xy-product-route-visibility.mjs"
       - "scripts/test-route-create-safe-retry.mjs"
       - "src/components/OperationalSalesSummary.tsx"
       - "src/app/sales/page.tsx"
@@ -50,6 +54,8 @@ jobs:
         run: npm ci
       - name: Test route safety and product activity
         run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Verify actual XY products survive partial reads and show in route recommendations
+        run: node --experimental-strip-types --test scripts/test-xy-product-route-visibility.mjs
       - name: Test duplicate-safe route creation and request replay
         run: node --experimental-strip-types --test scripts/test-route-create-safe-retry.mjs
       - name: Test route RLS hardening

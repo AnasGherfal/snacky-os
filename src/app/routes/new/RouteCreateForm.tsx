@@ -285,6 +285,7 @@ export function RouteCreateForm({
   recommendations,
   diagnostics,
   machinePlanogramRows,
+  unmappedXyProductSlots = [],
   products,
   recentProductIds: _recentProductIds,
   allowAdminOverride,
@@ -297,6 +298,7 @@ export function RouteCreateForm({
   recommendations: Recommendation[];
   diagnostics: RouteRecommendationDiagnostics;
   machinePlanogramRows: MachinePlanogramRow[];
+  unmappedXyProductSlots?: Array<{ machineId: string; slotCode: string; xyProductName: string; currentQty: number | null; capacity: number | null }>;
   storageInventory: { product_id: string; product_name: string; quantity_on_hand: number }[];
   products: ProductPickOption[];
   recentProductIds: string[];
@@ -824,6 +826,10 @@ export function RouteCreateForm({
     () => (selectedManualMachineId ? (machinePlanogramRowsByMachine.get(selectedManualMachineId) ?? []) : []),
     [machinePlanogramRowsByMachine, selectedManualMachineId],
   );
+  const selectedUnmappedXyProductSlots = useMemo(
+    () => unmappedXyProductSlots.filter((row) => row.machineId === selectedManualMachineId),
+    [unmappedXyProductSlots, selectedManualMachineId],
+  );
   const selectedManualRecommendationGroups = useMemo(
     () => (selectedManualMachineId ? (recommendationGroupsByMachine.get(selectedManualMachineId) ?? []) : []),
     [recommendationGroupsByMachine, selectedManualMachineId],
@@ -943,17 +949,12 @@ export function RouteCreateForm({
     [machineScopedProductCandidates],
   );
 
+  // Include every product actually configured in the latest XY planogram,
+  // even when the calculated refill is zero. Suggestions still remain zero
+  // until there is real space/stock demand, but products never disappear.
   const machineProductsToLoad = useMemo(
-    () => machineScopedProductCandidates.filter((candidate) => candidate.recommendedQty > 0 || candidate.selectedQty > 0),
-    [machineScopedProductCandidates],
-  );
-
-  const otherConfiguredMachineProducts = useMemo(
-    () => machineScopedProductCandidates.filter((candidate) => (
-      candidate.sourceKinds.has("planogram")
-      && candidate.recommendedQty <= 0
-      && candidate.selectedQty <= 0
-    )),
+    () => machineScopedProductCandidates.filter((candidate) =>
+      candidate.recommendedQty > 0 || candidate.selectedQty > 0 || candidate.sourceKinds.has("planogram")),
     [machineScopedProductCandidates],
   );
 
@@ -1940,18 +1941,41 @@ export function RouteCreateForm({
                   </div>
                 ) : null}
 
+                {selectedUnmappedXyProductSlots.length ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="font-semibold">{tr(locale,
+                      "XY products awaiting a Snacky catalog match",
+                      "منتجات XY التي تحتاج ربطاً بكتالوج سناكي")}</p>
+                    <p className="mt-1 text-xs">{tr(locale,
+                      "These products are assigned in the machine, not empty. A confirmed product mapping is required before Snacky can recommend stock for them.",
+                      "هذه المنتجات معيّنة في الجهاز وليست خانات فارغة. يلزم تأكيد ربط المنتج قبل أن يقترح سناكي كمية تعبئة لها.")}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {selectedUnmappedXyProductSlots.map((row) => (
+                        <span key={row.slotCode} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs">
+                          {row.slotCode} · {row.xyProductName}
+                          {row.currentQty !== null && row.capacity !== null
+                            ? ` · ${row.currentQty}/${row.capacity}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                    <Link href="/vms-mappings" className="mt-2 inline-flex text-xs font-semibold text-amber-900 underline underline-offset-2">
+                      {tr(locale, "Review XY product mappings", "مراجعة ربط منتجات XY")}
+                    </Link>
+                  </div>
+                ) : null}
+
                 <div className="space-y-3">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <div className="text-sm font-semibold text-slate-800">
                         {manualSearchQuery
                           ? tr(locale, "Search results", "نتائج البحث")
-                          : tr(locale, "Products to load for this machine", "المنتجات المطلوب تحميلها لهذا الجهاز")}
+                          : tr(locale, "Products in this machine · refill quantities", "المنتجات الموجودة في هذا الجهاز · كميات التعبئة")}
                       </div>
                       <div className="text-xs text-slate-500">
                         {manualSearchQuery
                           ? tr(locale, "Searching the full active catalog. Clear search to return to this machine's refill list.", "يتم البحث في كامل المنتجات النشطة. امسح البحث للعودة إلى قائمة تعبئة هذا الجهاز.")
-                          : tr(locale, "Only products that need refill or already have a quantity are shown here. Use search only when you need to add an exception.", "تظهر هنا فقط المنتجات التي تحتاج تعبئة أو التي تم تحديد كمية لها. استخدم البحث فقط عند الحاجة لإضافة منتج استثنائي.")}
+                          : tr(locale, "All configured XY products stay visible. Suggested quantities appear only for lanes that need refill; other products stay at zero.", "تظهر كل المنتجات المعيّنة في XY. تُقترح كمية فقط للخانات التي تحتاج تعبئة؛ وتبقى باقي المنتجات بكمية صفر.")}
                       </div>
                     </div>
                     <div className="text-xs font-medium text-slate-500">
@@ -1963,7 +1987,7 @@ export function RouteCreateForm({
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
                       {manualSearchQuery
                         ? tr(locale, "No products match this search.", "لا توجد منتجات تطابق هذا البحث.")
-                        : tr(locale, "No refill products are pending for this machine. Use search above only if you need to add something manually.", "لا توجد منتجات تعبئة معلقة لهذا الجهاز. استخدم البحث أعلاه فقط إذا احتجت لإضافة منتج يدويًا.")}
+                        : tr(locale, "No verified product assignments are available for this machine. Refresh XY or search the catalog.", "لا توجد تعيينات منتجات مؤكدة لهذا الجهاز. حدّث XY أو ابحث في الكتالوج.")}
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -1975,7 +1999,7 @@ export function RouteCreateForm({
                         const sourceLabel = candidate.recommendedQty > 0
                           ? tr(locale, "Needs refill", "يحتاج تعبئة")
                           : candidate.sourceKinds.has("planogram")
-                            ? tr(locale, "In this machine", "موجود في هذا الجهاز")
+                            ? tr(locale, "Assigned in XY · no refill suggested", "موجود في XY · لا يحتاج تعبئة الآن")
                             : tr(locale, "Catalog", "الكتالوج");
 
                         return (
@@ -2005,6 +2029,11 @@ export function RouteCreateForm({
                                       ? tr(locale, ` · Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`, ` · المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`)
                                       : tr(locale, " · Storage unknown", " · المخزون غير معروف")}
                                   </div>
+                                  {candidate.slotCodes.size > 0 ? (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {tr(locale, "XY selections", "خانات XY")}: {[...candidate.slotCodes].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).join(", ")}
+                                    </p>
+                                  ) : null}
                                   {candidate.lanes.length ? (
                                     <details className="mt-1 text-xs text-sky-900">
                                       <summary className="cursor-pointer font-medium">
@@ -2077,30 +2106,7 @@ export function RouteCreateForm({
                     </div>
                   )}
 
-                  {!manualSearchQuery && otherConfiguredMachineProducts.length ? (
-                    <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                      <summary className="cursor-pointer text-sm font-medium text-slate-700">
-                        {tr(locale, "Other products already configured in this machine", "منتجات أخرى موجودة في هذا الجهاز")} ({otherConfiguredMachineProducts.length})
-                      </summary>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {otherConfiguredMachineProducts.map((candidate) => {
-                          const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
-                          return (
-                            <button
-                              key={candidate.product.id}
-                              type="button"
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, 1)}
-                              disabled={saving || !candidate.product.storageKnown || availableForMachine === null || availableForMachine <= 0}
-                            >
-                              <span className="font-medium text-slate-900">{candidate.product.name}</span>
-                              <span className="ms-2 text-slate-500">{tr(locale, "Add", "إضافة")}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </details>
-                  ) : null}
+
                 </div>
               </div>
             ) : null}
