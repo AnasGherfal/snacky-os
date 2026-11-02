@@ -11,6 +11,7 @@ export type FinanceTransactionEffect = "income" | "expense" | "transfer" | "open
 export type FinanceBalances = Record<FinanceAccountId, number>;
 export type BalanceTransaction = {
   transaction_date?: string | null;
+  metadata?: { service_month?: unknown } | null;
   transaction_datetime?: string | null;
   transaction_status?: string | null;
   import_status?: string | null;
@@ -77,6 +78,27 @@ export function isFinanceLedgerTransaction(row: BalanceTransaction, cutoffDate =
 }
 const nonProfitCategories = new Set(["owner funding", "owner withdrawal", "bank / exchange", "bank exchange", "exchange", "opening balance", "investor profit share", "investor distribution", "profit distribution", "investor capital", "investor contribution", "investor capital return"]);
 function normalizedCategory(row: BalanceTransaction) { return String(row.category ?? row.final_bucket ?? row.transaction_type ?? "").trim().toLowerCase(); }
+/**
+ * Finance cash flow is always dated when cash was actually paid.
+ * Only explicitly month-tagged employee compensation may be allocated to its
+ * service month for the operating-profit view. This does not create a second
+ * transaction or alter account balances.
+ */
+export function financeProfitRecognitionDate(row: BalanceTransaction): string | null {
+  const paidDate = row.transaction_date ?? null;
+  const effect = String(row.transaction_effect ?? (row.direction === "money_in" ? "income" : "expense")).toLowerCase();
+  const category = normalizedCategory(row);
+  const salary = /salary|payroll|wages|employee payment/i.test(category);
+  const serviceMonth = row.metadata?.service_month;
+  if (effect !== "expense" || !salary || typeof serviceMonth !== "string"
+    || !/^\d{4}-(0[1-9]|1[0-2])$/.test(serviceMonth)) return paidDate;
+  const year = Number(serviceMonth.slice(0, 4));
+  const month = Number(serviceMonth.slice(5, 7));
+  if (year < 2020 || year > 2100) return paidDate;
+  const finalDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${serviceMonth}-${String(finalDay).padStart(2, "0")}`;
+}
+
 export function isProfitAffectingTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
   if (!isFinanceLedgerTransaction(row, cutoffDate)) return false;
   const effect = String(row.transaction_effect || (row.direction === "money_in" ? "income" : "expense"));
