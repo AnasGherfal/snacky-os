@@ -33,7 +33,7 @@ const operator: MobileShortcut[] = [
   { href: "/operator/routes", en: "My Routes", ar: "جولاتي", icon: "route" },
   { href: "/operator/routes?view=available", en: "Available", ar: "المتاحة", icon: "available" },
   { href: "/operator/issues", en: "Issues", ar: "البلاغات", icon: "issues" },
-  { href: "/cash-handling", en: "Cash", ar: "النقدية", icon: "cash" },
+  { href: "/cash-handling/deposit", en: "Deposit", ar: "إيداع الأكياس", icon: "cash" },
 ];
 const warehouse: MobileShortcut[] = [
   { href: "/my-day", en: "My Work", ar: "مهامي", icon: "work" },

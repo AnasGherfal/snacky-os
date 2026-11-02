@@ -161,7 +161,8 @@ export function RouteStopCashCard({
           </div>
           {decision === "collected" ? <>
             <label className="block space-y-2 text-sm font-semibold">
-              <span>رقم الكيس الأمني المعتم</span>
+              <span>الرقم المطبوع على الكيس الأمني أو الختم</span>
+              <span className="block text-xs font-normal leading-5 text-slate-600">اكتب الرقم الموجود فعلياً على الكيس، مثل SNK-000125 أو 583201. كل كيس له رقم مختلف يُستخدم مرة واحدة فقط. لا تختار رقماً من عندك.</span>
               <input className="field-input" dir="ltr" required autoComplete="off" maxLength={80}
                 placeholder="SNK-000125" value={bagId} onChange={e => setBagId(e.target.value.toUpperCase())}/>
             </label>

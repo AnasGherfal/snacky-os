@@ -91,7 +91,7 @@ export default async function OperatorPage() {
         <PageHeader
           title={tr("Operator", "المشغّل")}
           subtitle={tr("Assigned refill routes and daily execution workflow.", "جولات التعبئة المسندة وخطوات العمل اليومي.")}
-          action={<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end"><div className="hidden md:block"><NotificationCenter label="Notifications" /></div><PrimaryButton href="/operator/routes">{tr("All my routes", "كل جولاتي")}</PrimaryButton></div>}
+          action={<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end"><div className="hidden md:block"><NotificationCenter label="Notifications" /></div><PrimaryButton href="/operator/routes">{tr("All my routes", "كل جولاتي")}</PrimaryButton><SecondaryButton href="/cash-handling/deposit">{tr("Deposit cash bags", "إيداع أكياس النقدية")}</SecondaryButton></div>}
         />
 
         {featuredRoute && featuredSummary ? (
