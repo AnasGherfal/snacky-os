@@ -189,15 +189,21 @@ export function MachineStockQuickEditor({
                   <div className="font-bold text-slate-950">{tr(`Row ${row.rowIndex}`, `الصف ${row.rowIndex}`)} <span className="font-mono text-sm text-slate-500">{rowName}</span></div>
                   <div className="text-xs text-slate-500">{tr(`${setCount}/${usable.length} selected · Tap to edit lanes`, `تم ضبط ${setCount} من ${usable.length} · اضغط لتعديل الخانات`)}</div>
                   <div className="mt-2 flex max-w-full gap-1.5 overflow-x-auto pb-1" dir="ltr" aria-hidden="true">
-                    {usable.map((slot) => (
-                      <span key={slot.slotCode} title={`${slot.slotCode} · ${slot.productName}`}
-                        className="relative shrink-0 rounded-md border border-slate-200 bg-white p-0.5">
-                        <ProductThumbnail imageUrl={slot.imageUrl} name={slot.productName} size="sm" />
-                        <span className="absolute -bottom-1 -right-0.5 rounded bg-slate-900 px-0.5 text-[9px] font-semibold text-white">
-                          {slot.slotCode}
+                    {usable.map((slot) => {
+                      const pendingId = productSelections[slot.slotCode];
+                      const pendingProduct = pendingId ? productOptions.find((item) => item.id === pendingId) : null;
+                      const visibleName = pendingId ? pendingProduct?.name ?? slot.productName : slot.productName;
+                      const visibleImage = pendingId ? pendingProduct?.imageUrl ?? null : slot.imageUrl;
+                      return (
+                        <span key={slot.slotCode} title={`${slot.slotCode} · ${visibleName}`}
+                          className={`relative shrink-0 rounded-md border bg-white p-0.5 ${pendingId ? "border-emerald-500" : "border-slate-200"}`}>
+                          <ProductThumbnail imageUrl={visibleImage} name={visibleName} size="sm" />
+                          <span className="absolute -bottom-1 -right-0.5 rounded bg-slate-900 px-0.5 text-[9px] font-semibold text-white">
+                            {slot.slotCode}
+                          </span>
                         </span>
-                      </span>
-                    ))}
+                      );
+                    })}
                   </div>
                 </button>
                 <input type="number" inputMode="numeric" min={0} step={1} placeholder={tr("Qty", "العدد")}
