@@ -83,3 +83,12 @@ test("pre-pilot completed routes are not falsely shown as missing cash",()=>{
  assert.match(route,/activationMs/);
  assert.match(route,/pilotStop\(stop\)/);
 });
+
+test("the cash-bag detail links to its exact route and stop, with removal evidence",()=>{
+ const detail=read("src/app/cash-collections/[id]/page.tsx");
+ assert.match(detail,/route_stop_cash_receipts/);
+ assert.match(detail,/eq\("collection_id",id\)/);
+ assert.match(detail,/linkedStop\.route_stop_id/);
+ assert.match(detail,/linkedStop\.route_id/);
+ assert.match(detail,/Open sealed-bag photo/);
+});
