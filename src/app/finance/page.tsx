@@ -18,6 +18,7 @@ import {
   FINANCE_RECONCILIATION_CUTOFF_DATE,
   formatFinanceMoney,
   isFinanceLedgerTransaction,
+  financeProfitRecognitionDate,
   RECONCILED_OPENING_BALANCES,
   signedAmount,
   sumFinanceProfitRows,
@@ -50,6 +51,7 @@ type FinanceSearchParams = {
 type FinanceRow = {
   id: string;
   transaction_date: string;
+  metadata?: { service_month?: unknown } | null;
   direction: "money_in" | "money_out";
   transaction_kind: string;
   transaction_type: string | null;
@@ -362,8 +364,24 @@ export default async function FinancePage({
   );
   const periodNetLyd = periodMoneyInLyd - periodMoneyOutLyd;
   const periodNetUsd = periodMoneyInUsd - periodMoneyOutUsd;
-  const periodProfitLyd = sumFinanceProfitRows(periodRows, "LYD", cutoffDate);
-  const periodProfitUsd = sumFinanceProfitRows(periodRows, "USD", cutoffDate);
+
+  // Profit uses the service month only for explicitly tagged employee
+  // compensation. Cash inflows, outflows and account balances ALWAYS use the
+  // real payment transaction_date; there is no duplicate accrual ledger entry.
+  const recognizedProfitRows = ledgerRows.filter((row) => {
+    const recognition = financeProfitRecognitionDate(row);
+    return Boolean(recognition && recognition >= periodRange.start && recognition <= periodRange.end);
+  });
+  const periodProfitLyd = sumFinanceProfitRows(recognizedProfitRows, "LYD", cutoffDate);
+  const periodProfitUsd = sumFinanceProfitRows(recognizedProfitRows, "USD", cutoffDate);
+  const salaryAllocatedIntoPeriodLyd = Math.abs(sumFinanceRows(
+    recognizedProfitRows.filter(row => row.direction === "money_out" &&
+      (row.transaction_date < periodRange.start || row.transaction_date > periodRange.end)), "LYD", "money_out",
+  ));
+  const earlierSalaryPaidInPeriodLyd = Math.abs(sumFinanceRows(
+    periodRows.filter(row => row.direction === "money_out" &&
+      (financeProfitRecognitionDate(row) ?? row.transaction_date) < periodRange.start), "LYD", "money_out",
+  ));
   const reviewCount = rows.filter((row) => row.needs_review).length;
   const latestRows = rows.slice(0, 10);
   const reviewGroups = buildFinanceReviewGroups(
@@ -604,7 +622,7 @@ export default async function FinancePage({
         <StatCard
           label={`LYD Profit ${periodRange.suffix}`}
           value={formatFinanceMoney(periodProfitLyd, "LYD")}
-          note="Income minus real expenses. Owner funding/withdrawal excluded."
+          note="Operating profit: tagged salaries counted in their work month; cash stays on payment date. Owner transactions excluded."
           tone={periodProfitLyd < 0 ? "negative" : "positive"}
         />
         <StatCard
@@ -628,10 +646,25 @@ export default async function FinancePage({
         <StatCard
           label={`USD Profit ${periodRange.suffix}`}
           value={formatFinanceMoney(periodProfitUsd, "USD")}
-          note="Income minus real expenses. Owner funding/withdrawal excluded."
+          note="Operating profit: tagged salaries counted in their work month; cash stays on payment date. Owner transactions excluded."
           tone={periodProfitUsd < 0 ? "negative" : "positive"}
         />
       </section>
+      {(salaryAllocatedIntoPeriodLyd > 0 || earlierSalaryPaidInPeriodLyd > 0) ? (
+        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          <strong>Payroll work month vs payment date:</strong>
+          {salaryAllocatedIntoPeriodLyd > 0 ? (
+            <span> {formatFinanceMoney(salaryAllocatedIntoPeriodLyd, "LYD")} of employee costs
+              attributed to this work period but paid on another date. </span>
+          ) : null}
+          {earlierSalaryPaidInPeriodLyd > 0 ? (
+            <span> {formatFinanceMoney(earlierSalaryPaidInPeriodLyd, "LYD")} paid during
+              this period for earlier work; included in cash outflow here, not profit expense here. </span>
+          ) : null}
+          <span>Employee work-month allocation is based on the period tagged on each payment.
+            Other income and expenses continue to use their actual transaction dates.</span>
+        </div>
+      ) : null}
 
       <section className="surface-card mb-6">
         <div className="flex flex-col gap-1 border-b border-slate-200 pb-4">
