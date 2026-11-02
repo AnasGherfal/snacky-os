@@ -63,14 +63,19 @@ export default async function CashRefillPilotPage({
   const xyAgeHours = xyTime ? (Date.now() - new Date(xyTime).getTime()) / 3600000 : Infinity;
   const xyFresh = !xyQuery.error && Number.isFinite(xyAgeHours) && xyAgeHours <= 36;
   const selected = new Set(policy?.pilot_machine_ids ?? []);
+  const activeMachines = machinesQuery.data ?? [];
+  const uncovered = activeMachines.filter(machine=>!selected.has(machine.id));
   const params = await searchParams;
   return (
     <div dir="rtl" className="mx-auto max-w-2xl space-y-6 p-4">
       <header className="space-y-2">
         <Link href="/cash-handling" className="text-sm font-semibold text-emerald-800">الرجوع إلى النقدية</Link>
         <h1 className="text-2xl font-bold text-slate-950">تفعيل سحب النقدية مع كل تعبئة</h1>
-        <p className="text-sm leading-6 text-slate-600">اختر ماكينة أو ماكينتين للتجربة. باقي الماكينات تبقى بنفس النظام القديم إلى أن تتأكد من سلامة التسليم والعدّ ومطابقة XY.</p>
+        <p className="text-sm leading-6 text-slate-600">سحب النقدية مع كل زيارة إلزامي حالياً للماكينات المحددة. المشغّل ينهي الجولة بعد تسجيل السحب أو التعذر، دون انتظار المالك يعدّ أو يستلم. الإيداع والعدّ ومطابقة XY إجراءات مستقلة.</p>
       </header>
+      {policy.enabled ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">المفعل: {activeMachines.length-uncovered.length} من {activeMachines.length} ماكينة نشطة.</div> : null}
+      {policy.enabled&&uncovered.length>0 ? <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-950">تنبيه: {uncovered.length} ماكينة نشطة جديدة غير مشمولة بإلزام النقدية. حددها واحفظ الإعدادات قبل تشغيل جولاتها.</div> : null}
+      {policy.safe_label==="Safe A" ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">اسم مكان الإيداع «Safe A» ما زال مؤقتاً. أدخل اسم الخزنة أو الموقع الموجود فعلياً قبل تسجيل أول إيداع.</div> : null}
       {params.updated ? <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">تم حفظ إعدادات التجربة.</p> : null}
       {params.error ? <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">تعذر الحفظ. تحقق من الخزنة والماكينات المختارة.</p> : null}
       <section className={xyFresh ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4" : "rounded-xl border border-amber-200 bg-amber-50 p-4"}>
@@ -88,14 +93,14 @@ export default async function CashRefillPilotPage({
             <form action={updateCashPilot} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5">
         <label className="flex items-center gap-3 text-sm font-semibold">
           <input type="checkbox" name="enabled" defaultChecked={Boolean(policy?.enabled)}/>
-          تفعيل شرط تسجيل النقدية قبل إنهاء التعبئة للماكينات المختارة
+          إلزام سحب النقدية أو تسجيل سبب التعذر قبل إنهاء كل موقع مفعّل. لا يُطلب العدّ أو الاستلام لإكمال الجولة.
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           مكان الإيداع في المخزن
           <input className="field-input" name="safe_label" defaultValue={policy?.safe_label || "Safe A"} maxLength={80} required/>
         </label>
         <fieldset className="space-y-3">
-          <legend className="font-semibold">ماكينات التجربة</legend>
+          <legend className="font-semibold">الماكينات التي يُطلب فيها تسجيل النقدية في كل زيارة</legend>
           {(machinesQuery.data ?? []).map(machine => (
             <label key={machine.id} className="flex min-h-11 items-center gap-3 rounded-lg border border-slate-200 px-3 text-sm">
               <input type="checkbox" name="machine_id" value={machine.id} defaultChecked={selected.has(machine.id)}/>
@@ -104,7 +109,7 @@ export default async function CashRefillPilotPage({
           ))}
         </fieldset>
         <button type="submit" className="btn-primary min-h-12 w-full">حفظ الإعدادات</button>
-        <p className="text-xs leading-6 text-slate-500">لا يغيّر هذا الإعداد السحوبات السابقة ولا أرصدة الشركة. لا يتم تفعيل جميع الماكينات تلقائياً.</p>
+        <p className="text-xs leading-6 text-slate-500">الماكينات الجديدة تحتاج إضافتها إلى القائمة عند تشغيلها. لا يغيّر التفعيل حسابات النقدية التاريخية أو أرصدة الشركة.</p>
       </form>
     </div>
   );

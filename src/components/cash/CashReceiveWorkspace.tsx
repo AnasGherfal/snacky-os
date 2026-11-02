@@ -50,8 +50,11 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
     return()=>{ended=true;};
   },[reload]);
 
-  const ready=useMemo(()=>view?.rows.filter(r=>r.actions.includes("pickup")||r.actions.includes("takeover"))??[],[view]);
-  const toCount=useMemo(()=>view?.rows.filter(r=>r.actions.includes("count"))??[],[view]);
+  // Oldest sealed bags first: counting in pickup order keeps previous verified
+  // full removals available as the baseline for later XY intervals.
+  const oldestFirst=(a:CashBox,b:CashBox)=>Date.parse(a.collected_at)-Date.parse(b.collected_at);
+  const ready=useMemo(()=>(view?.rows.filter(r=>r.actions.includes("pickup")||r.actions.includes("takeover"))??[]).sort(oldestFirst),[view]);
+  const toCount=useMemo(()=>(view?.rows.filter(r=>r.actions.includes("count"))??[]).sort(oldestFirst),[view]);
   const box=[...ready,...toCount].find(r=>r.id===selected)??null;
   const action=box?.actions.includes("count")?"count":box?.actions.includes("pickup")?"pickup":
     box?.actions.includes("takeover")?"takeover":null;
@@ -111,7 +114,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       <Link href="/cash-handling" className="text-sm font-semibold text-emerald-800">النقدية</Link>
       <h1 className="text-2xl font-bold text-slate-950">استلام وعدّ أكياس النقدية</h1>
       <p className="text-sm leading-6 text-slate-600">
-        لا تعتمد صورة الإيداع وحدها. افتح الخزنة، تأكد من وجود الكيس ورقم الختم، ثم أكّد الاستلام.
+        لا تعتمد صورة الإيداع وحدها. ابدأ بالأكياس الأقدم أولاً، وافتح الخزنة، تأكد من وجود الكيس ورقم الختم، ثم أكّد الاستلام.
         بعد ذلك افتح الكيس وعدّ النقدية بنفسك. لا تستخدم إجمالي XY كبديل عن العدّ.
       </p>
     </header>

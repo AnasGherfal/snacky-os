@@ -111,15 +111,16 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false,allo
     const deposited=receipt?.state==="collected"&&collection?.custody_status==="in_storage";
     const settled=receipt?.state==="collected"&&full&&!collection?.voided_at;
     const missing=pilotStop(stop)&&stop.status==="completed"&&!receipt;
+    const skippedUncollected=pilotStop(stop)&&["skipped","cancelled","canceled"].includes(stop.status)&&!receipt;
     const due=removed&&collection?.collected_at&&Date.now()-new Date(collection.collected_at).getTime()>24*3600000;
     const exact=Boolean(settled&&collection?.expected_source==="vms_exact"&&collection?.vms_expected_cash!==null);
-    const label=exception?"سحب متعذر — يحتاج متابعة":pending?"حفظ غير مؤكد":
+    const label=skippedUncollected?"الموقع تم تخطيه — لا يوجد سحب نقدية":exception?"سحب متعذر — يحتاج متابعة":pending?"حفظ غير مؤكد":
       unmatched?"السجل النقدي غير متطابق":removed?(due?"الكيس لم يُودع منذ أكثر من 24 ساعة":"الكيس مع المشغّل — لم يُودع"):
       deposited?"إيداع مُبلغ عنه — لم يؤكده المستلم":settled?"تم العدّ — راجع سلسلة العهدة":
       missing?"سحب مفقود من سجل الجولة":stop.status==="completed"?"لم يُسجّل سحب":"الموقع لم يكتمل";
-    return {stop,receipt,collection,label,exact,settled,pending,exception,removed,deposited,missing,due};
+    return {stop,receipt,collection,label,exact,settled,pending,exception,removed,deposited,missing,skippedUncollected,due};
   });
-  const unresolved=rows.filter(r=>r.missing||r.pending||r.removed||r.deposited||
+  const unresolved=rows.filter(r=>r.missing||r.skippedUncollected||r.pending||r.removed||r.deposited||
     (r.receipt?.state==="collected"&&!r.settled)||r.exception).length;
   const counted=rows.filter(r=>r.settled).length;
   const needsDeposit=rows.filter(r=>r.removed).length;
@@ -159,7 +160,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false,allo
       {rows.map(r=><div key={r.stop.id} className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:p-4">
         <div>
           <p className="font-semibold text-slate-950">{r.stop.stop_order}. {machineNames.get(r.stop.machine_id)??"ماكينة"}</p>
-          <p className={r.missing||r.pending||r.exception||r.due?"mt-1 text-sm font-semibold text-rose-800":
+          <p className={r.missing||r.skippedUncollected||r.pending||r.exception||r.due?"mt-1 text-sm font-semibold text-rose-800":
             "mt-1 text-sm font-semibold text-slate-700"}>{r.label}</p>
           {r.receipt?.bag_id?<p className="mt-1 text-xs text-slate-600">رقم الكيس: <bdi className="font-mono font-semibold">{r.receipt.bag_id}</bdi></p>:null}
           {r.receipt?.state==="exception"?<p className="mt-1 text-xs text-rose-700">{r.receipt.exception_notes}</p>:null}
