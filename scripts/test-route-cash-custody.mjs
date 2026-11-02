@@ -71,3 +71,15 @@ test("owner has a queue of missing and delayed custody events rather than assumi
  assert.match(audit,/cash-handling\/receive/);
  assert.match(audit,/routes\/\$\{row.route_id\}/);
 });
+
+test("pre-pilot completed routes are not falsely shown as missing cash",()=>{
+ const activation=read("supabase/migrations/20261102141500_cash_pilot_activation_time.sql");
+ const scope=read("supabase/migrations/20261102143500_route_cash_close_activation_scope.sql");
+ const owner=read("src/app/cash-collections/pilot/page.tsx");
+ const route=read("src/components/cash/RouteCashPanel.tsx");
+ assert.match(activation,/activated_at/);
+ assert.match(scope,/s\.completed_at>=v_policy\.activated_at/);
+ assert.match(owner,/activated_at: activatedAt/);
+ assert.match(route,/activationMs/);
+ assert.match(route,/pilotStop\(stop\)/);
+});
