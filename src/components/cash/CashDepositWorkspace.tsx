@@ -182,7 +182,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
         <label className="block space-y-2 text-sm font-semibold">
           <span>صورة الكيس المختوم بجانب فتحة الخزنة</span>
           <input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"
-            required onChange={e=>setPhoto(e.target.files?.[0]??null)} />
+            required={!storedPending(box.id)} onChange={e=>setPhoto(e.target.files?.[0]??null)} />
           <span className="block text-xs font-normal text-slate-500">أظهر رقم الكيس والختم ولوحة الخزنة. لا تفتح الكيس ولا تصوّر الأوراق النقدية.</span>
           {storedPending(box.id)?<span className="block text-xs font-semibold text-amber-900">إذا ضاع رد الحفظ بعد رفع الصورة، تستطيع تأكيد المحاولة السابقة بدون إخراج الكيس من الخزنة. النظام يتحقق من صورة الطلب الأصلية.</span>:null}
         </label>
