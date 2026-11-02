@@ -7,7 +7,7 @@ type CleanupResult = {
  deleted?:number; reclaimedBytes?:number; nextCursor?:string|null; done?:boolean;
  results?:Array<{kind:string;status:string;bytes?:number}>;
 };
-type Progress={inspected:number;eligible:number;eligibleBytes:number;deleted:number;reclaimedBytes:number;errors:number};
+type Progress={inspected:number;eligible:number;eligibleBytes:number;deleted:number;reclaimedBytes:number;errors:number;statuses:Record<string,number>};
 
 export function OwnerPhotoCleanup(){
  const [busy,setBusy]=useState<"inspect"|"delete"|null>(null);
@@ -21,7 +21,7 @@ export function OwnerPhotoCleanup(){
   setBusy(action);
   setNotice("");
   let cursor:string|null=null;
-  let next:Progress={inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0};
+  let next:Progress={inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0,statuses:{}};
   try{
    for(let batch=0;batch<2000;batch++){
     const resp=await fetch("/api/ops/purge-aged-refill-photos",{
@@ -32,18 +32,29 @@ export function OwnerPhotoCleanup(){
     const type=resp.headers.get("content-type") ?? "";
     if(!type.includes("application/json"))throw Error("This is not the authenticated cleanup API. Open it from the normal Snacky OS Settings page and sign in.");
     const data=await resp.json() as CleanupResult;
-    if(!resp.ok || !data.ok)throw Error(resp.status===403?"Owner access denied. Sign in with the active Snacky owner account.":(data.error||"The cleanup request was rejected"));
+    if(!resp.ok || !data.ok){
+      if(data.error==="cross_origin_request_blocked")throw Error("The site origin check blocked this request. Open Photo Cleanup from your normal Snacky OS Settings page.");
+      if(data.error==="owner_only")throw Error("This operation requires an active Snacky owner account. No photos were deleted.");
+      throw Error(data.error||"The cleanup request was rejected. No success has been confirmed.");
+    }
+    const statuses={...next.statuses};
+    for(const item of data.results??[])statuses[item.status]=(statuses[item.status]??0)+1;
     next={inspected:next.inspected+(data.processed??0),
       eligible:next.eligible+(data.eligible??0),
-      eligibleBytes:next.eligibleBytes+(data.results??[]).filter(r=>r.status==="eligible").reduce((a,r)=>a+(r.bytes??0),0),
+      eligibleBytes:next.eligibleBytes+(data.results??[]).filter(r=>r.status==="eligible"||r.status==="deleted").reduce((a,r)=>a+(r.bytes??0),0),
       deleted:next.deleted+(data.deleted??0),
       reclaimedBytes:next.reclaimedBytes+(data.reclaimedBytes??0),
-      errors:next.errors+(data.results??[]).filter(r=>r.status==="failed_closed_no_confirmation").length};
+      errors:next.errors+(data.results??[]).filter(r=>r.status==="failed_closed_no_confirmation").length,
+      statuses};
     setProgress(next);
-    if(data.done){setNotice(
-       action==="inspect"?"Preview complete — NOTHING WAS DELETED. Tick the confirmation and press the RED delete button to actually free space.":
-       "Cleanup finished. The total shown reflects Storage API deletions verified as absent."
-     );return;}
+    if(data.done){
+      setNotice(action==="inspect"
+        ? `Preview finished: ${next.eligible} old photos eligible (about ${size(next.eligibleBytes)}). NOTHING WAS DELETED.`
+        : next.deleted>0
+          ? `Verified removal of ${next.deleted} photos (${size(next.reclaimedBytes)}). Any skipped or failed items are shown below.`
+          : "NO PHOTOS DELETED. Check the reasons below; a completed scan alone never frees storage.");
+      return;
+    }
     if(!data.nextCursor||data.nextCursor===cursor)throw Error("The next batch could not be determined safely");
     cursor=data.nextCursor;
    }
@@ -80,7 +91,32 @@ export function OwnerPhotoCleanup(){
    <button disabled={!!busy||!acknowledge} onClick={()=>run("delete")} className="w-full rounded-xl bg-red-700 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
     {busy==="delete"?"Deleting and verifying…":"PERMANENTLY DELETE machine/compressor photos older than 30 days"}
    </button>
+   {busy&&<p role="status" className="rounded-lg bg-slate-100 p-3 text-sm">Checking photos… {progress.inspected} reviewed, {progress.deleted} deleted, {size(progress.reclaimedBytes)} verified removed.</p>}
    {notice&&<p role="status" className="rounded-lg bg-slate-100 p-3 text-sm">{notice}</p>}
+   {Object.keys(progress.statuses).length>0&&(
+     <div className="rounded-xl border border-slate-200 p-3">
+       <h3 className="text-sm font-semibold">Actual results — reasons for skipped photos</h3>
+       <ul className="mt-2 space-y-1 text-sm">
+         {Object.entries(progress.statuses).sort((a,b)=>b[1]-a[1]).map(([status,count])=>(
+           <li key={status} className="flex justify-between gap-2">
+             <span>{({
+               eligible:"Eligible (preview only)",deleted:"Removed and verified",
+               photo_not_old_enough:"Too new or missing modification date",
+               already_missing:"Already absent from Storage",
+               quantity_evidence_protected:"Protected quantity screenshot",
+               not_compressor_proof:"Not a confirmed compressor photo",
+               not_exclusive_machine_photo:"Not an exclusive machine overview",
+               invalid_file_metadata:"Invalid Storage size",
+               unverifiable_source_version:"Missing file version / ETag",
+               source_changed_or_protected:"Photo changed during verification",
+               failed_closed_no_confirmation:"Deletion could not be confirmed",
+             } as Record<string,string>)[status]??status}</span>
+             <strong>{count}</strong>
+           </li>
+         ))}
+       </ul>
+     </div>
+   )}
    <p className="text-sm font-semibold text-red-700">The optional preview never reduces Supabase usage. Only the red delete action does.</p>
    <p className="text-xs text-slate-500">Keep this page open while processing. A refresh is safe: previously removed files are skipped when scanned again.</p>
   </section>
