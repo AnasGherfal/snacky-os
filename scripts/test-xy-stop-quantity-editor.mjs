@@ -85,7 +85,8 @@ test("Selection cards and search display real product images while writes remain
   const editor = read("src/components/operator/MachineStockQuickEditor.tsx");
   const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
   const live = read("src/app/api/operator/routes/[id]/stops/[stopId]/xy-live-layout/route.ts");
-  assert.match(editor,/ProductThumbnail imageUrl=\{slot.imageUrl\}/);
+  assert.match(editor,/ProductThumbnail imageUrl=\{visibleImage\}/);
+  assert.match(editor,/const visibleImage = pendingId \? pendingProduct\?\.imageUrl/);
   assert.match(editor,/ProductThumbnail imageUrl=\{selectedImageUrl\}/);
   assert.match(editor,/ProductThumbnail imageUrl=\{product.imageUrl\}/);
   assert.match(editor,/No configured selections for this physical row|no configured selections for this physical row/);
