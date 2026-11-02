@@ -185,7 +185,7 @@ export function MachineStockQuickEditor({
             <div key={row.rowIndex} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
               <div className="flex flex-wrap items-center gap-2 p-3">
                 <button type="button" onClick={() => setExpanded((prev) => ({ ...prev, [row.rowIndex]: !open }))}
-                  className="min-h-11 flex-1 text-start" aria-expanded={open}>
+                  className="min-h-11 min-w-0 flex-1 text-start" aria-expanded={open}>
                   <div className="font-bold text-slate-950">{tr(`Row ${row.rowIndex}`, `الصف ${row.rowIndex}`)} <span className="font-mono text-sm text-slate-500">{rowName}</span></div>
                   <div className="text-xs text-slate-500">{tr(`${setCount}/${usable.length} selected · Tap to edit lanes`, `تم ضبط ${setCount} من ${usable.length} · اضغط لتعديل الخانات`)}</div>
                   <div className="mt-2 flex max-w-full gap-1.5 overflow-x-auto pb-1" dir="ltr" aria-hidden="true">
@@ -312,9 +312,6 @@ export function MachineStockQuickEditor({
                                           ) : null}
                                         </span>
                                       </span>
-                                      {false ? (
-                                        <span className="block text-xs text-slate-500">{[product.sku, product.barcode].filter(Boolean).join(" · ")}</span>
-                                      ) : null}
                                     </button>
                                   ))}
                                   {!searchMatches.length ? (
@@ -377,13 +374,21 @@ export function MachineStockQuickEditor({
           );
         })}
       </div>
+      {unmappedSelections.length ? (
+        <div role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          {tr(
+            `${unmappedSelections.length} XY selections have no confirmed physical row (codes: ${unmappedSelections.join(", ")}). No extra row was invented; ask management to verify the layout.`,
+            `${unmappedSelections.length} خانة في XY ليس لها صف فعلي مؤكد (الأرقام: ${unmappedSelections.join("، ")}). لم نضف صفاً وهمياً؛ يرجى مراجعة الإدارة.`,
+          )}
+        </div>
+      ) : null}
       {hiddenSelections.length ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
           {tr(`${hiddenSelections.length} selections are hidden by management. Ask an owner or supervisor to review missing lanes.`,
             `${hiddenSelections.length} خانات مخفية بواسطة الإدارة. تواصل مع المالك أو المشرف لمراجعة الخانات الناقصة.`)}
         </div>
       ) : null}
-            {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
+      {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p> : null}
       <p className="mt-3 text-xs text-slate-500">{tr(
         "Press Save Selection to queue that selection immediately; Complete Stop also saves any remaining stock/price edits. Background sync retries without holding the operator.",
         "اضغط حفظ الخانة لتسجيل التغيير فوراً؛ وإنهاء الموقع يحفظ باقي تعديلات السعر والكمية. تُجرى المزامنة في الخلفية دون تعطيل المشغل.",
