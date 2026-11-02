@@ -35,7 +35,8 @@ function statusText(c:Collection){
 }
 function isVerifiedPreviousFull(c:Collection,line:Line){
   return line.removal_type==="full"&&
-    Boolean(c.actual_cash_collected!=null&&c.counted_at&&c.counted_by&&
+    Boolean(line.compartments?.includes("notes")&&line.compartments?.includes("coins")&&
+      c.actual_cash_collected!=null&&c.counted_at&&c.counted_by&&
       c.counted_by!==c.operator_id&&
       ["counted","reconciled"].includes(c.custody_status)&&
       c.storage_seal_condition==="intact"&&c.count_seal_condition==="intact"&&
