@@ -165,7 +165,7 @@ const adminItem: NavItem = {
 };
 
 const cashHandlingItem: NavItem = { label: { en: "Cash handling", ar: "تسليم وعد النقد" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
-const operatorCashItem: NavItem = { label: { en: "Cash", ar: "النقدية" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
+const operatorCashItem: NavItem = { label: { en: "Deposit cash bags", ar: "إيداع أكياس النقدية" }, href: "/cash-handling/deposit", icon: HandCoins, activePrefixes: ["/cash-handling/deposit"] };
 
 const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
 
