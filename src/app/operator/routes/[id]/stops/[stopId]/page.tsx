@@ -871,7 +871,8 @@ export default function MachineStopPage() {
             // installed in this selection.
             imageUrl: slot.imageUrl
               ?? (fullProductCatalog ?? current.productOptions).find((p) => p.id === slot.productId)?.imageUrl
-              ?? (existing?.vmsProductId === slot.vmsProductId ? existing.imageUrl : null)
+              ?? (existing?.vmsProductId === slot.vmsProductId && existing?.productId === slot.productId
+                ? existing.imageUrl : null)
               ?? null,
             currentQty: slot.currentQty === null ? (existing?.currentQty ?? 0) : slot.currentQty,
             liveStockKnown: slot.currentQty !== null,
