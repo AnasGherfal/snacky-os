@@ -83,6 +83,7 @@ test("source release stays off without a separate owner-controlled environment g
  assert.match(source,/job\.release===true&&process\.env\.SNACKY_PHOTO_ARCHIVE_RELEASE_ENABLED!=="true"/);
  assert.match(source,/source_release_disabled/);
  assert.match(source,/if\(!job\.release\)/);
+ assert.match(source,/const minAgeMs=60\*24\*60\*60\*1000/);
  assert.match(source,/source_version_conflict_before_release/);
 });
 

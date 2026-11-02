@@ -15,7 +15,7 @@ function isCompactCompressorJob(job: Job) {
     process.env.SNACKY_COMPRESSOR_HISTORICAL_COMPACTION_ENABLED === "true";
 }
 const maxBytes=7*1024*1024;
-const minAgeMs=30*24*60*60*1000;
+// Retain originals in Supabase for a full 60 days; later archiving still\n// requires the existing separately approved, verified source-release gates.\nconst minAgeMs=60*24*60*60*1000;
 function matchesTime(value:unknown,original:string){
   return typeof value==="string" && Number.isFinite(Date.parse(value)) &&
     Date.parse(value)===Date.parse(original);

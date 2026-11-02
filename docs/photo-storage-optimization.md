@@ -141,3 +141,16 @@ Potential storage recovery from all 53 compressor source removals: up to 109,986
 ## Upload-side compressor cap (same change)
 
 The authenticated `uploadRefillProofPhoto` server action now also converts any compressor-purpose upload into the low-resolution WebP before calculating its SHA filename or storing it. This ensures that operators running stale browser bundles cannot keep uploading multi-megabyte compressor proofs. The original upload name is preserved as metadata, while the stored file is a new content-hash-named WebP, capped at 120 KiB; normal machine overview photos and all quantity/cash/receipt evidence are not changed. If the image cannot be compacted while retaining the full frame, the upload fails visibly and asks the operator for a closer photo instead of silently saving a large original. 
+
+
+## 60-day historical photo retention — owner direction, 1 November 2026
+
+The owner now prefers that refill photographs older than **60 full days** no longer consume Supabase's active Storage allowance. This supersedes the earlier **30-day** historical *release eligibility* discussion, without changing the requirement for recent proof capture, receipts, cash records or current operational evidence.
+
+A live, read-only inventory on 1 November showed **1,499,812,702 bytes total** in storage.objects, including **483 refill photos / 554,920,232 bytes** older than 60 days, counted from the later of created_at and updated_at. Those 483 comprise 141 safety-reference photos / 341,710,122 bytes; 270 machine overviews / 160,560,168 bytes; and 72 files / 52,649,942 bytes without a primary machine/safety/quantity link. None of the 204 quantity screenshots met the cutoff. Eighty old safety-photo records / 192,958,679 bytes had open machine issue holds on completed stops, requiring extra protection.
+
+Moving **every one** of these 483 files would bring the current object size to approximately 944.9 MB, leaving only ~55 MB headroom under a decimal 1 GB quota, before subsequent uploads. Moving only historical safety + machine-overview references would yield ~997.5 MB (effectively no headroom). Therefore, age alone cannot be used as a blind deletion sweep, and ongoing upload compression and further manual reference audits are required.
+
+**Status:** This is a retention *policy and audit*, not a completed storage cleanup. The Vercel private original store was reachable but contained **zero** objects under `snacky-photos/v1/` when checked. No verified archive or source release has been completed by this policy change. Existing production photo records and source objects were not changed.
+
+**Safety:** Only a verified bit-for-bit copy in private independent storage, hash/length readback, proven authenticated proxy access, fresh metadata and route/issue/reference checks, and the existing independent release switches may authorize a Storage API source removal. Original issue/cash/receipt/quantity records are not deleted. A reference-free file is *not* necessarily unneeded; examine legacy serialized references before release. PR changes alone do not reduce past storage bytes. Preview-only maintenance access was disabled and its temporary execution environment stopped after the controlled operation was blocked; no automatic release is active.
