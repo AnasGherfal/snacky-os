@@ -69,8 +69,8 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
   const bags=useMemo(()=>view?.rows.filter(b=>b.actions.includes("dropoff"))??[],[view]);
   const deposited=useMemo(()=>view?.rows.filter(b=>b.state==="dropped"||b.state==="stored")??[],[view]);
   const box=bags.find(b=>b.id===selected)??null;
-  const selectedRecipient=box?.assigned_to??receiver||
-    (view?.counters.some(p=>p.id===suggestedReceiverId)?suggestedReceiverId??"":"");
+  const selectedRecipient=(box?.assigned_to ?? receiver) ||
+    (view?.counters.some(p=>p.id===suggestedReceiverId) ? (suggestedReceiverId ?? "") : "");
   function select(id:string){
     const next=bags.find(row=>row.id===id);
     if(!next)return;
