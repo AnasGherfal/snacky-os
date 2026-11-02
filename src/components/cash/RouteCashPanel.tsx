@@ -134,7 +134,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false,allo
       </div>
       <div className="flex flex-wrap gap-2">
         <Link href={owner?"/cash-handling/receive":"/cash-handling/deposit"} className="btn-primary">{owner?"استلام وعدّ الأكياس":"إيداع الأكياس في الخزنة"}</Link>
-        {owner?<Link href="/cash-collections/refills" className="btn-secondary">مراجعة جميع السحوبات</Link>:null}
+        {owner?<Link href="/cash-collections/refills" className="btn-secondary">مراجعة جميع السحوبات</Link><Link href="/cash-collections/timeline" className="btn-secondary">فترات السحب حسب الماكينة</Link>:null}
         {owner&&!allowOwnerClose?<Link href={`/cash-collections/routes/${routeId}`} className="btn-secondary">ملف عهدة النقدية المستقل</Link>:null}
       </div>
     </header>
