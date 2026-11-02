@@ -104,6 +104,11 @@ test("photo reference applies as a generic sparse-water topology, never to a spe
   assert.equal(physicalMachineRowForSlot("051"),5);
 });
 
+test("missing XY stock data does not fabricate six shelves or editable selections",()=>{
+  assert.deepEqual(groupMachineLayoutRows([]),[]);
+  assert.deepEqual(groupMachineLayoutRows([],{machineCode:"2509000369"}),[]);
+});
+
 test("never render row 6 or turn historical VMS product identities into editable physical lanes",()=>{
   const source=["001","011","021","031","041","051","060","061","VMS-106","","000"]
     .map(slotCode=>({slotCode}));
