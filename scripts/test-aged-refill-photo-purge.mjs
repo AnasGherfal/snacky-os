@@ -137,3 +137,18 @@ test("overview class is eligible only with a machine history and without safety 
  assert.match(sql,/bucket\.remove\(\[job\.path\]\)/);
  assert.doesNotMatch(sql,/storage\.objects.*(?:DELETE|delete)/s);
 });
+
+
+test("live candidate SQL is read-only, protects quantities and never selects other buckets",()=>{
+ const sql=fs.readFileSync("scripts/sql/aged-refill-photo-cleanup-review.sql","utf8");
+ assert.match(sql,/BEGIN TRANSACTION READ ONLY/);
+ assert.match(sql,/bucket_id = 'refill-photos'/);
+ assert.match(sql,/machine_refill_history/);
+ assert.match(sql,/route_stop_safety_checks/);
+ assert.match(sql,/route_stop_quantity_confirmations/);
+ assert.match(sql,/position\(c\.path in coalesce\(q\.evidence_files::text/);
+ assert.match(sql,/o\.created_at < now\(\) - interval '30 days'/);
+ assert.match(sql,/o\.updated_at < now\(\) - interval '30 days'/);
+ assert.match(sql,/OWNER_AUTHORIZED_BUT_REQUIRE_RUNTIME_RECHECK/);
+ assert.doesNotMatch(sql,/(?:^|\n)\s*(?:DELETE|UPDATE|INSERT|TRUNCATE|DROP|ALTER)\b/im);
+});
