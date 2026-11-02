@@ -17,6 +17,7 @@ import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isActiveRouteStatus, isAvailableRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { RouteCashPanel } from "@/components/cash/RouteCashPanel";
 
 type OperatorRouteDetailRow = OperatorRoutePreviewRow & {
   started_at?: string | null;
@@ -496,6 +497,8 @@ export default async function OperatorRouteDetailPage({
             </div>
           </SectionCard>
         </div>
+
+        <RouteCashPanel routeId={routeId} routeStatus={String(routeRow.status)} forOperator />
 
         {(routeProductsPrepared || hasPickup || (routeBagBalances?.length ?? 0) > 0) ? (
           <RouteBagStockFlow routeId={routeId} locale={locale} />
