@@ -55,6 +55,10 @@ export function groupMachineLayoutRows<T extends { slotCode: string }>(
   slots: readonly T[],
   _options: MachineLayoutGroupOptions = {},
 ): Array<{ rowIndex: number; slots: T[] }> {
+  // A failed/unavailable XY read is not proof of a physical layout. Leave the
+  // existing "No XY machine layout" state intact until at least one real
+  // selection was fetched; never invent six editable-looking empty shelves.
+  if (slots.length === 0) return [];
   const rows = new Map<number, T[]>();
   const sparseLastShelf = hasSparseLastShelf(slots);
 
