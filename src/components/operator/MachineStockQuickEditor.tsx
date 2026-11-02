@@ -14,6 +14,7 @@ export type QuickMachineSlot = {
   priceLyd?: number | null;
   productId?: string | null;
   liveStockKnown?: boolean;
+  sourceState?: "live" | "last_imported" | "unverified";
 };
 
 export type QuickMachineRow = {
@@ -251,9 +252,14 @@ export function MachineStockQuickEditor({
                           </div>
                         </div>
                         <span className="mt-1 block text-xs font-semibold text-slate-600">
-                          {isLiveXy
-                            ? tr("Current in XY", "الموجود حالياً في XY")
-                            : tr("Last imported stock (not live)", "آخر كمية مستوردة (ليست مباشرة)")}: <strong className="text-slate-950">{slot.liveStockKnown === false ? "—" : units(slot.currentQty)}</strong>
+                          {slot.sourceState === "last_imported"
+                            ? tr("Last verified XY stock · not live", "آخر مخزون XY مؤكد · ليس مباشراً")
+                            : slot.sourceState === "unverified"
+                              ? tr("XY product not verified", "منتج XY غير مؤكد")
+                              : isLiveXy || slot.liveStockKnown === true
+                                ? tr("Current in XY", "الموجود حالياً في XY")
+                                : tr("Last imported stock (not live)", "آخر كمية مستوردة (ليست مباشرة)")}: <strong className="text-slate-950">{slot.liveStockKnown === false && slot.sourceState !== "last_imported"
+                            ? "—" : units(slot.currentQty)}</strong>
                           {" · "}{tr("Capacity", "السعة")}: {slot.capacity}
                         </span>
                         {onSelectProduct ? (
