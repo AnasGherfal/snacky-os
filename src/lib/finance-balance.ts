@@ -91,7 +91,7 @@ export function financeProfitRecognitionDate(row: BalanceTransaction): string | 
   const salary = /salary|payroll|wages|employee payment/i.test(category);
   const serviceMonth = row.metadata?.service_month;
   if (effect !== "expense" || !salary || typeof serviceMonth !== "string"
-    || !/^\\d{4}-(0[1-9]|1[0-2])$/.test(serviceMonth)) return paidDate;
+    || !/^\d{4}-(0[1-9]|1[0-2])$/.test(serviceMonth)) return paidDate;
   const year = Number(serviceMonth.slice(0, 4));
   const month = Number(serviceMonth.slice(5, 7));
   if (year < 2020 || year > 2100) return paidDate;
