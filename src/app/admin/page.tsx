@@ -123,7 +123,7 @@ export default async function AdminPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {adminLinks.filter((item) => !["/admin/testing-lab", "/admin/photo-cleanup"].includes(item.href) || hasRole(profile, "owner")).map((item) => (
+        {adminLinks.filter((item) => (item.href !== "/admin/testing-lab" || hasRole(profile, "owner")) && (item.href !== "/admin/photo-cleanup" || hasRole(profile, "owner"))).map((item) => (
           <Link
             key={item.href}
             href={item.href}
