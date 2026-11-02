@@ -12,13 +12,12 @@ type Progress={inspected:number;eligible:number;eligibleBytes:number;deleted:num
 export function OwnerPhotoCleanup(){
  const [busy,setBusy]=useState<"inspect"|"delete"|null>(null);
  const [acknowledge,setAcknowledge]=useState(false);
- const [scanned,setScanned]=useState(false);
  const [progress,setProgress]=useState<Progress>({inspected:0,eligible:0,eligibleBytes:0,deleted:0,reclaimedBytes:0,errors:0});
  const [notice,setNotice]=useState("");
  const size=(bytes:number)=>(bytes/1_000_000).toFixed(1)+" MB";
 
  async function run(action:"inspect"|"delete"){
-  if(busy || (action==="delete" && (!scanned||!acknowledge))) return;
+  if(busy || (action==="delete" && !acknowledge)) return;
   setBusy(action);
   setNotice("");
   let cursor:string|null=null;
@@ -30,8 +29,10 @@ export function OwnerPhotoCleanup(){
      body:JSON.stringify({action,cursor,acknowledgement:action==="delete"?"DELETE OLD PHOTOS":undefined}),
      cache:"no-store",
     });
+    const type=resp.headers.get("content-type") ?? "";
+    if(!type.includes("application/json"))throw Error("This is not the authenticated cleanup API. Open it from the normal Snacky OS Settings page and sign in.");
     const data=await resp.json() as CleanupResult;
-    if(!resp.ok || !data.ok)throw Error(data.error||"The cleanup request was rejected");
+    if(!resp.ok || !data.ok)throw Error(resp.status===403?"Owner access denied. Sign in with the active Snacky owner account.":(data.error||"The cleanup request was rejected"));
     next={inspected:next.inspected+(data.processed??0),
       eligible:next.eligible+(data.eligible??0),
       eligibleBytes:next.eligibleBytes+(data.results??[]).filter(r=>r.status==="eligible").reduce((a,r)=>a+(r.bytes??0),0),
@@ -39,8 +40,8 @@ export function OwnerPhotoCleanup(){
       reclaimedBytes:next.reclaimedBytes+(data.reclaimedBytes??0),
       errors:next.errors+(data.results??[]).filter(r=>r.status==="failed_closed_no_confirmation").length};
     setProgress(next);
-    if(data.done){setScanned(action==="inspect");setNotice(
-       action==="inspect"?"Scan complete. Confirm below to permanently delete eligible photos.":
+    if(data.done){setNotice(
+       action==="inspect"?"Preview complete — NOTHING WAS DELETED. Tick the confirmation and press the RED delete button to actually free space.":
        "Cleanup finished. The total shown reflects Storage API deletions verified as absent."
      );return;}
     if(!data.nextCursor||data.nextCursor===cursor)throw Error("The next batch could not be determined safely");
@@ -69,19 +70,18 @@ export function OwnerPhotoCleanup(){
     <div className="rounded-lg bg-slate-100 p-3"><div className="font-semibold">{size(progress.reclaimedBytes)}</div>Verified bytes removed</div>
     <div className="rounded-lg bg-slate-100 p-3"><div className="font-semibold">{progress.errors}</div>Unconfirmed errors</div>
    </div>
-   <button disabled={!!busy} onClick={()=>run("inspect")} className="w-full rounded-xl bg-slate-900 px-4 py-3 font-medium text-white disabled:opacity-50">
-    {busy==="inspect"?"Scanning storage…":"1. Scan photos older than 30 days"}
+   <button disabled={!!busy} onClick={()=>run("inspect")} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 font-medium text-slate-900 disabled:opacity-50">
+    {busy==="inspect"?"Scanning — no deletion…":"Optional preview: scan eligible photos (does NOT delete)"}
    </button>
-   {scanned&&
     <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm">
       <input type="checkbox" checked={acknowledge} onChange={e=>setAcknowledge(e.target.checked)} className="mt-1" />
       I authorize permanent deletion of eligible old machine and compressor photos. I understand these originals cannot be recovered.
     </label>
-   }
-   <button disabled={!!busy||!scanned||!acknowledge} onClick={()=>run("delete")} className="w-full rounded-xl bg-red-700 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
-    {busy==="delete"?"Deleting and verifying…":"2. Permanently delete old photos"}
+   <button disabled={!!busy||!acknowledge} onClick={()=>run("delete")} className="w-full rounded-xl bg-red-700 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
+    {busy==="delete"?"Deleting and verifying…":"PERMANENTLY DELETE machine/compressor photos older than 30 days"}
    </button>
    {notice&&<p role="status" className="rounded-lg bg-slate-100 p-3 text-sm">{notice}</p>}
+   <p className="text-sm font-semibold text-red-700">The optional preview never reduces Supabase usage. Only the red delete action does.</p>
    <p className="text-xs text-slate-500">Keep this page open while processing. A refresh is safe: previously removed files are skipped when scanned again.</p>
   </section>
  );
