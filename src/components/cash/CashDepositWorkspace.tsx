@@ -90,7 +90,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       const cleanNumber=number.trim().toUpperCase();
       if(cleanNumber!==box.bag?.trim().toUpperCase())throw Error("رقم الكيس لا يطابق الكيس المسجل عند الماكينة.");
       if(!confirmed)throw Error("لا تسجّل الإيداع قبل وضع الكيس فعلياً في الخزنة.");
-      if(!photo)throw Error("صوّر الكيس المختوم بجانب فتحة الخزنة قبل إسقاطه.");
+      if(!photo&&!storedPending(box.id))throw Error("صوّر الكيس المختوم بجانب فتحة الخزنة قبل إسقاطه.");
       let pending=storedPending(box.id);
       if(!pending){
         if(!selectedRecipient)throw Error("اختر المستلم المخوّل.");
@@ -102,7 +102,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
         try{sessionStorage.setItem(pendingKey(box.id),JSON.stringify(pending));}
         catch{throw Error("تعذر حفظ مرجع الطلب على هذا الهاتف. فعّل التخزين وأعد المحاولة.");}
       }
-      const compact=await prepareCashPhoto(photo);
+      const compact=photo?await prepareCashPhoto(photo):null;
       const form=new FormData();
       form.set("request_id",pending.requestId);
       form.set("collection_id",pending.collectionId);
@@ -111,7 +111,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       form.set("assigned_to",pending.receiverId);
       form.set("storage_location",pending.safe);
       form.set("notes",pending.notes);
-      form.set("photo",compact);
+      if(compact)form.set("photo",compact);
       const response=await fetch("/api/cash-handling/deposit",{
         method:"POST",body:form,cache:"no-store",signal:AbortSignal.timeout(40000),
       });
@@ -184,13 +184,14 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
           <input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"
             required onChange={e=>setPhoto(e.target.files?.[0]??null)} />
           <span className="block text-xs font-normal text-slate-500">أظهر رقم الكيس والختم ولوحة الخزنة. لا تفتح الكيس ولا تصوّر الأوراق النقدية.</span>
+          {storedPending(box.id)?<span className="block text-xs font-semibold text-amber-900">إذا ضاع رد الحفظ بعد رفع الصورة، تستطيع تأكيد المحاولة السابقة بدون إخراج الكيس من الخزنة. النظام يتحقق من صورة الطلب الأصلية.</span>:null}
         </label>
         <label className="flex items-start gap-3 rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">
           <input className="mt-1" type="checkbox" required checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>
           أؤكد أنني وضعت هذا الكيس داخل فتحة الخزنة وأغلقتها فعلياً. أعلم أن المستلم سيطابق الرقم عند فتح الخزنة.
         </label>
         {storedPending(box.id)?<p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-900">هذه محاولة حفظ سابقة غير مؤكدة. ستُعاد بنفس المرجع، ولا تُسقط الكيس مرة ثانية.</p>:null}
-        <button type="submit" disabled={busy||!confirmed||!number.trim()||!photo}
+        <button type="submit" disabled={busy||!confirmed||!number.trim()||(!photo&&!storedPending(box.id))}
           className="btn-primary min-h-12 w-full disabled:opacity-50">
           {busy?"جارٍ التأكيد...":"حفظ إقرار الإيداع"}
         </button>
