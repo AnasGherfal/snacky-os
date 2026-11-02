@@ -81,7 +81,7 @@ export async function GET(
           vmsProductId: slot.vmsProductId,
           productId: mapping?.product_id ?? null,
           productName: clean(slot.productName) || clean(mapping?.snacky_product_name) || clean(slot.vmsProductId) || "Unknown XY product",
-          imageUrl: imageByProductId.get(clean(mapping?.product_id)) ?? null,
+          imageUrl: imageByProductId.get(clean(mapping?.product_id)) || clean(slot.imageUrl) || null,
           currentQty: slot.currentQty,
           capacity: slot.capacity,
           priceLyd: slot.priceLyd,
