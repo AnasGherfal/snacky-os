@@ -773,6 +773,11 @@ export function payrollFinancePayload({
       stop_count: stopCount,
       period_start: run.period_start,
       period_end: run.period_end,
+      // Profit recognition in the worked month without moving the actual
+      // payment date or duplicating the salary expense transaction.
+      service_month: run.period_start?.slice(0, 7) === run.period_end?.slice(0, 7)
+        ? run.period_start.slice(0, 7) : null,
+      payee_team_member_id: run.operator_id,
     },
     updated_at: new Date().toISOString(),
   };
