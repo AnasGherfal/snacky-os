@@ -5,6 +5,7 @@ import { cashSameOrigin, cashReceiptMatches, cashUuid, type CashCommand, type Ca
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { uploadCashEvidence } from "@/lib/cash-evidence";
 import { CASH_PHOTO_UPLOAD_LIMIT } from "@/lib/cash-photo";
+import { CASH_EVIDENCE_BUCKET } from "@/lib/storage-buckets";
 import { readCompanyBody } from "@/lib/company-request";
 
 export const dynamic = "force-dynamic";
@@ -42,8 +43,8 @@ export async function POST(request: Request) {
       !/^[A-Z0-9][A-Z0-9_-]{2,79}$/.test(bag)||
       !Number.isSafeInteger(revision)||revision<0||revision>999999999||
       safe.length<2||safe.length>180||notes.length>300||
-      !(photo instanceof File)||photo.size===0||photo.size>CASH_PHOTO_UPLOAD_LIMIT||
-      !["image/jpeg","image/png","image/webp"].includes(photo.type)) {
+      (photo!==null&&(!(photo instanceof File)||photo.size===0||photo.size>CASH_PHOTO_UPLOAD_LIMIT||
+      !["image/jpeg","image/png","image/webp"].includes(photo.type)))) {
     return respond({ok:false,code:"invalid",message:"Confirm bag number, safe, recipient and a current seal photo."},400);
   }
   const payload={
@@ -70,12 +71,28 @@ export async function POST(request: Request) {
       return respond({ok:false,code:"conflict",
         message:"This bag, collector or receiver does not match the current cash record. Refresh before retrying."},409);
     }
-    const uploaded=await uploadCashEvidence(photo,{
-      scopeId:`cash-handover-${profile.id}-${requestId}`,stage:"stored",required:true,
+    const scopeId=`cash-handover-${profile.id}-${requestId}`;
+    let evidencePath:string|null=null;
+    // A lost response after uploading evidence must be recoverable without
+    // asking the operator to retrieve the deposited physical bag for a photo.
+    const earlier=await admin.storage.from(CASH_EVIDENCE_BUCKET).list(scopeId,{
+      limit:30,sortBy:{column:"created_at",order:"desc"},
     });
-    if(!uploaded) return respond({ok:false,code:"photo",message:"Storage photo was not saved."},400);
+    if(!earlier.error){
+      const existing=earlier.data?.find(file=>file.name.startsWith("stored-")&&
+        /\\.(jpg|jpeg|png|webp)$/i.test(file.name));
+      if(existing)evidencePath=`${scopeId}/${existing.name}`;
+    }
+    if(!evidencePath&&photo instanceof File){
+      const uploaded=await uploadCashEvidence(photo,{
+        scopeId,stage:"stored",required:true,
+      });
+      evidencePath=uploaded?.path??null;
+    }
+    if(!evidencePath)return respond({ok:false,code:"photo",retryable:true,
+      message:"No saved photo was found for this attempt. Reattach a safe-slot photo or contact the owner if the bag is already deposited."},400);
     const result=await db.rpc("snacky_cash_handover_command_v1",{
-      p_command:command,p_evidence_path:uploaded.path,
+      p_command:command,p_evidence_path:evidencePath,
     });
     // Never delete uploaded evidence if transport outcome is uncertain:
     // a committed command may already reference it.
