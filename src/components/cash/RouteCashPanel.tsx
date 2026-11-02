@@ -6,7 +6,7 @@ import { canAccessOperatorRoute, isOwnerAdminRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
-type Stop={id:string;machine_id:string;status:string;stop_order:number};
+type Stop={id:string;machine_id:string;status:string;stop_order:number;completed_at:string|null};
 type Receipt={
   route_stop_id:string;route_id:string;machine_id:string;operator_id:string;
   state:string;bag_id:string|null;collection_id:string|null;
@@ -67,11 +67,11 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
   if(!canAccessOperatorRoute(access,routeResult.data.operator_id))return null;
   const owner=isOwnerAdminRole(profile);
   const [stopQuery,receiptQuery,policyQuery,closureQuery]=await Promise.all([
-    admin.from("route_stops").select("id,machine_id,status,stop_order").eq("route_id",routeId).order("stop_order"),
+    admin.from("route_stops").select("id,machine_id,status,stop_order,completed_at").eq("route_id",routeId).order("stop_order"),
     admin.from("route_stop_cash_receipts")
       .select("route_stop_id,route_id,machine_id,operator_id,state,bag_id,collection_id,exception_reason,exception_notes,created_at")
       .eq("route_id",routeId),
-    admin.from("cash_refill_policy").select("enabled,pilot_machine_ids").eq("id",1).maybeSingle(),
+    admin.from("cash_refill_policy").select("enabled,pilot_machine_ids,activated_at").eq("id",1).maybeSingle(),
     owner?admin.from("cash_route_closures").select("closure_status,counted_bags,exception_stops,closed_at,total_counted_lyd,owner_note").eq("route_id",routeId).maybeSingle()
       :Promise.resolve({data:null,error:null}),
   ]);
@@ -80,7 +80,10 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
   const stops=(stopQuery.data??[]) as Stop[],receipts=(receiptQuery.data??[]) as Receipt[];
   const selected=new Set<string>(policyQuery.data?.enabled?policyQuery.data?.pilot_machine_ids??[]:[]);
   const activePilot=Boolean(policyQuery.data?.enabled)&&selected.size>0;
-  const displayedStops=stops.filter(s=>selected.has(s.machine_id) || receipts.some(r=>r.route_stop_id===s.id));
+  const activationMs=policyQuery.data?.activated_at?Date.parse(policyQuery.data.activated_at):Infinity;
+  const pilotStop=(s:Stop)=>activePilot&&selected.has(s.machine_id)&&
+    (s.status!=="completed"||(Boolean(s.completed_at)&&Date.parse(s.completed_at!)>=activationMs));
+  const displayedStops=stops.filter(s=>pilotStop(s)||receipts.some(r=>r.route_stop_id===s.id));
   const ids=receipts.map(r=>r.collection_id).filter((x):x is string=>Boolean(x));
   const machineIds=[...new Set(displayedStops.map(s=>s.machine_id))];
   const peopleIds=[...new Set(receipts.map(r=>r.operator_id))];
@@ -107,7 +110,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
     const removed=receipt?.state==="collected"&&collection?.custody_status==="removed";
     const deposited=receipt?.state==="collected"&&collection?.custody_status==="in_storage";
     const settled=receipt?.state==="collected"&&full&&!collection?.voided_at;
-    const missing=activePilot&&selected.has(stop.machine_id)&&stop.status==="completed"&&!receipt;
+    const missing=pilotStop(stop)&&stop.status==="completed"&&!receipt;
     const due=removed&&collection?.collected_at&&Date.now()-new Date(collection.collected_at).getTime()>24*3600000;
     const exact=Boolean(settled&&collection?.expected_source==="vms_exact"&&collection?.vms_expected_cash!==null);
     const label=exception?"سحب متعذر — يحتاج متابعة":pending?"حفظ غير مؤكد":
