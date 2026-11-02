@@ -40,3 +40,10 @@ test("cash baseline requires documented empty notes and coins, not a misleading 
  assert.match(timeline,/line\.compartments\?\.includes\("notes"\)/);
  assert.match(timeline,/line\.compartments\?\.includes\("coins"\)/);
 });
+
+test("skipped pilot machine visits are visible as uncollected, not silently reconciled",()=>{
+ const route=read("src/components/cash/RouteCashPanel.tsx");
+ assert.match(route,/skippedUncollected/);
+ assert.match(route,/الموقع تم تخطيه/);
+ assert.match(route,/r\.skippedUncollected/);
+});
