@@ -130,7 +130,8 @@ test("Selection cards and search display real product images while writes remain
   assert.match(editor,/ProductThumbnail imageUrl=\{product.imageUrl\}/);
   assert.match(editor,/No configured selections for this physical row|no configured selections for this physical row/);
   assert.match(page,/groupMachineLayoutRows\(stopData\?\.machineLayout \?\? \[\], \{ machineCode: stopData\?\.machineCode \}\)/);
-  assert.match(page,/imageUrl: slot.imageUrl/);
+  assert.match(page,/mergeOperatorXyLiveLayout/);
+  assert.match(read("src/lib/operator-xy-layout-reconciliation.ts"),/direct.imageUrl/);
   assert.match(page,/imageUrl: p.imageUrl/);
   assert.match(live,/imageByProductId/);
   assert.match(live,/from\("products"\)\.select\("id,image_url"\)/);
