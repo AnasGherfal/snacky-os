@@ -54,3 +54,14 @@ test("the Finance dashboard loads service-month metadata while cash totals use a
   assert.match(page,/sumFinanceProfitRows\(recognizedProfitRows, "LYD"/);
   assert.match(page,/earlierSalaryPaidInPeriodLyd/);
 });
+
+test("future payroll preserves earned month, and manual payouts block duplicate payroll money out", () => {
+  const payload = readFileSync("src/lib/payroll-v2.ts","utf8");
+  const action = readFileSync("src/lib/payroll-v2-actions.ts","utf8");
+  assert.match(payload,/service_month: run\.period_start/);
+  assert.match(payload,/payee_team_member_id: run\.operator_id/);
+  assert.match(action,/\.contains\("metadata", \{/);
+  assert.match(action,/service_month: existingRun\.period_start\.slice\(0, 7\)/);
+  assert.match(action,/payee_team_member_id: existingRun\.operator_id/);
+  assert.match(action,/A manual salary payment is already in Finance/);
+});
