@@ -11,7 +11,10 @@ const compiled=ts.transpileModule(fs.readFileSync("src/app/api/ops/purge-aged-re
 
 function harness(options={}){
  const calls=[];let removed=false;
- const info={size:265432,eTag:"a".repeat(32),createdAt:"2026-08-01T01:00:00.000Z",updatedAt:"2026-08-01T01:00:00.000Z",...(options.info??{})};
+ // The REAL Supabase Storage .info() shape uses lowercase etag and
+ // lastModified; updatedAt and eTag need not be included at all.
+ const info={size:265432,etag:"a".repeat(32),createdAt:"2026-08-01T01:00:00.000Z",lastModified:"2026-08-01T01:00:00.000Z",...(options.info??{})};
+ let infoReads=0;
  const rows={
   machine_refill_history:options.noReference?[]:[{machine_photo_path:path,id:"history"}],
   route_stop_safety_checks:options.safety?[{proof_photo_path:path,compressor_confirmed:true,id:"safety"}]:[],
@@ -19,7 +22,9 @@ function harness(options={}){
  };
  const supabase={
   storage:{from(bucket){assert.equal(bucket,"refill-photos");return {
-   async info(p){calls.push("info");assert.equal(p,path);return {data:removed?null:info,error:null};},
+   async info(p){calls.push("info");assert.equal(p,path);infoReads++;
+     const data=options.versionChangesOnRecheck&&infoReads>1?{...info,etag:"b".repeat(32)}:info;
+     return {data:removed?null:data,error:null};},
    async remove(paths){calls.push("remove");assert.deepEqual([...paths],[path]);removed=true;return {error:null};},
    async exists(p){calls.push("exists");assert.equal(p,path);return {data:!removed,error:null};},
   };}},
@@ -89,6 +94,25 @@ test("owner can delete one old machine overview through Storage API and verify a
  assert.ok(h.calls.includes("remove"));assert.ok(h.calls.includes("exists"));
 });
 
+test("production file.info shape with lowercase etag and lastModified alone permits old photos",async()=>{
+ const h=harness();
+ const inspected=await h.post("inspect");
+ assert.equal(inspected.body.eligible,1);
+ assert.equal(inspected.body.statusCounts?.eligible,1);
+ const route=fs.readFileSync("src/app/api/ops/purge-aged-refill-photos/route.ts","utf8");
+ assert.match(route,/info\?\.lastModified/);
+ assert.match(route,/info\?\.etag/);
+ assert.match(route,/fileModificationTime/);
+});
+
+test("a file version changing on the second read must never be deleted",async()=>{
+ const h=harness({versionChangesOnRecheck:true}),r=await h.post("delete");
+ assert.equal(r.status,200);
+ assert.equal(r.body.deleted,0);
+ assert.equal(r.body.results[0].status,"source_changed_or_protected");
+ assert.ok(!h.calls.includes("remove"));
+});
+
 test("request without explicit permanent-delete acknowledgement cannot remove a photo",async()=>{
  const h=harness(),r=await h.post("delete",{body:{acknowledgement:"no"}});
  assert.equal(r.status,400);assert.equal(h.calls.includes("admin"),false);
@@ -98,7 +122,10 @@ test("protected quantity proof, newer or modified photos and unlinked paths cann
  for(const opts of [
   {quantity:true},
   {info:{createdAt:"2026-11-01T09:00:00.000Z"}},
-  {info:{updatedAt:"2026-11-01T09:00:00.000Z"}},
+  {info:{lastModified:"2026-11-01T09:00:00.000Z"}},
+  {info:{updatedAt:"2026-11-01T09:00:00.000Z"}}, // newer timestamp overrides old lastModified
+  {info:{lastModified:null}},
+  {info:{etag:""}},
   {noReference:true},
  ]){
   const h=harness(opts),r=await h.post("delete");
@@ -136,4 +163,6 @@ test("owner finds cleanup inside normal Settings and Admin, and scan is unmistak
  assert.match(ui,/PERMANENTLY DELETE machine\/compressor photos older than 30 days/);
  assert.match(ui,/disabled=\{!!busy\|\|!acknowledge\}/);
  assert.doesNotMatch(ui,/!scanned/);
+ assert.match(ui,/NO PHOTOS DELETED/);
+ assert.match(ui,/Actual results — reasons for skipped photos/);
 });
