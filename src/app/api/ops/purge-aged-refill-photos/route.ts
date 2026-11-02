@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { getCurrentProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { validatePath } from "@/lib/private-blob-originals";
 
@@ -7,135 +7,168 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// This is a branch-scoped ONE-TIME maintenance endpoint, NOT a public API,
-// background scheduler, or change to Snacky's ordinary photo policies.
-// The owner explicitly requested permanent Storage deletion of machine
-// overviews and compressor/safety proof photos older than 30 full days.
-const BRANCH = "maintenance/purge-old-machine-compressor-20261102";
-const BUCKET = "refill-photos";
-const AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_JOBS = 12;
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-
+const bucketName = "refill-photos";
+const minAgeMs = 30 * 24 * 60 * 60 * 1000;
+const batchLimit = 10;
 type Kind = "machine" | "compressor";
-type Job = {
-  kind: Kind;
-  path: string;
-  expectedSize: number;
-  expectedUpdatedAt: string;
-  expectedEtag: string;
-};
-type Result = { kind: Kind; path: string; status: string; bytes?: number };
+type Candidate = { path: string; kind: Kind };
+type Result = { kind: Kind; status: string; bytes?: number };
 
 function json(status: number, body: Record<string, unknown>) {
-  return NextResponse.json(body, {status, headers: {"Cache-Control": "no-store"}});
+  return NextResponse.json(body, { status, headers: {
+    "Cache-Control": "private, no-store", "Vary": "Cookie", "X-Content-Type-Options": "nosniff",
+  } });
 }
-function tokenOkay(header: string) {
-  const secret = process.env.SNACKY_OLD_PHOTO_PURGE_TOKEN ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  if (process.env.VERCEL_ENV !== "preview" ||
-      process.env.VERCEL_GIT_COMMIT_REF !== BRANCH ||
-      process.env.SNACKY_OLD_PHOTO_PURGE_ENABLED !== "true" ||
-      secret.length < 48 || bearer.length !== secret.length) return false;
-  return timingSafeEqual(
-    createHash("sha256").update(bearer).digest(),
-    createHash("sha256").update(secret).digest(),
-  );
+function owner(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
+  return !!profile && profile.active_status === "active" &&
+    (profile.role === "owner" || profile.roles?.includes("owner"));
 }
-function exactSourceVersion(info: any, job: Job) {
-  const size = Number(info?.size);
-  const etag = String(info?.eTag ?? info?.metadata?.eTag ?? "").replaceAll('"', "").trim();
-  const updated = Date.parse(String(info?.updatedAt ?? ""));
-  return size === job.expectedSize &&
-    etag.toLowerCase() === job.expectedEtag.toLowerCase() &&
-    Number.isFinite(updated) &&
-    updated === Date.parse(job.expectedUpdatedAt);
-}
-function oldEnough(info: any) {
-  const created = Date.parse(String(info?.createdAt ?? ""));
-  const updated = Date.parse(String(info?.updatedAt ?? ""));
-  const cutoff = Date.now() - AGE_MS;
-  return Number.isFinite(created) && Number.isFinite(updated) &&
-    created < cutoff && updated < cutoff;
-}
-function validJob(v: any): v is Job {
-  if (!v || typeof v !== "object" || (v.kind !== "machine" && v.kind !== "compressor") ||
-      !Number.isSafeInteger(v.expectedSize) || v.expectedSize < 1 || v.expectedSize > MAX_FILE_BYTES ||
-      typeof v.expectedUpdatedAt !== "string" ||
-      !Number.isFinite(Date.parse(v.expectedUpdatedAt)) ||
-      !/^[a-f0-9]{32,64}$/i.test(String(v.expectedEtag ?? ""))) return false;
+function originValid(request: Request) {
   try {
-    validatePath(v.path);
+    return request.headers.get("origin") === new URL(request.url).origin &&
+      request.headers.get("sec-fetch-site") !== "cross-site";
   } catch { return false; }
-  return /\.(?:jpg|jpeg|png|webp)$/i.test(v.path) &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i.test(v.path);
 }
-
-async function check(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, job: Job) {
-  const proxy = `/api/storage/${BUCKET}/${job.path}`;
-  const bucket = supabase.storage.from(BUCKET);
-  const [machine, safety, quantityPath, quantityUrl, info] = await Promise.all([
-    supabase.from("machine_refill_history").select("id,machine_photo_path").eq("machine_photo_path", job.path).limit(2),
-    supabase.from("route_stop_safety_checks").select("id,proof_photo_path").eq("proof_photo_path", job.path).limit(2),
-    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files", JSON.stringify([{photoPath:job.path}])).limit(1),
-    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files", JSON.stringify([{photoUrl:proxy}])).limit(1),
-    bucket.info(job.path),
-  ]);
-  if (machine.error || safety.error || quantityPath.error || quantityUrl.error) throw Error("reference_lookup_failed");
-  if (info.error || !info.data) return {eligible:false,reason:"source_unavailable"};
-  if (quantityPath.data?.length || quantityUrl.data?.length) return {eligible:false,reason:"quantity_evidence_protected"};
-  if (job.kind === "machine" && (!(machine.data?.length) || safety.data?.length)) return {eligible:false,reason:"not_exclusive_machine_overview"};
-  if (job.kind === "compressor" && !(safety.data?.length)) return {eligible:false,reason:"not_compressor_safety_proof"};
-  if (!oldEnough(info.data)) return {eligible:false,reason:"not_older_than_30_days"};
-  if (!exactSourceVersion(info.data,job)) return {eligible:false,reason:"source_metadata_changed"};
-  return {eligible:true,reason:"eligible"};
+function photoPath(path: unknown): path is string {
+  if (typeof path !== "string") return false;
+  try { validatePath(path); } catch { return false; }
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}\/[a-zA-Z0-9._/-]+\.(?:jpg|jpeg|png|webp)$/i.test(path);
 }
-
-export async function POST(request: Request) {
-  if (!tokenOkay(request.headers.get("authorization") ?? "")) return json(401,{ok:false,error:"not_authorized"});
-  let jobs: Job[], action: "inspect" | "delete";
-  try {
-    if (Number(request.headers.get("content-length") ?? 0) > 15000) throw Error();
-    const body = await request.json();
-    action = body.action;
-    jobs = body.jobs;
-    if ((action !== "inspect" && action !== "delete") || !Array.isArray(jobs) ||
-        jobs.length < 1 || jobs.length > MAX_JOBS || jobs.some(j => !validJob(j)) ||
-        new Set(jobs.map(j => j.path)).size !== jobs.length ||
-        (action === "delete" && body.confirmed !== true)) throw Error();
-  } catch { return json(400,{ok:false,error:"invalid_or_unconfirmed_batch"}); }
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) return json(503,{ok:false,error:"storage_not_available"});
-  const results: Result[] = [];
-  let deleted = 0, reclaimedBytes = 0;
-  for (const job of jobs) {
-    try {
-      const first = await check(supabase,job);
-      if (!first.eligible) {
-        results.push({kind:job.kind,path:job.path,status:first.reason});
-        continue;
-      }
-      if (action === "inspect") {
-        results.push({kind:job.kind,path:job.path,status:"eligible_not_deleted",bytes:job.expectedSize});
-        continue;
-      }
-      // Recheck immediately before removal; do not delete newer or edited files.
-      const second = await check(supabase,job);
-      if (!second.eligible) {
-        results.push({kind:job.kind,path:job.path,status:second.reason});
-        continue;
-      }
-      const bucket = supabase.storage.from(BUCKET);
-      const {error} = await bucket.remove([job.path]); // Supabase Storage API, never SQL DELETE
-      if (error) throw Error("storage_remove_failed");
-      const verified = await bucket.exists(job.path);
-      if (verified.error || verified.data !== false) throw Error("deletion_not_verified");
-      deleted += 1;
-      reclaimedBytes += job.expectedSize;
-      results.push({kind:job.kind,path:job.path,status:"deleted_and_verified",bytes:job.expectedSize});
-    } catch (e) {
-      results.push({kind:job.kind,path:job.path,status:e instanceof Error?e.message:"unknown_error"});
-    }
+async function fetchPaths(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  table: "machine_refill_history" | "route_stop_safety_checks",
+  column: "machine_photo_path" | "proof_photo_path",
+) {
+  const results: string[] = [];
+  for (let offset = 0; offset < 20000; offset += 1000) {
+    const { data, error } = await supabase.from(table)
+      .select(column).not(column, "is", null).order(column, {ascending:true}).range(offset,offset+999);
+    if (error) throw Error("photo_reference_list_unavailable");
+    const rows = (data ?? []) as unknown as Record<string,unknown>[];
+    for (const row of rows) if (photoPath(row[column])) results.push(row[column]);
+    if (rows.length < 1000) return results;
   }
-  return json(200,{ok:true,action,deleted,reclaimedBytes,results});
+  throw Error("photo_reference_limit_exceeded");
+}
+async function candidates(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
+  const [machine, safety] = await Promise.all([
+    fetchPaths(supabase,"machine_refill_history","machine_photo_path"),
+    fetchPaths(supabase,"route_stop_safety_checks","proof_photo_path"),
+  ]);
+  const list = new Map<string,Kind>();
+  machine.forEach(path=>list.set(path,"machine"));
+  // Safety proof takes precedence if a path has multiple kinds of references.
+  safety.forEach(path=>list.set(path,"compressor"));
+  return Array.from(list.entries())
+    .map(([path,kind])=>({path,kind})).sort((a,b)=>a.path.localeCompare(b.path));
+}
+function version(info: any) {
+  return [Number(info?.size),String(info?.eTag??info?.metadata?.eTag??"").replaceAll('"',"").trim(),
+    Date.parse(String(info?.updatedAt??""))].join(":");
+}
+function oldPhoto(info: any) {
+  const created=Date.parse(String(info?.createdAt??""));
+  const updated=Date.parse(String(info?.updatedAt??""));
+  return Number.isFinite(created)&&Number.isFinite(updated)&&
+    created<Date.now()-minAgeMs && updated<Date.now()-minAgeMs;
+}
+async function checkPhoto(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  entry: Candidate,
+  protectedPaths: Set<string>,
+) {
+  if (protectedPaths.has(entry.path)) return {ok:false,status:"quantity_evidence_protected"};
+  const proxy=`/api/storage/${bucketName}/${entry.path}`;
+  const [h,s,qPath,qUrl,file]=await Promise.all([
+    supabase.from("machine_refill_history").select("id").eq("machine_photo_path",entry.path).limit(1),
+    supabase.from("route_stop_safety_checks").select("id,compressor_confirmed").eq("proof_photo_path",entry.path).limit(1),
+    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files",JSON.stringify([{photoPath:entry.path}])).limit(1),
+    supabase.from("route_stop_quantity_confirmations").select("id").contains("evidence_files",JSON.stringify([{photoUrl:proxy}])).limit(1),
+    supabase.storage.from(bucketName).info(entry.path),
+  ]);
+  if(h.error||s.error||qPath.error||qUrl.error) throw Error("reference_check_failed");
+  if(qPath.data?.length||qUrl.data?.length) return {ok:false,status:"quantity_evidence_protected"};
+  if(entry.kind==="compressor" && (!s.data?.length||s.data[0].compressor_confirmed!==true))
+    return {ok:false,status:"not_compressor_proof"};
+  if(entry.kind==="machine" && (!h.data?.length||s.data?.length))
+    return {ok:false,status:"not_exclusive_machine_photo"};
+  if(file.error||!file.data) return {ok:false,status:"already_missing"};
+  if(!oldPhoto(file.data)) return {ok:false,status:"photo_not_old_enough"};
+  if(!Number.isSafeInteger(file.data.size)||file.data.size<1||file.data.size>10*1024*1024)
+    return {ok:false,status:"invalid_file_metadata"};
+  return {ok:true,status:"eligible",info:file.data};
+}
+async function quantityPaths(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, list: Candidate[]) {
+  const found = new Set<string>();
+  for(let offset=0;offset<20000;offset+=1000){
+    const {data,error}=await supabase.from("route_stop_quantity_confirmations")
+      .select("evidence_files").range(offset,offset+999);
+    if(error)throw Error("quantity_evidence_list_unavailable");
+    const rows=(data??[]) as {evidence_files?:unknown}[];
+    const text=JSON.stringify(rows);
+    for(const {path} of list) if(text.includes(path)) found.add(path);
+    if(rows.length<1000)return found;
+  }
+  throw Error("quantity_evidence_limit_exceeded");
+}
+export async function POST(request: Request) {
+  if (!originValid(request)) return json(403,{ok:false,error:"cross_origin_request_blocked"});
+  const profile = await getCurrentProfile();
+  if (!owner(profile)) return json(403,{ok:false,error:"owner_only"});
+  let body: {action?:unknown;cursor?:unknown;acknowledgement?:unknown};
+  try {
+    if(Number(request.headers.get("content-length")??0)>1000)throw Error();
+    body=await request.json();
+    if(!body || (body.action!=="inspect"&&body.action!=="delete") ||
+       (body.cursor!==null&&body.cursor!==undefined&&
+        (typeof body.cursor!=="string"||!photoPath(body.cursor))) ||
+       (body.action==="delete"&&body.acknowledgement!=="DELETE OLD PHOTOS"))throw Error();
+  }catch{return json(400,{ok:false,error:"invalid_or_unconfirmed_request"});}
+  const supabase=getSupabaseAdminClient();
+  if(!supabase)return json(503,{ok:false,error:"storage_unavailable"});
+  try{
+    const list=await candidates(supabase);
+    const start=typeof body.cursor==="string"?
+      list.findIndex(item=>item.path>body.cursor!):-1;
+    const offset=body.cursor===undefined||body.cursor===null?0:(start<0?list.length:start);
+    const page=list.slice(offset,offset+batchLimit);
+    const protectedPaths=await quantityPaths(supabase,page);
+    const results: Result[]=[];
+    let eligible=0,deleted=0,reclaimedBytes=0;
+    for(const entry of page){
+      try {
+        const first=await checkPhoto(supabase,entry,protectedPaths);
+        if(!first.ok){
+          results.push({kind:entry.kind,status:first.status});
+          continue;
+        }
+        eligible++;
+        if(body.action==="inspect"){
+          results.push({kind:entry.kind,status:"eligible",bytes:first.info.size});
+          continue;
+        }
+        const again=await checkPhoto(supabase,entry,protectedPaths);
+        if(!again.ok||version(again.info)!==version(first.info)){
+          results.push({kind:entry.kind,status:"source_changed_or_protected"});
+          continue;
+        }
+        const bucket=supabase.storage.from(bucketName);
+        const removal=await bucket.remove([entry.path]);
+        if(removal.error)throw Error("storage_delete_failed");
+        const exists=await bucket.exists(entry.path);
+        if(exists.error||exists.data!==false)throw Error("storage_delete_not_verified");
+        deleted++;
+        reclaimedBytes+=first.info.size;
+        results.push({kind:entry.kind,status:"deleted",bytes:first.info.size});
+      }catch{
+        results.push({kind:entry.kind,status:"failed_closed_no_confirmation"});
+      }
+    }
+    const nextCursor=offset+page.length<list.length && page.length?page.at(-1)!.path:null;
+    return json(200,{ok:true,action:body.action,candidates:list.length,
+      processed:page.length,eligible,deleted,reclaimedBytes,nextCursor,done:nextCursor===null,results});
+  }catch(e){
+    console.error("[photo-cleanup] Scan failed",e instanceof Error?e.message:"unknown");
+    return json(503,{ok:false,error:"cleanup_scan_unavailable"});
+  }
 }
