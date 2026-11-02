@@ -74,7 +74,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         payload={amount:amount.trim(),cash_location:cashLocation.trim()};
       } else {
         if(bagId.trim().toUpperCase()!==box.bag?.trim().toUpperCase())throw Error("رقم الكيس لا يطابق السجل. لا تؤكد استلام كيس آخر.");
-        if(seal!=="intact"&&note.trim().length<3)throw Error("أدخل توضيح الختم المفتوح أو غير المطابق.");
+        if((seal!=="intact"||action==="takeover")&&note.trim().length<3)throw Error("اكتب تأكيد الاستلام أو اشرح مشكلة الختم.");
         payload={confirm_bag_id:bagId.trim(),seal_condition:seal,notes:note.trim()};
       }
       let command=stored(key);
@@ -141,8 +141,8 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
             <option value="mismatch">وجود اختلاف يحتاج مراجعة</option>
           </select>
         </label>
-        {seal!=="intact"?<label className="block space-y-2 text-sm">
-          <span>اشرح المشكلة</span>
+        {seal!=="intact"||action==="takeover"?<label className="block space-y-2 text-sm">
+          <span>{action==="takeover"?"ملاحظة استلام العهدة من المندوب":"اشرح المشكلة"}</span>
           <textarea className="field-input" minLength={3} rows={2} required value={note} onChange={e=>setNote(e.target.value)}/>
         </label>:null}
       </>:<>
