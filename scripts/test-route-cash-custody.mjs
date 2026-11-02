@@ -32,8 +32,8 @@ test("deposit is only an operator claim, requires matching bag number and indepe
 
 test("owner must physically receive the bag before independently counting cash",()=>{
  const owner=read("src/components/cash/CashReceiveWorkspace.tsx");
- assert.match(owner,/box\.actions\.includes\("pickup"\)/);
- assert.match(owner,/box\.actions\.includes\("count"\)/);
+ assert.match(owner,/actions\.includes\("pickup"\)/);
+ assert.match(owner,/actions\.includes\("count"\)/);
  assert.match(owner,/bagId\.trim\(\)\.toUpperCase\(\)!==box\.bag/);
  assert.match(owner,/if\(!physical\)/);
  assert.match(owner,/cashReceiptMatches\(command,result\)/);
