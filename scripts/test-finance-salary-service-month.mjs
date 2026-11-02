@@ -46,11 +46,11 @@ test("ordinary goods, income and malformed salary periods still use payment date
 test("the Finance dashboard loads service-month metadata while cash totals use actual dates", () => {
   const ledger = readFileSync("src/lib/finance-ledger.ts","utf8");
   const page = readFileSync("src/app/finance/page.tsx","utf8");
-  assert.match(ledger,/FINANCE_TRANSACTION_FULL_COLUMNS[\\s\\S]*"metadata"/);
-  assert.match(page,/const periodRows = ledgerRows\\.filter/);
-  assert.match(page,/row\\.transaction_date >= periodRange\\.start/);
-  assert.match(page,/const recognizedProfitRows = ledgerRows\\.filter/);
-  assert.match(page,/financeProfitRecognitionDate\\(row\\)/);
-  assert.match(page,/sumFinanceProfitRows\\(recognizedProfitRows, "LYD"/);
+  assert.match(ledger,/FINANCE_TRANSACTION_FULL_COLUMNS[\s\S]*"metadata"/);
+  assert.match(page,/const periodRows = ledgerRows\.filter/);
+  assert.match(page,/row\.transaction_date >= periodRange\.start/);
+  assert.match(page,/const recognizedProfitRows = ledgerRows\.filter/);
+  assert.match(page,/financeProfitRecognitionDate\(row\)/);
+  assert.match(page,/sumFinanceProfitRows\(recognizedProfitRows, "LYD"/);
   assert.match(page,/earlierSalaryPaidInPeriodLyd/);
 });
