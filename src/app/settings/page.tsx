@@ -73,6 +73,20 @@ export default async function SettingsPage() {
             </div>
           </FormSection>
 
+          {(profile?.role === "owner" || profile?.roles.includes("owner")) && (
+            <FormSection title="Storage Management">
+              <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-medium text-slate-900">Old machine & compressor photos</p>
+                <p className="text-sm leading-6 text-slate-700">
+                  Review and permanently remove refill machine photos older than 30 days
+                  using the Supabase Storage API. Quantity screenshots, cash evidence,
+                  receipts and other buckets are not included.
+                </p>
+                <SecondaryButton href="/admin/photo-cleanup">Open photo cleanup</SecondaryButton>
+              </div>
+            </FormSection>
+          )}
+
           <EmptyState
             title="Editable settings are not enabled yet"
             body="The next step is to store company defaults in Supabase with audited changes. For now, these values document the operating assumptions used across Snacky OS."
