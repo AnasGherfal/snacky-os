@@ -92,3 +92,10 @@ test("the cash-bag detail links to its exact route and stop, with removal eviden
  assert.match(detail,/linkedStop\.route_id/);
  assert.match(detail,/Open sealed-bag photo/);
 });
+
+test("operators open simple safe deposit instead of advanced custody administration",()=>{
+ const route=read("src/app/cash-handling/page.tsx");
+ assert.match(route,/isOperatorRole\(context\)/);
+ assert.match(route,/redirect\("\/cash-handling\/deposit"\)/);
+ assert.match(route,/params\.collect !== "1"/);
+});
