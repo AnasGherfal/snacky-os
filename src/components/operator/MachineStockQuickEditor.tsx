@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 
 export type QuickMachineSlot = {
   slotCode: string;
   productName: string;
+  imageUrl?: string | null;
   currentQty: number;
   capacity: number;
   vmsProductId: string | null;
@@ -36,6 +38,7 @@ export function MachineStockQuickEditor({
   onPriceChange,
   onChangeProduct,
   hiddenSelections = [],
+  unmappedSelections = [],
   productOptions = [],
   productSelections = {},
   onSelectProduct,
@@ -52,7 +55,11 @@ export function MachineStockQuickEditor({
   onPriceChange?: (next: Record<string, number>) => void;
   onChangeProduct?: (slotCode: string) => void;
   hiddenSelections?: Array<{ slot_code: string; reason?: string }>;
-  productOptions?: Array<{ id: string; name: string; sku?: string | null; barcode?: string | null; brand?: string | null }>;
+  unmappedSelections?: string[];
+  productOptions?: Array<{
+    id: string; name: string; imageUrl?: string | null;
+    sku?: string | null; barcode?: string | null; brand?: string | null;
+  }>;
   productSelections?: Record<string, string>;
   onSelectProduct?: (slotCode: string, productId: string) => void;
   onSaveSelection?: (slotCode: string) => void;
@@ -162,7 +169,15 @@ export function MachineStockQuickEditor({
       <div className="space-y-2">
         {rows.map((row) => {
           const usable = row.slots.filter((s) => s.vmsProductId && s.capacity > 0);
-          if (!usable.length) return null;
+          if (!usable.length) return (
+            <div key={row.rowIndex} className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+              <div className="font-bold text-slate-800">{tr(`Row ${row.rowIndex}`, `الصف ${row.rowIndex}`)}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{tr(
+                "XY has no configured selections for this physical row. This does not mean the shelf is empty.",
+                "لا توجد خانات مُعرّفة في XY لهذا الصف الفعلي، وهذا لا يعني أن الرف فارغ.",
+              )}</p>
+            </div>
+          );
           const rowName = `${usable[0].slotCode}–${usable[usable.length - 1].slotCode}`;
           const setCount = usable.filter((s) => Object.hasOwn(values, s.slotCode)).length;
           const open = Boolean(expanded[row.rowIndex]);
@@ -173,6 +188,17 @@ export function MachineStockQuickEditor({
                   className="min-h-11 flex-1 text-start" aria-expanded={open}>
                   <div className="font-bold text-slate-950">{tr(`Row ${row.rowIndex}`, `الصف ${row.rowIndex}`)} <span className="font-mono text-sm text-slate-500">{rowName}</span></div>
                   <div className="text-xs text-slate-500">{tr(`${setCount}/${usable.length} selected · Tap to edit lanes`, `تم ضبط ${setCount} من ${usable.length} · اضغط لتعديل الخانات`)}</div>
+                  <div className="mt-2 flex max-w-full gap-1.5 overflow-x-auto pb-1" dir="ltr" aria-hidden="true">
+                    {usable.map((slot) => (
+                      <span key={slot.slotCode} title={`${slot.slotCode} · ${slot.productName}`}
+                        className="relative shrink-0 rounded-md border border-slate-200 bg-white p-0.5">
+                        <ProductThumbnail imageUrl={slot.imageUrl} name={slot.productName} size="sm" />
+                        <span className="absolute -bottom-1 -right-0.5 rounded bg-slate-900 px-0.5 text-[9px] font-semibold text-white">
+                          {slot.slotCode}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
                 </button>
                 <input type="number" inputMode="numeric" min={0} step={1} placeholder={tr("Qty", "العدد")}
                   value={rowInputs[row.rowIndex] ?? ""}
@@ -191,7 +217,12 @@ export function MachineStockQuickEditor({
                       || Object.hasOwn(productSelections, slot.slotCode);
                     const actionStatus = saveStatuses[slot.slotCode];
                     const selectedProductId = productSelections[slot.slotCode] ?? slot.productId ?? "";
-                    const selectedName = productOptions.find((p) => p.id === selectedProductId)?.name ?? slot.productName;
+                    const selectedProduct = productOptions.find((p) => p.id === selectedProductId);
+                    const selectedName = selectedProduct?.name ?? slot.productName;
+                    const replacementSelected = Object.hasOwn(productSelections, slot.slotCode);
+                    const selectedImageUrl = replacementSelected
+                      ? selectedProduct?.imageUrl ?? null
+                      : slot.imageUrl ?? selectedProduct?.imageUrl ?? null;
                     const searchQuery = (productSearchTerms[slot.slotCode] ?? "").trim().toLocaleLowerCase();
                     const searchMatches = productOptions.filter((p) =>
                       !searchQuery || [p.name, p.sku, p.barcode, p.brand].some((part) =>
@@ -201,8 +232,18 @@ export function MachineStockQuickEditor({
                     const isSearching = openProductSearchSlot === slot.slotCode;
                     return (
                       <div key={slot.slotCode} className={`rounded-lg border p-2 ${changed ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"}`}>
-                        <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
-                        <span title={slot.productName} className="block truncate text-xs text-slate-500">{slot.productName}</span>
+                        <div className="flex items-start gap-2.5">
+                          <ProductThumbnail imageUrl={selectedImageUrl} name={selectedName} size="md" />
+                          <div className="min-w-0 flex-1">
+                            <span className="block font-mono text-sm font-bold text-slate-950">{slot.slotCode}</span>
+                            <span title={selectedName} className="mt-0.5 block break-words text-xs font-semibold leading-4 text-slate-700">{selectedName}</span>
+                            {replacementSelected ? (
+                              <span className="mt-1 inline-flex rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                                {tr("Pending product", "منتج قيد الحفظ")}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                         <span className="mt-1 block text-xs font-semibold text-slate-600">
                           {isLiveXy
                             ? tr("Current in XY", "الموجود حالياً في XY")
@@ -222,7 +263,10 @@ export function MachineStockQuickEditor({
                               }}
                               className="mt-1 flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-left text-xs font-semibold text-slate-950"
                             >
-                              <span className="min-w-0 truncate">{selectedName || tr("No product", "بدون منتج")}</span>
+                              <span className="flex min-w-0 items-center gap-2">
+                                <ProductThumbnail imageUrl={selectedImageUrl} name={selectedName} size="sm" />
+                                <span className="min-w-0 break-words">{selectedName || tr("No product", "بدون منتج")}</span>
+                              </span>
                               <span className="shrink-0 text-emerald-700">{tr("Search", "بحث")}</span>
                             </button>
                             {isSearching ? (
@@ -259,8 +303,16 @@ export function MachineStockQuickEditor({
                                         ? "bg-emerald-100 font-bold text-emerald-950"
                                         : "text-slate-900 hover:bg-slate-100"}`}
                                     >
-                                      <span className="block break-words">{product.name}</span>
-                                      {product.sku || product.barcode ? (
+                                      <span className="flex items-center gap-2">
+                                        <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="sm" />
+                                        <span className="min-w-0">
+                                          <span className="block break-words">{product.name}</span>
+                                          {product.sku || product.barcode ? (
+                                            <span className="block text-xs text-slate-500">{[product.sku, product.barcode].filter(Boolean).join(" · ")}</span>
+                                          ) : null}
+                                        </span>
+                                      </span>
+                                      {false ? (
                                         <span className="block text-xs text-slate-500">{[product.sku, product.barcode].filter(Boolean).join(" · ")}</span>
                                       ) : null}
                                     </button>
