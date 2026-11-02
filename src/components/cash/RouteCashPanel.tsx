@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile, getAuthenticatedSupabaseServerClient } from "@/lib/auth";
-import { canAccessOperatorRoute, hasAnyRole, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessOperatorRoute, isOwnerAdminRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
@@ -112,7 +112,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
     const exact=Boolean(settled&&collection?.expected_source==="vms_exact"&&collection?.vms_expected_cash!==null);
     const label=exception?"سحب متعذر — يحتاج متابعة":pending?"حفظ غير مؤكد":
       unmatched?"السجل النقدي غير متطابق":removed?(due?"الكيس لم يُودع منذ أكثر من 24 ساعة":"الكيس مع المشغّل — لم يُودع"):
-      deposited?"إيداع مُبلغ عنه — لم يؤكده المستلم":settled?"تم العدّ والاستلام المستقل":
+      deposited?"إيداع مُبلغ عنه — لم يؤكده المستلم":settled?"تم العدّ — راجع سلسلة العهدة":
       missing?"سحب مفقود من سجل الجولة":stop.status==="completed"?"لم يُسجّل سحب":"الموقع لم يكتمل";
     return {stop,receipt,collection,label,exact,settled,pending,exception,removed,deposited,missing,due};
   });
@@ -130,7 +130,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
         <p className="mt-1 text-sm leading-6 text-slate-600">التاريخ والوقت من سجل سحب الماكينة. إيداع المشغّل ليس إثبات استلام، والعدّ والمطابقة مع XY مرحلتان منفصلتان.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Link href="/cash-handling/deposit" className="btn-primary">إيداع الأكياس في الخزنة</Link>
+        <Link href={owner?"/cash-handling/receive":"/cash-handling/deposit"} className="btn-primary">{owner?"استلام وعدّ الأكياس":"إيداع الأكياس في الخزنة"}</Link>
         {owner?<Link href="/cash-collections/refills" className="btn-secondary">مراجعة جميع السحوبات</Link>:null}
       </div>
     </header>
@@ -158,7 +158,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
             "mt-1 text-sm font-semibold text-slate-700"}>{r.label}</p>
           {r.receipt?.bag_id?<p className="mt-1 text-xs text-slate-600">رقم الكيس: <bdi className="font-mono font-semibold">{r.receipt.bag_id}</bdi></p>:null}
           {r.receipt?.state==="exception"?<p className="mt-1 text-xs text-rose-700">{r.receipt.exception_notes}</p>:null}
-          {r.receipt?.state==="collected"&&r.collection?.collected_at?<p className="mt-1 text-xs text-slate-600">وقت السحب المحفوظ: <bdi>{date(r.collection.collected_at)}</bdi></p>:null}
+          {r.receipt?.state==="collected"&&r.collection?.collected_at?<p className="mt-1 text-xs text-slate-600">وقت تسجيل السحب من الجهاز: <bdi>{date(r.collection.collected_at)}</bdi></p>:null}
           {r.receipt?.operator_id?<p className="mt-1 text-xs text-slate-500">المحصّل: {peopleNames.get(r.receipt.operator_id)??"مستخدم مسجل"}</p>:null}
         </div>
         <div className="space-y-2 text-sm">
@@ -166,7 +166,7 @@ export async function RouteCashPanel({routeId,routeStatus,forOperator=false}:{
           {r.settled?<p className="font-semibold text-emerald-900">عدّ مستقل: <bdi>{date(r.collection?.counted_at)}</bdi></p>:null}
           {owner&&r.settled?<p className="font-semibold text-slate-900">المعدود فعلياً: {amount(r.collection?.actual_cash_collected)}</p>:null}
           {owner&&r.settled?<p className={r.exact?"text-emerald-800":"text-amber-800"}>
-            {r.exact?`XY نقدية دقيقة: ${amount(r.collection?.vms_expected_cash)}`:"مطابقة XY: غير مؤكدة حتى تتوفر معاملات نقدية دقيقة"}</p>:null}
+            {r.exact?`XY معاملات نقدية للفترة: ${amount(r.collection?.vms_expected_cash)} (تُراجع الفكة والتحصيل)`:"مطابقة XY: غير مؤكدة حتى تتوفر معاملات نقدية دقيقة"}</p>:null}
           {r.collection?<Link href={`/cash-handling?id=${r.collection.id}`} className="text-sm font-semibold text-emerald-800 underline">فتح الكيس وسجل العهدة</Link>:null}
           {!r.receipt&&r.stop.status!=="completed"?<Link href={`/operator/routes/${routeId}/stops/${r.stop.id}`} className="text-sm font-semibold text-emerald-800 underline">فتح التعبئة وتسجيل السحب</Link>:null}
         </div>
