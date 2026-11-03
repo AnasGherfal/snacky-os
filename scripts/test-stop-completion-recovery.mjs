@@ -52,7 +52,7 @@ test("stop completion verifies protected side effects and commits inventory as t
 test("cash is rejected while issues and refill proof use stable retry identities", () => {
   const completeStop = functionSource(read("src/lib/operator-actions.ts"), "completeStop");
 
-  assert.match(completeStop, /if \(cashCollected \|\| cashBagId\?\.trim\(\)\)[\s\S]*?Cash removal is not part of route completion/);
+  assert.match(completeStop, /if \(cashCollected \|\| cashBagId\?\.trim\(\)\)[\s\S]*?Cash must be saved in this machine visit/);
   assert.doesNotMatch(completeStop, /from\("cash_collections"\)/);
   assert.match(completeStop, /stableUuid\(`route-stop-issue:\$\{stopId\}`\)/);
   assert.match(completeStop, /from\("issues"\)[\s\S]*?\.upsert\([\s\S]*?\{ onConflict: "id" \}\)/);
