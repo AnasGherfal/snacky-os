@@ -1710,7 +1710,10 @@ export default function MachineStopPage() {
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
-        cashCollected: cashState === "collected",
+        // Physical cash removal is already committed with a separate,
+        // stop-linked sealed-bag receipt (or exception). Do not send cash
+        // collection flags in the refill/inventory completion payload.
+        cashCollected: false,
         cashBagId: "",
         notes,
         completionPhotoUrl: uploadedProof?.photoUrl,
