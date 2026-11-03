@@ -1392,8 +1392,12 @@ export async function POST(
       filledItems,
       extraItems,
       missingProducts,
-      cashCollected: Boolean(payload.cashCollected),
-      cashBagId: String(payload.cashBagId ?? ""),
+      // The cash-step API has already persisted the bag or exception, and
+      // the pilot policy guard above validates that server-side. The legacy
+      // completeStop cash flags are unrelated to the dedicated custody
+      // ledger; never propagate client cash flags into inventory completion.
+      cashCollected: false,
+      cashBagId: "",
       notes: String(payload.notes ?? ""),
       completionPhotoUrl: payload.completionPhotoUrl ? String(payload.completionPhotoUrl) : null,
       completionPhotoPath: payload.completionPhotoPath ? String(payload.completionPhotoPath) : null,
