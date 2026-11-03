@@ -42,7 +42,8 @@ test("operator cash step preserves standard flow when pilot disabled", () => {
   assert.match(component, /if \(!required\) return/);
   assert.match(page, /<RouteStopCashCard/);
   assert.match(page, /cashRequired && !cashReady/);
-  assert.match(page, /cashCollected: cashState === "collected"/);
+  assert.match(page, /cashCollected: false/);
+  assert.doesNotMatch(page, /cashCollected: cashState === "collected"/);
 });
 
 test("storage and counting use existing custody system rather than duplicate ledger", () => {
