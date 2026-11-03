@@ -2422,7 +2422,7 @@ export async function completeStop({
     }
 
     if (cashCollected || cashBagId?.trim()) {
-      throw new Error("Cash removal is not part of route completion. Save the route without cash, then use Remove Cash to create a sealed custody record.");
+      throw new Error("Cash must be saved in this machine visit's separate sealed-bag step (or as a documented exception) before completing the refill. Do not submit a second cash amount or bag with refill inventory.");
     }
 
     const { data: stop, error: stopError } = await supabase

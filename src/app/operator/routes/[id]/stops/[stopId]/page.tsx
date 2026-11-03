@@ -676,7 +676,6 @@ export default function MachineStopPage() {
   // Fail closed until the authoritative cash-policy status has loaded.
   const [cashRequired, setCashRequired] = useState(true);
   const [cashReady, setCashReady] = useState(false);
-  const [cashState, setCashState] = useState<"collected" | "exception" | "pending" | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
   const [notes, setNotes] = useState("");
@@ -1710,7 +1709,10 @@ export default function MachineStopPage() {
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
-        cashCollected: cashState === "collected",
+        // Physical cash removal is already committed with a separate,
+        // stop-linked sealed-bag receipt (or exception). Do not send cash
+        // collection flags in the refill/inventory completion payload.
+        cashCollected: false,
         cashBagId: "",
         notes,
         completionPhotoUrl: uploadedProof?.photoUrl,
@@ -2957,10 +2959,9 @@ export default function MachineStopPage() {
           routeId={routeId}
           stopId={stopId}
           machineId={stopData.machineId}
-          onReadyChange={(required, ready, state) => {
+          onReadyChange={(required, ready) => {
             setCashRequired(required);
             setCashReady(ready);
-            setCashState(state);
           }}
         />
 
