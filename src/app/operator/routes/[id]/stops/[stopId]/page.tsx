@@ -676,7 +676,6 @@ export default function MachineStopPage() {
   // Fail closed until the authoritative cash-policy status has loaded.
   const [cashRequired, setCashRequired] = useState(true);
   const [cashReady, setCashReady] = useState(false);
-  const [cashState, setCashState] = useState<"collected" | "exception" | "pending" | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
   const [notes, setNotes] = useState("");
@@ -2960,10 +2959,9 @@ export default function MachineStopPage() {
           routeId={routeId}
           stopId={stopId}
           machineId={stopData.machineId}
-          onReadyChange={(required, ready, state) => {
+          onReadyChange={(required, ready) => {
             setCashRequired(required);
             setCashReady(ready);
-            setCashState(state);
           }}
         />
 
