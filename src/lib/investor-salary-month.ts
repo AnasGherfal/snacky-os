@@ -12,7 +12,7 @@ export function salaryCashBelongsToAnotherMonth(
   return Boolean(
     month && categoryKey==="salary"
     && typeof tagged==="string"
-    && /^\\d{4}-(0[1-9]|1[0-2])$/.test(tagged)
+    && /^\d{4}-(0[1-9]|1[0-2])$/.test(tagged)
     && tagged!==month
   );
 }
