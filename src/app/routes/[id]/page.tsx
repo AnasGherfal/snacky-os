@@ -346,7 +346,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     supabase.from("route_pay_breakdowns").select("id, total_pay_lyd, payroll_period_id, recalculated_at").eq("route_id", id).maybeSingle(),
     supportClient
       .from("route_inventory_reconciliations")
-      .select("id, action, status, returned_units, finalized_at")
+      .select("id, action, status, returned_units, discrepancy_units, reason, finalized_at")
       .eq("route_id", id)
       .maybeSingle(),
     supabase.rpc("snacky_route_bag_snapshot", { p_route_id: id }),
@@ -429,6 +429,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const productsPendingAtStorage = routeStops.length > 0 && !routeProductsPrepared && isAvailableRouteStatus(routeRow.status);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const terminalInventoryReconciliation = terminalReconciliationResult.error ? null : terminalReconciliationResult.data;
+  const operatorClosingNote = String(terminalInventoryReconciliation?.reason ?? "").trim();
+  const showOperatorClosingNote = operatorClosingNote.length > 1 && /[\\p{L}\\p{N}]/u.test(operatorClosingNote);
   const canonicalRouteBagSnapshot = !canonicalRouteBagSnapshotResult.error
     && canonicalRouteBagSnapshotResult.data
     && typeof canonicalRouteBagSnapshotResult.data === "object"
@@ -744,6 +746,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               {tr(locale, "Recover this stop", "استعادة هذا الموقع")}
             </Link>
           </div>
+        ) : null}
+        {showOperatorClosingNote ? (
+          <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold text-sky-950">{tr(locale, "Operator's closing note", "ملاحظة المشغل عند إنهاء الجولة")}</h2>
+              {terminalInventoryReconciliation?.finalized_at ? (
+                <time className="text-xs text-sky-900" dateTime={terminalInventoryReconciliation.finalized_at}>
+                  {new Intl.DateTimeFormat(locale === "ar" ? "ar-LY" : "en-US", { timeZone: "Africa/Tripoli", dateStyle: "medium", timeStyle: "short" }).format(new Date(terminalInventoryReconciliation.finalized_at))}
+                </time>
+              ) : null}
+            </div>
+            <p dir="auto" className="mt-3 whitespace-pre-wrap break-words rounded-lg bg-white p-3 text-sm leading-7 text-slate-900">{operatorClosingNote}</p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-sky-950">
+              <span>{tr(locale, "A note explains what the operator reported; it does not approve inventory differences.", "الملاحظة توضح ما قاله المشغل، لكنها لا تعتمد فروق المخزون.")}</span>
+              {canReviewRouteInventory ? (
+                <Link href="/routes/notes" className="link-secondary">{tr(locale, "All operator notes", "كل ملاحظات المشغلين")}</Link>
+              ) : null}
+            </div>
+          </section>
         ) : null}
         {canReviewRouteInventory && routeDiscrepancyLoadError ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
