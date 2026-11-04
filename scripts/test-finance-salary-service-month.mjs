@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { calculateInvestorOperatingExpenses } from "../src/lib/investor-finance-outflow.ts";
+import { salaryCashBelongsToAnotherMonth } from "../src/lib/investor-salary-month.ts";
 import {
   financeProfitRecognitionDate,
   transactionImpacts,
@@ -68,25 +68,12 @@ test("future payroll preserves earned month, and manual payouts block duplicate 
 });
 
 
-test("investor operating-profit calculation never double-charges wages paid for an earlier month", () => {
- const paidOctoberForSeptember = {
-  ...noury,
-  transaction_date:"2026-10-02",amount:1650,signed_amount:-1650,
-  metadata:{service_month:"2026-09"},
- };
- const earnedOctoberPaidNovember = {...noury};
- const october = calculateInvestorOperatingExpenses(
-  [paidOctoberForSeptember],
-  [{item_type:"salary_adjustment",item_key:"salary_noury_oct_2026",monthly_amount_lyd:1325}],
-  "2026-10"
- );
- const november = calculateInvestorOperatingExpenses(
-  [earnedOctoberPaidNovember],
-  [{item_type:"salary_adjustment",item_key:"salary_crm_nov",monthly_amount_lyd:2500}],
-  "2026-11"
- );
- assert.equal(october.additionalCashOperatingLyd,0);
- assert.equal(october.totalOperatingExpensesLyd,1325);
- assert.equal(november.additionalCashOperatingLyd,0);
- assert.equal(november.totalOperatingExpensesLyd,2500);
+test("investor expense excludes payroll cash paid in a different service month", () => {
+ const septemberWagesPaidInOctober={...noury, transaction_date:"2026-10-02",
+  amount:1650,metadata:{service_month:"2026-09"}};
+ assert.equal(salaryCashBelongsToAnotherMonth(septemberWagesPaidInOctober,"2026-10","salary"),true);
+ assert.equal(salaryCashBelongsToAnotherMonth(noury,"2026-11","salary"),true);
+ assert.equal(salaryCashBelongsToAnotherMonth(noury,"2026-10","salary"),false);
+ assert.equal(salaryCashBelongsToAnotherMonth(noury,"2026-11","product"),false);
+ assert.equal(salaryCashBelongsToAnotherMonth({...noury,metadata:null},"2026-11","salary"),false);
 });
