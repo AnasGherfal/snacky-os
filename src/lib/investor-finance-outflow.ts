@@ -25,6 +25,7 @@ export type InvestorFinanceOutflow = {
  transaction_kind?:string|null;transaction_type?:string|null;final_bucket?:string|null;bucket?:string|null;
  linked_purchase_id?:string|null;related_purchase_id?:string|null;
  source_sheet?: string | null; source_row?: number | string | null;
+ metadata?:{service_month?:unknown}|null;
  review_status?: string | null; needs_review?: boolean | null;
  is_void?: boolean | null; voided_at?: string | null;
 };
@@ -137,6 +138,7 @@ export type InvestorOperatingExpenseAudit = {
 export function calculateInvestorOperatingExpenses(
  sourceRows:InvestorFinanceOutflow[],
  policyRows:InvestorCostPolicyRow[],
+ statementPeriod?:string,
 ):InvestorOperatingExpenseAudit {
  let extra=0,accrual=0,includedOutCount=0,excludedProductCount=0,excludedCapitalCount=0,
  excludedRentPaidCount=0,excludedTransferCount=0,missingFxOrAmount=0;
