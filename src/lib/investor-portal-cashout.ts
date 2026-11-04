@@ -115,7 +115,7 @@ export async function loadAuthorizedInvestorCashOutAudit({
  if(from>to)return {audit:auditInvestorFinanceMoneyOut([]),policies,salesByMonth};
  for(let offset=0;offset<25000;offset+=500){
   const result=await reader.from("financial_transactions")
-   .select("id,transaction_date,direction,transaction_status,transaction_effect,amount,signed_amount,currency,exchange_rate_usd_to_lyd,category,description,source_type,source_sheet,source_row,review_status,needs_review,is_void,voided_at,transaction_kind,transaction_type,final_bucket,bucket,linked_purchase_id,related_purchase_id")
+   .select("id,transaction_date,direction,transaction_status,transaction_effect,amount,signed_amount,currency,exchange_rate_usd_to_lyd,category,description,source_type,source_sheet,source_row,review_status,needs_review,is_void,voided_at,transaction_kind,transaction_type,final_bucket,bucket,linked_purchase_id,related_purchase_id,metadata")
    .eq("direction","money_out").gte("transaction_date",from).lte("transaction_date",to)
    .order("transaction_date").order("id").range(offset,offset+499);
   if(result.error)throw new Error("Finance money-out register unreadable.");
