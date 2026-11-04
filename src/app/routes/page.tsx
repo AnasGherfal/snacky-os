@@ -100,6 +100,26 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   // the authenticated, RLS-filtered route page. No global cache is introduced.
   const supportClient = getSupabaseAdminClient() ?? supabase;
   const support = await loadRouteListSupport(supportClient, routeIds, operatorIds);
+  const operatorNotesResult = canReviewInventory && routeIds.length
+    ? await supportClient.from("route_inventory_reconciliations")
+        .select("id, route_id, reason, created_at")
+        .in("route_id", routeIds)
+        .not("reason", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(100)
+    : { data: [], error: null };
+  if (operatorNotesResult.error) {
+    logRouteLoaderIssue({ step: "load_operator_notes", query: "route_inventory_reconciliations", error: operatorNotesResult.error, context: loaderContext, optional: true });
+  }
+  const routeNotes = (operatorNotesResult.data ?? [])
+    .filter((note: any) => {
+      const value = String(note.reason ?? "").trim();
+      return value.length > 1 && /[\\p{L}\\p{N}]/u.test(value);
+    });
+  const notesByRouteId = new Map<string, string>();
+  for (const note of routeNotes) {
+    if (!notesByRouteId.has(note.route_id)) notesByRouteId.set(note.route_id, String(note.reason).trim());
+  }
   const { data: operators, error: operatorsError } = support.operators;
   const { data: stops, error: stopsError, machineError: stopMachinesError } = support.stops;
   if (operatorsError) logRouteLoaderIssue({ step: "load_route_operators", query: "team_members", error: operatorsError, context: loaderContext, optional: true });
@@ -141,6 +161,12 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
             <MobileField label={locale === "ar" ? "مواقع الأجهزة" : "Machine stops"}>{(stopNamesByRouteId.get(route.id) ?? []).join(" · ") || "-"}</MobileField>
             <MobileField label={locale === "ar" ? "المسؤول" : "Performer"}>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</MobileField>
           </div>
+          {notesByRouteId.get(route.id) ? (
+            <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm">
+              <div className="text-xs font-semibold text-sky-900">{locale === "ar" ? "ملاحظة المشغل" : "Operator note"}</div>
+              <p dir="auto" className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-slate-800">{notesByRouteId.get(route.id)}</p>
+            </div>
+          ) : null}
           <Link className="btn-secondary mt-4 w-full" href={`/routes/${route.id}`}>
             {locale === "ar" ? "عرض الجولة" : "View route"}
           </Link>
@@ -150,13 +176,14 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   );
 
   const renderRouteTable = (rows: any[]) => (
-    <DataTable className="hidden md:block" headers={locale === "ar" ? ["التاريخ والوقت", "المسؤول", "الحالة", "مواقع الأجهزة", "التفاصيل"] : ["Date & time", "Performer", "Status", "Machine stops", "Details"]}>
+    <DataTable className="hidden md:block" headers={locale === "ar" ? ["التاريخ والوقت", "المسؤول", "الحالة", "مواقع الأجهزة", "ملاحظة المشغل", "التفاصيل"] : ["Date & time", "Performer", "Status", "Machine stops", "Operator note", "Details"]}>
       {rows.map((route: any) => (
         <tr key={route.id}>
           <td><div>{route.route_date}</div><div className="text-xs text-slate-500">{routeCreatedTime(route.created_at, locale)}</div></td>
           <td>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</td>
           <td><StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} label={routeStatusLabel(route.status, locale)} /></td>
           <td><div className="max-w-xl text-sm">{(stopNamesByRouteId.get(route.id) ?? []).join(" · ") || "-"}</div><div className="text-xs text-slate-500">{stopsError ? "—" : stopsByRouteId.get(route.id) ?? 0} {locale === "ar" ? "موقع" : "stops"}</div></td>
+          <td><div dir="auto" className="max-w-sm line-clamp-2 whitespace-pre-wrap break-words text-sm text-slate-700">{notesByRouteId.get(route.id) ?? "—"}</div></td>
           <td><Link className="link-secondary" href={`/routes/${route.id}`}>{locale === "ar" ? "عرض الجولة" : "View route"}</Link></td>
         </tr>
       ))}
@@ -168,10 +195,33 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
       <PageHeader title={locale === "ar" ? "الجولات" : "Routes"}
         subtitle={locale === "ar" ? "خطط جولات التعبئة، وعيّن المشغلين، وتابع مواقع الأجهزة." : "Plan refill routes, assign operators, and track machine stops."}
         action={<div className="flex flex-wrap gap-2">
+          {canReviewInventory ? <SecondaryButton href="/routes/notes">{locale === "ar" ? "ملاحظات المشغلين" : "Operator notes"}</SecondaryButton> : null}
           {canReviewInventory ? <SecondaryButton href="/routes/inventory-review">{locale === "ar" ? "مراجعة فروق المخزون" : "Review inventory differences"}</SecondaryButton> : null}
           <PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>
         </div>} />
       {hasRole(profile, "owner") ? <OwnerQaRouteCard locale={locale} /> : null}
+      {canReviewInventory && routeNotes.length > 0 ? (
+        <section className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="font-semibold text-sky-950">{locale === "ar" ? "آخر ملاحظات المشغلين" : "Latest operator notes"}</h2>
+            <Link href="/routes/notes" className="link-secondary text-sm">{locale === "ar" ? "عرض جميع الملاحظات" : "View all notes"}</Link>
+          </div>
+          <div className="space-y-2">
+            {routeNotes.slice(0, 3).map((note: any) => {
+              const relatedRoute = routeRows.find((route: any) => route.id === note.route_id);
+              return (
+                <div key={note.id} className="rounded-lg bg-white p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                    <span>{operatorById.get(relatedRoute?.operator_id)?.full_name ?? (locale === "ar" ? "المشغل" : "Operator")} · {relatedRoute?.route_date ?? ""}</span>
+                    <Link href={`/routes/${note.route_id}`} className="link-secondary">{locale === "ar" ? "فتح الجولة" : "Open route"}</Link>
+                  </div>
+                  <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-900">{String(note.reason).trim()}</p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
       {operatorsError || stopsError || stopMachinesError ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         {locale === "ar" ? "بعض تفاصيل ملخص الجولات غير متاحة الآن. ما زالت الجولات محمّلة." : "Some route summary details are unavailable right now. Routes are still loaded."}
       </div> : null}
