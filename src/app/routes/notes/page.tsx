@@ -22,7 +22,7 @@ type ClosingNote = {
 
 function isUsefulNote(value: string | null | undefined) {
   const text = String(value ?? "").trim();
-  return text.length > 1 && /[\\p{L}\\p{N}]/u.test(text);
+  return text.length > 1 && /[\p{L}\p{N}]/u.test(text);
 }
 
 function formatWhen(value: string, locale: "en" | "ar") {
