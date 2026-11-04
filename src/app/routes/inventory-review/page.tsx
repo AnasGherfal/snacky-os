@@ -344,7 +344,7 @@ export default async function RouteInventoryReviewPage({
   );
   const operatorNoteFor = (row: RouteInventoryDiscrepancyRow) => {
     const note = String(row.details?.discrepancy_reason ?? "").trim();
-    return note.length > 1 && /[\\p{L}\\p{N}]/u.test(note) ? note : null;
+    return note.length > 1 && /[\p{L}\p{N}]/u.test(note) ? note : null;
   };
 
   return (
