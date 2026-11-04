@@ -8,7 +8,7 @@ import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanc
 import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds, type InvestorProfitBasis } from "@/lib/investor-profit";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { recordInvestorCommand } from "@/lib/investor-money-actions";
-import { auditInvestorFinanceMoneyOut,calculateInvestorOperatingExpenses } from "@/lib/investor-finance-outflow";
+import { auditInvestorFinanceMoneyOut,calculateInvestorOperatingExpenses,isInvestorMonthlyOperatingCostPolicy } from "@/lib/investor-finance-outflow";
 import { loadAuthorizedInvestorCashOutAudit } from "@/lib/investor-portal-cashout";
 
 function text(fd: FormData,name: string) { return String(fd.get(name) ?? "").trim(); }
@@ -155,7 +155,7 @@ export async function generateInvestorStatement(fd:FormData) {
    : {data:[],error:null};
  if(policyResult.error)fail('Investor monthly cost policies could not load.');
  const policyRows=(policyResult.data??[]).filter((p:any)=>p.effective_through==null||p.effective_through>=bounds.start);
- const costs=policyRows.filter((p:any)=>p.item_type==='rent'||p.item_type==='salary_adjustment');
+ const costs=policyRows.filter((p:any)=>isInvestorMonthlyOperatingCostPolicy(p));
  const additionalAccrual=costs.reduce((sum:number,p:any)=>sum+Number(p.monthly_amount_lyd??0),0);
  // A Finance MONEY OUT remains a debit even when its description is
  // "تعديل الميزانيه", Other, Uncategorized, Charity, or an owner withdrawal.
