@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { calculateInvestorOperatingExpenses } from "../src/lib/investor-finance-outflow.ts";
 import {
   financeProfitRecognitionDate,
   transactionImpacts,
@@ -64,4 +65,28 @@ test("future payroll preserves earned month, and manual payouts block duplicate 
   assert.match(action,/service_month: existingRun\.period_start\.slice\(0, 7\)/);
   assert.match(action,/payee_team_member_id: existingRun\.operator_id/);
   assert.match(action,/A manual salary payment is already in Finance/);
+});
+
+
+test("investor operating-profit calculation never double-charges wages paid for an earlier month", () => {
+ const paidOctoberForSeptember = {
+  ...noury,
+  transaction_date:"2026-10-02",amount:1650,signed_amount:-1650,
+  metadata:{service_month:"2026-09"},
+ };
+ const earnedOctoberPaidNovember = {...noury};
+ const october = calculateInvestorOperatingExpenses(
+  [paidOctoberForSeptember],
+  [{item_type:"salary_adjustment",item_key:"salary_noury_oct_2026",monthly_amount_lyd:1325}],
+  "2026-10"
+ );
+ const november = calculateInvestorOperatingExpenses(
+  [earnedOctoberPaidNovember],
+  [{item_type:"salary_adjustment",item_key:"salary_crm_nov",monthly_amount_lyd:2500}],
+  "2026-11"
+ );
+ assert.equal(october.additionalCashOperatingLyd,0);
+ assert.equal(october.totalOperatingExpensesLyd,1325);
+ assert.equal(november.additionalCashOperatingLyd,0);
+ assert.equal(november.totalOperatingExpensesLyd,2500);
 });
