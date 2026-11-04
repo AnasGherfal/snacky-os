@@ -108,7 +108,7 @@ export async function loadAuthorizedInvestorCashOutAudit({
  }
 
  const costPolicies=await reader.from("investor_cost_policies")
-  .select("item_type,monthly_amount_lyd,effective_from,effective_through")
+  .select("item_key,item_type,label,monthly_amount_lyd,effective_from,effective_through")
   .eq("agreement_id",agreementId).order("effective_from");
  if(costPolicies.error)throw new Error("Owner-approved rent and salary records unavailable.");
  const policies=(costPolicies.data??[]) as DatedCostPolicy[];
