@@ -430,7 +430,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const terminalInventoryReconciliation = terminalReconciliationResult.error ? null : terminalReconciliationResult.data;
   const operatorClosingNote = String(terminalInventoryReconciliation?.reason ?? "").trim();
-  const showOperatorClosingNote = operatorClosingNote.length > 1 && /[\\p{L}\\p{N}]/u.test(operatorClosingNote);
+  const showOperatorClosingNote = operatorClosingNote.length > 1 && /[\p{L}\p{N}]/u.test(operatorClosingNote);
   const canonicalRouteBagSnapshot = !canonicalRouteBagSnapshotResult.error
     && canonicalRouteBagSnapshotResult.data
     && typeof canonicalRouteBagSnapshotResult.data === "object"
