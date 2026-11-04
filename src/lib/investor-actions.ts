@@ -186,7 +186,7 @@ export async function generateInvestorStatement(fd:FormData) {
  // monthly rent by the monthly policy. They remain in the cash-out audit but
  // must not silently be charged twice in the operating-profit distribution.
  const operatingExpenseAudit=agreement.investment_amount_usd!=null
-  ? calculateInvestorOperatingExpenses(effectiveRows,costs)
+  ? calculateInvestorOperatingExpenses(effectiveRows,costs,bounds.start.slice(0,7))
   : null;
  const operatingExpensesBeforeAccrual=operatingExpenseAudit?.additionalCashOperatingLyd
   ??calculation.operatingExpensesLyd;
