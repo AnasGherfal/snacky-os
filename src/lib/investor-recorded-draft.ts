@@ -1,5 +1,5 @@
 import {
- calculateInvestorOperatingExpenses,
+ calculateInvestorOperatingExpenses,isInvestorMonthlyOperatingCostPolicy,
  type InvestorCashOutAudit, type InvestorCostPolicyRow
 } from "@/lib/investor-finance-outflow";
 import type { InvestorSalesProof } from "@/lib/investor-sales-proof";
@@ -44,7 +44,7 @@ export function reconcileRecordedInvestorDrafts({
   const summary=sourceAudit.byMonth[period];
   const selectedPolicies=policies.filter(p=>p.effective_from<=source.month_start
     &&(p.effective_through==null||p.effective_through>=source.month_start)
-    &&(p.item_type==="rent"||p.item_type==="salary_adjustment"));
+    && isInvestorMonthlyOperatingCostPolicy(p));
   const financeRows=sourceAudit.rows.filter(r=>String(r.transaction_date??"").slice(0,7)===period);
   const expenses=calculateInvestorOperatingExpenses(financeRows,selectedPolicies,period);
   const proof=salesByMonth?.[source.month_start];
