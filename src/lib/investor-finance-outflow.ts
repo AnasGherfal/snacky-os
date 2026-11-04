@@ -114,6 +114,16 @@ export type InvestorCostPolicyRow = {
  item_key?:string; item_type?:string;label?:string;
  monthly_amount_lyd?:number|string|null;
 };
+/**
+ * The only owner-reported non-payroll estimate currently admitted into
+ * investor operating-cost projections. Keep estimated vehicle maintenance
+ * identifiable and separate from actual Finance cash transactions.
+ */
+export function isInvestorMonthlyOperatingCostPolicy(policy:InvestorCostPolicyRow):boolean {
+ return policy.item_type==="rent" || policy.item_type==="salary_adjustment" ||
+  (policy.item_type==="other" && policy.item_key==="vehicle_oil_change_estimate_apr_oct_2026");
+}
+
 export type InvestorOperatingExpenseAudit = {
  additionalCashOperatingLyd:number;
  accruedPolicyLyd:number;
@@ -145,7 +155,7 @@ export function calculateInvestorOperatingExpenses(
  const warnings:string[]=[];
  const policyRent=policyRows.some(p=>p.item_type==="rent");
  for(const policy of policyRows){
-  if(!["rent","salary_adjustment"].includes(policy.item_type??""))continue;
+  if(!isInvestorMonthlyOperatingCostPolicy(policy))continue;
   const value=Number(policy.monthly_amount_lyd);
   if(!Number.isFinite(value)||value<0){warnings.push("Invalid recorded investor cost policy");missingFxOrAmount++;continue;}
   accrual=round(accrual+value);
