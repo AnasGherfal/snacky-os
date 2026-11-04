@@ -46,7 +46,7 @@ export function reconcileRecordedInvestorDrafts({
     &&(p.effective_through==null||p.effective_through>=source.month_start)
     &&(p.item_type==="rent"||p.item_type==="salary_adjustment"));
   const financeRows=sourceAudit.rows.filter(r=>String(r.transaction_date??"").slice(0,7)===period);
-  const expenses=calculateInvestorOperatingExpenses(financeRows,selectedPolicies);
+  const expenses=calculateInvestorOperatingExpenses(financeRows,selectedPolicies,period);
   const proof=salesByMonth?.[source.month_start];
   // Source-backed XY + dated inventory costs supersede old saved draft gross
   // profit. Never fall back to stale draft totals when verification was requested.
