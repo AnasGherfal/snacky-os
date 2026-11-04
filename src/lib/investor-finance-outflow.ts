@@ -1,4 +1,5 @@
 import { canonicalExpenseCategory,isFinanceProductPurchaseRow } from "./finance-operations.ts";
+import { salaryCashBelongsToAnotherMonth } from "./investor-salary-month.ts";
 import { isInvestorCapitalPurchase } from "./investor-expenses.ts";
 /**
  * Finance money-out evidence for investor reconciliation. Every active, non-void
@@ -157,11 +158,7 @@ export function calculateInvestorOperatingExpenses(
   // expense belongs to the explicitly tagged service month. Other payroll
   // months are accrued via their investor salary policies; never charge them
   // again in the payment month (e.g. September salary paid on October 2).
-  const serviceMonth=typeof row.metadata?.service_month==="string"
-   &&/^\\d{4}-(0[1-9]|1[0-2])$/.test(row.metadata.service_month)
-   ?row.metadata.service_month:null;
-  if(statementPeriod && serviceMonth && serviceMonth!==statementPeriod
-   &&canonical.key==="salary"){continue;}
+  if(salaryCashBelongsToAnotherMonth(row,statementPeriod,canonical.key))continue;
   if(isFinanceProductPurchaseRow(row)||row.source_type==="purchase_payment"||row.transaction_kind==="product_purchase"){
    excludedProductCount++;continue;
   }
