@@ -98,10 +98,12 @@ export default async function InvestorsPage({searchParams}:{searchParams:Promise
  ])].filter(month=>monthPattern.test(month)&&month<=previous &&
    (!selected||month>=selected.start_date.slice(0,7)) &&
    (!selected?.end_date||month<=selected.end_date.slice(0,7))).sort();
- const firstOpen=statements.filter(s=>s.calculation_status!=="finalized")
-  .sort((a,b)=>a.month_start.localeCompare(b.month_start))[0]?.month_start.slice(0,7);
+ // Open the latest completed month first; older unresolved months remain selectable.
+ // This makes the newly recorded October statement visible without marking it final.
+ const latestOpen=statements.filter(s=>s.calculation_status!=="finalized")
+  .sort((a,b)=>b.month_start.localeCompare(a.month_start))[0]?.month_start.slice(0,7);
  const reviewMonth=params.month&&availableMonths.includes(params.month)?params.month:
-  firstOpen&&availableMonths.includes(firstOpen)?firstOpen:
+  latestOpen&&availableMonths.includes(latestOpen)?latestOpen:
   availableMonths.at(-1)??previous;
  const reviewedStatement=statements.find(s=>s.month_start.slice(0,7)===reviewMonth)??null;
  const initialTab=params.tab==="payment"?"payment":params.tab==="manage"?"manage":"review";
