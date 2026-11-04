@@ -342,12 +342,16 @@ export default async function RouteInventoryReviewPage({
   const actionsFor = (row: RouteInventoryDiscrepancyRow) => (
     <ReviewActions row={row} evidence={evidenceByDiscrepancyId.get(row.id)} returnTo={returnTo} locale={locale} />
   );
+  const operatorNoteFor = (row: RouteInventoryDiscrepancyRow) => {
+    const note = String(row.details?.discrepancy_reason ?? "").trim();
+    return note.length > 1 && /[\\p{L}\\p{N}]/u.test(note) ? note : null;
+  };
 
   return (
     <>
       <PageHeader
         title={tr("Route inventory review", "مراجعة مخزون الجولات")}
-        subtitle={tr("Review recorded-versus-actual route stock differences. Review actions never move stock.", "راجع فروق مخزون الجولات بين الكمية المسجلة والكمية الفعلية. إجراءات المراجعة لا تنقل المخزون.")}
+        subtitle={tr("Review recorded-versus-actual stock differences. A linked correction may already have changed stock; accepting a case only closes its review, never moves stock again.", "راجع الفروق بين المخزون المسجل والفعلي. قد يكون التصحيح المسجل حرّك المخزون بالفعل؛ قبول الحالة يغلق المراجعة فقط ولا ينقل المخزون مرة ثانية.")}
         breadcrumbs={[{ label: tr("Operations", "العمليات"), href: "/routes" }, { label: tr("Inventory review", "مراجعة المخزون") }]}
         action={<SecondaryButton href={routeFilter ? `/routes/${routeFilter}` : "/routes"}>{routeFilter ? tr("Back to route", "العودة إلى الجولة") : tr("Back to routes", "العودة إلى الجولات")}</SecondaryButton>}
       />
@@ -415,6 +419,12 @@ export default async function RouteInventoryReviewPage({
                     <MobileField label={tr("Source", "المصدر")}>{sourceLabel(row.source_type, locale)}</MobileField>
                     <MobileField label={tr("Correction evidence", "دليل التصحيح")}>{routeInventoryDiscrepancyHasCorrection(row, evidenceByDiscrepancyId.get(row.id)) ? tr("Linked", "مرتبط") : tr("Not linked", "غير مرتبط")}</MobileField>
                   </div>
+                  {operatorNoteFor(row) ? (
+                    <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50 p-3">
+                      <div className="text-xs font-semibold text-sky-900">{tr("Operator note", "ملاحظة المشغل")}</div>
+                      <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{operatorNoteFor(row)}</p>
+                    </div>
+                  ) : null}
                   {row.resolution_notes ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{row.resolution_notes}</p> : null}
                   <div className="mt-4">{actionsFor(row)}</div>
                 </MobileRecordCard>
@@ -442,7 +452,7 @@ export default async function RouteInventoryReviewPage({
                   <td><Link href={`/routes/${row.route_id}`} className="link-secondary">{context.route?.route_date ?? row.route_id.slice(0, 8)}</Link><div className="text-xs text-slate-500">{context.route?.status?.replaceAll("_", " ") ?? "-"}</div></td>
                   <td>{context.operator?.full_name ?? "-"}</td>
                   <td>{context.machine?.name ?? context.machine?.machine_code ?? "-"}<div className="text-xs text-slate-500">{context.stop?.stop_order ? `${tr("Stop", "الموقع")} ${context.stop.stop_order}` : "-"}</div></td>
-                  <td>{context.product?.name ?? row.product_id.slice(0, 8)}<div className="text-xs text-slate-500">{context.product?.sku ?? sourceLabel(row.source_type, locale)}</div></td>
+                  <td>{context.product?.name ?? row.product_id.slice(0, 8)}<div className="text-xs text-slate-500">{context.product?.sku ?? sourceLabel(row.source_type, locale)}</div>{operatorNoteFor(row) ? <div dir="auto" className="mt-2 max-w-xs whitespace-pre-wrap break-words rounded bg-sky-50 p-2 text-xs text-sky-950"><span className="font-semibold">{tr("Operator note", "ملاحظة المشغل")}: </span>{operatorNoteFor(row)}</div> : null}</td>
                   <td>{formatQuantity(row.recorded_quantity)}</td>
                   <td>{formatQuantity(row.actual_quantity)}</td>
                   <td className="font-semibold text-rose-700">{formatDifference(row.difference_quantity)}</td>
