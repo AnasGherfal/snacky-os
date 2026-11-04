@@ -114,7 +114,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   const routeNotes = (operatorNotesResult.data ?? [])
     .filter((note: any) => {
       const value = String(note.reason ?? "").trim();
-      return value.length > 1 && /[\\p{L}\\p{N}]/u.test(value);
+      return value.length > 1 && /[\p{L}\p{N}]/u.test(value);
     });
   const notesByRouteId = new Map<string, string>();
   for (const note of routeNotes) {
