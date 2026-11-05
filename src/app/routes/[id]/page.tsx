@@ -6,9 +6,8 @@ import {
   type MissedPickupStorageOption,
 } from "@/components/routes/AdminMissedPickupRecorder";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessPath, canExecuteRoutes, canManagePayroll, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { RouteCashPanel } from "@/components/cash/RouteCashPanel";
@@ -315,7 +314,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     { data: movements },
     { data: cashCollections },
     { data: issues },
-    { data: routePayBreakdown, error: routePayError },
     terminalReconciliationResult,
     canonicalRouteBagSnapshotResult,
     pendingStopInventoryCommitResult,
@@ -343,7 +341,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           .in("machine_id", machineIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
-    supabase.from("route_pay_breakdowns").select("id, total_pay_lyd, payroll_period_id, recalculated_at").eq("route_id", id).maybeSingle(),
     supportClient
       .from("route_inventory_reconciliations")
       .select("id, action, status, returned_units, discrepancy_units, reason, finalized_at")
@@ -381,7 +378,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .in("action", ["xy_slot_product_change", "xy_slot_product_change_unverified", "xy_slot_product_change_rejected"])
       .order("created_at", { ascending: true }),
   ]);
-  if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
     console.error("[routes:detail] Failed to load terminal inventory reconciliation", { id, error: terminalReconciliationResult.error });
   }
@@ -852,31 +848,19 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
         <RouteCashPanel routeId={id} routeStatus={String(routeRow.status)} />
 
-        <section className="surface-card p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">{tr(locale, "Payroll", "الأجور")}</h2>
-              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Saved route pay breakdown used for verification and monthly payroll periods.", "تفصيل أجر الجولة المحفوظ المستخدم للمراجعة وفترات الأجور الشهرية.")}</p>
-            </div>
-            <SecondaryButton href={`/payroll/routes/${id}`}>{tr(locale, "Open route pay detail", "فتح تفاصيل أجر الجولة")}</SecondaryButton>
-          </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Route pay", "أجر الجولة")}</div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">{routePayBreakdown ? moneyLabel(routePayBreakdown.total_pay_lyd) : tr(locale, "Not calculated yet", "لم يتم احتسابه بعد")}</div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Payroll period", "فترة الأجور")}</div>
-              <div className="mt-1 font-medium text-slate-900">
-                {routePayBreakdown?.payroll_period_id ? <Link href={`/payroll/periods/${routePayBreakdown.payroll_period_id}`} className="link-secondary">{tr(locale, "Open linked period", "فتح الفترة المرتبطة")}</Link> : tr(locale, "Not linked yet", "غير مرتبطة بعد")}
+        {canManagePayroll(profile) ? (
+          <section className="surface-card p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">{tr(locale, "Payroll", "الأجور")}</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {tr(locale, "Manage operator salaries and monthly payroll runs from the Payroll workspace.", "إدارة رواتب المشغلين ومسيرات الأجور الشهرية من قسم الأجور.")}
+                </p>
               </div>
+              <SecondaryButton href="/payroll">{tr(locale, "Open Payroll", "فتح الأجور")}</SecondaryButton>
             </div>
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Last recalculated", "آخر إعادة احتساب")}</div>
-              <div className="mt-1 font-medium text-slate-900">{routePayBreakdown?.recalculated_at ? new Date(routePayBreakdown.recalculated_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : "-"}</div>
-            </div>
-          </div>
-        </section>
+          </section>
+        ) : null}
 
         <section className="surface-card p-4">
           <h2 className="text-lg font-semibold">{tr(locale, "Route stops", "مواقع الجولة")}</h2>
