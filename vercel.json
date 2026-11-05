@@ -12,7 +12,12 @@
   "git": {
     "deploymentEnabled": {
       "master": true,
+      "preview/**": true,
+      "qa/**": true,
+      "release/**": true,
+      "staging": true,
       "*": false
     }
-  }
+  },
+  "ignoreCommand": "node scripts/vercel-build-gate.mjs"
 }
