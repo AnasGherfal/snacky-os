@@ -6,7 +6,7 @@ import { uploadCashEvidence } from '@/lib/cash-evidence';
 import { CASH_PHOTO_UPLOAD_LIMIT } from '@/lib/cash-photo';
 import { CASH_EVIDENCE_BUCKET } from '@/lib/storage-buckets';
 import { readCompanyBody } from '@/lib/company-request';
-import { cashHandlingRoles, cashUuid, cashSameOrigin, validateCashCommand, cashReceiptMatches, type CashCommand, type CashWorkspace } from '@/lib/cash-handover';
+import { cashHandlingRoles, cashUuid, cashSameOrigin, validateCashCommand, cashReceiptMatches, isUnnumberedCashReference, type CashCommand, type CashWorkspace } from '@/lib/cash-handover';
 export const dynamic = 'force-dynamic';
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const denied = () => json({ ok: false, code: 'denied' }, 403);
@@ -71,6 +71,23 @@ export async function POST(request: Request) {
     const saved = await ctx.db.rpc('snacky_cash_handover_receipt_v1', { p_command: command });
     if (saved.error) return rpcFailure(saved.error);
     if (saved.data) return cashReceiptMatches(command, saved.data) ? json(saved.data) : json({ ok: false, code: 'uncertain', retryable: true }, 503);
+    // A generated tracking reference cannot prove the physical bag is sealed.
+    // The dedicated unnumbered flows always flag the exception and require
+    // photo matching; reject any generic action pretending the seal is intact.
+    if (command.collection_id && ['dropoff','pickup','direct_pickup','takeover'].includes(command.action)) {
+      const current = await ctx.db.rpc('snacky_cash_handover_workspace_v1', {
+        p_id: command.collection_id, p_status: 'open', p_offset: 0,
+      });
+      if (current.error || !current.data) return rpcFailure(current.error ?? {}, true);
+      const recorded = (current.data as CashWorkspace).rows.find(row => row.id === command.collection_id);
+      if (!recorded) return denied();
+      if (isUnnumberedCashReference(recorded.bag) &&
+          (command.payload.seal_condition !== 'mismatch' ||
+           !String(command.payload.notes ?? '').includes('UNNUMBERED CASH BAG'))) {
+        return json({ ok: false, code: 'invalid', retryable: false,
+          message: 'A digital tracking reference is not a verified physical bag seal. Use the unnumbered bag receive/deposit workflow.' }, 400);
+      }
+    }
     let path: string | null = null;
     if (command.action === 'dropoff') {
       const scope = await ctx.db.rpc('snacky_cash_handover_workspace_v1', { p_id: command.collection_id });
