@@ -96,7 +96,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
         throw Error("الرقم المطبوع لا يطابق الرقم المسجل عند الماكينة.");
       if(!box.bag?.trim())throw Error("مرجع سحب النقدية غير موجود. أبلغ المسؤول.");
       if(!confirmed)throw Error("لا تسجّل الإيداع قبل وضع الكيس فعلياً في الخزنة.");
-      if(!photo&&!storedPending(box.id))throw Error("صوّر الكيس المختوم بجانب فتحة الخزنة قبل إسقاطه.");
+      if(!photo&&!storedPending(box.id))throw Error("صوّر الكيس المغلق بجانب فتحة الخزنة قبل إسقاطه.");
       let pending=storedPending(box.id);
       if(!pending){
         if(!selectedRecipient)throw Error("اختر المستلم المخوّل.");
@@ -180,7 +180,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
           </label>
           <label className="flex min-h-10 items-center gap-2">
             <input type="radio" name="reference_mode" checked={referenceMode==="printed"}
-              disabled={Boolean(storedPending(box.id))} onChange={()=>setReferenceMode("printed")}/>
+              disabled={Boolean(storedPending(box.id))||isUnnumberedCashReference(box.bag)} onChange={()=>setReferenceMode("printed")}/>
             نعم، يوجد رقم ختم مطبوع
           </label>
           {referenceMode==="unnumbered"?<p className="rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-950">
