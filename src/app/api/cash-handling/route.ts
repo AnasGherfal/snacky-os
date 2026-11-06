@@ -81,11 +81,17 @@ export async function POST(request: Request) {
       if (current.error || !current.data) return rpcFailure(current.error ?? {}, true);
       const recorded = (current.data as CashWorkspace).rows.find(row => row.id === command.collection_id);
       if (!recorded) return denied();
-      if (isUnnumberedCashReference(recorded.bag) &&
+      const collection = await ctx.db.from('cash_collections')
+        .select('id,storage_seal_condition,storage_notes')
+        .eq('id',command.collection_id).maybeSingle();
+      if (collection.error || !collection.data) return rpcFailure(collection.error ?? {}, true);
+      const legacyUnnumberedDropoff = collection.data.storage_seal_condition === 'mismatch'
+        && String(collection.data.storage_notes ?? '').includes('UNNUMBERED CASH BAG');
+      if ((isUnnumberedCashReference(recorded.bag) || legacyUnnumberedDropoff) &&
           (command.payload.seal_condition !== 'mismatch' ||
            !String(command.payload.notes ?? '').includes('UNNUMBERED CASH BAG'))) {
         return json({ ok: false, code: 'invalid', retryable: false,
-          message: 'A digital tracking reference is not a verified physical bag seal. Use the unnumbered bag receive/deposit workflow.' }, 400);
+          message: 'The bag has no verifiable printed seal. Use the unnumbered bag physical receipt and review process.' }, 400);
       }
     }
     let path: string | null = null;
