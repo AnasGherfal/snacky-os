@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Fo
 import { useI18n } from '@/components/I18nProvider';
 import {
   cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand, cashReferenceMissing,
-  summarizeDeclaredRemoval,
+  isUnnumberedCashReference, summarizeDeclaredRemoval,
   type CashAction, type CashBox, type CashCommand, type CashReceipt, type CashWorkspace,
 } from '@/lib/cash-handover';
 import styles from './CashHandlingWorkspace.module.css';
@@ -100,6 +100,9 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
   }
   function submit(event: FormEvent<HTMLFormElement>, box: CashBox) {
     event.preventDefault(); if (!action || pending || busy || cashReferenceMissing(box)) return;
+    if (isUnnumberedCashReference(box.bag) && ['dropoff','pickup','direct_pickup','takeover'].includes(action)) {
+      setError('invalid'); return;
+    }
     const form = new FormData(event.currentTarget), get = (key: string) => String(form.get(key) ?? '').trim();
     // Never turn amounts entered by the collector at removal into a
     // physical count. The counter enters the actual sealed-box total.
@@ -119,20 +122,25 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
   const locked = busy || Boolean(pending), box = selected ? view?.rows.find(r => r.id === selected) : null;
   const declaredRemoval = box ? summarizeDeclaredRemoval(box.machines) : null;
   const label = (a: CashAction) => cashActionLabels[a][ar ? 1 : 0];
+  const boxReferenceLabel = (value: CashBox) => cashReferenceMissing(value)
+    ? text('Not recorded', 'غير مسجل')
+    : isUnnumberedCashReference(value.bag)
+      ? text('Unnumbered bag · internal reference only', 'كيس بدون رقم مطبوع · مرجع داخلي فقط')
+      : value.bag;
 
   return <section className={styles.workspace} dir={ar ? 'rtl' : 'ltr'} data-testid="cash-handling">
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
         <h1>{text('Cash', 'النقدية')}</h1>
-        <p>{text('Any assigned operator removes and deposits · authorized recipient verifies · authorized counter counts. Every step follows the same sealed-bag ID.', 'أي مشغّل مكلّف يسحب النقدية ويسلّمها، ويؤكد المستلم المعتمد الاستلام، ثم يعدّها الشخص المخوّل. كل خطوة مرتبطة برقم الكيس نفسه.')}</p></div>
+        <p>{text('Any assigned operator removes and deposits · authorized recipient verifies · authorized counter counts. Numbered bags use their printed seal. Unnumbered bags use the machine, pickup time and photos with a mandatory seal exception.', 'الأكياس المرقمة تُطابق برقم الختم؛ الأكياس غير المرقمة تُتبع بالماكينة ووقت السحب والصور مع تنبيه لغياب رقم الختم.')}</p></div>
       <div className={styles.buttons}><Link className={styles.secondary} href="/cash-handling/deposit">{text('Deposit sealed bags', 'إيداع الأكياس في الخزنة')}</Link>{view?.owner ? <><Link className={styles.secondary} href="/cash-collections/pilot">{text("Refill cash pilot", "إعدادات النقدية عند التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/refills">{text("Refill cash audit", "سجل نقدية التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/timeline">{text("Machine cash intervals", "فترات السحب والنقص")}</Link><Link className={styles.secondary} href="/cash-handling/receive">{text("Verify bags & count", "استلام وعدّ الأكياس")}</Link><Link className={styles.secondary} href="/cash-collections?status=counted">{text("Review counted cash vs XY", "مطابقة النقدية مع XY")}</Link></> : null}{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
     <div className={styles.notice} role="note">
       <strong>{text('One connected cash-box workflow · No cash amount at pickup', 'مسار نقدية واحد متصل · بدون إدخال مبالغ عند السحب')}</strong>
-      <p>{text('1. Collector: remove cash from one machine, record the sealed bag and photo, then deposit it in locked storage.', '١. المشغّل: اسحب النقدية من ماكينة واحدة، وسجّل رقم الكيس وصورته، ثم أودعه في الخزنة المخصصة.')}</p>
-      <p>{text('2. Authorized courier: verify the sealed bag ID, record the handover and transport if required. Do not open or count.', '٢. المستلم المصرح له: طابق رقم الكيس والختم وسجّل الاستلام والتوصيل عند الحاجة، دون فتحه أو عدّه.')}</p>
+      <p>{text('1. Collector: remove cash from one machine, photograph the closed bag, then deposit it in locked storage.', '١. المشغّل: اسحب النقدية من ماكينة واحدة، وصوّر الكيس المغلق، ثم أودعه في الخزنة المخصصة. لا تخترع رقم ختم.')}</p>
+      <p>{text('2. Authorized courier: verify the printed seal, or compare machine/time and both photos for unnumbered bags; never treat the latter as a verified seal.', '٢. المستلم: طابق رقم الختم إذا كان مطبوعاً. للكيس غير المرقم طابق الماكينة والوقت والصورتين وسجل غياب الختم للمراجعة.')}</p>
       <p>{text('3. Owner: only after physically receiving the same sealed box, confirm receipt in Cash. You may leave it pending until you are there and ready to count. Enter the actual amount once after counting.', '٣. المالك: بعد استلام نفس العلبة فعلياً تأكد من الاستلام في النقدية. تقدر تتركها معلّقة حتى تكون موجود ومستعد للعد، وبعدها تدخل المبلغ الحقيقي مرة واحدة.')}</p>
     </div>
     {error ? <div role="alert" className={styles.error}>{cashError(error, ar)}</div> : null}
@@ -167,7 +175,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
         <div className={styles.grid}>{view.rows.map(row => <article key={row.id} className={styles.card}>
           <div className={styles.cardTop}><span className={styles.badge}>{(cashStateLabels[row.state] ?? [row.state, row.state])[ar ? 1 : 0]}</span>{row.seal_exception ? <span className={styles.warning}>{text('Seal exception', 'ملاحظة على الختم')}</span> : null}</div>
           <h3>{row.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h3>
-          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{cashReferenceMissing(row) ? text('Not recorded', 'غير مسجل') : row.bag}</bdi></p>
+          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{boxReferenceLabel(row)}</bdi></p>
           {row.state === 'dropped' ? <p className={styles.hint}>{text('NEXT: Authorized courier picks up from storage', 'التالي: المسؤول المخوّل يستلم من المخزن')}</p> : null}
           {row.state === 'picked_up' ? <p className={styles.hint}>{text('NEXT: Assigned courier delivers; owner has not received the bag yet', 'التالي: المسؤول المخوّل يسلّم الكيس، والمالك لم يستلمه بعد')}</p> : null}
           {row.state === 'delivered' ? <p className={styles.hint}>{text('NEXT: Owner physically receives and confirms — counting may wait', 'التالي: المالك يستلم ويؤكد، ويمكن تأجيل العد')}</p> : null}
@@ -186,11 +194,17 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
         {box ? <article className={styles.detail}>
           <span className={styles.badge}>{(cashStateLabels[box.state] ?? [box.state, box.state])[ar ? 1 : 0]}</span>
           <h2>{box.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h2>
-          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')}: <bdi>{cashReferenceMissing(box) ? text('Not recorded', 'غير مسجل') : box.bag}</bdi></p>
+          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')}: <bdi>{boxReferenceLabel(box)}</bdi></p>
           <p className={styles.hint}>{text('Collection reference', 'مرجع التحصيل')}: <bdi>{box.id}</bdi></p>
           {cashReferenceMissing(box) ? <div className={styles.notice} role="note" data-testid="cash-reference-review">
             <strong>{text('Physical box reference not recorded', 'رقم العلبة الفعلي غير مسجل')}</strong>
             <p>{text('This earlier record is not evidence of a newly collected box. Assignment, handover and counting are unavailable here. Ask the owner to review the existing cash record; do not invent a box number or create another collection.', 'هذا السجل السابق لا يثبت وجود علبة جُمعت الآن. لا يمكن إسناده أو تسليمه أو عده من هذه الصفحة. اطلب من المالك مراجعة سجل النقد الأصلي؛ لا تخترع رقماً للعلبة ولا تنشئ تحصيلاً آخر.')}</p>
+          </div> : null}
+          {isUnnumberedCashReference(box.bag) ? <div className={styles.notice} role="note">
+            <strong>{text('No physical numbered seal', 'كيس بدون رقم ختم مطبوع')}</strong>
+            <p>{text('The electronic reference tracks the original collection only. Match the machine, time, and photographs. Seal verification remains an exception.', 'المعرف الإلكتروني يتتبع سجل السحب فقط، وليس رقماً على الكيس. طابق الماكينة والوقت والصور، ويظل غياب الختم بحاجة مراجعة.')}</p>
+            {box.actions.includes('dropoff') ? <Link className={styles.secondary} href={`/cash-handling/deposit?id=${box.id}`}>{text('Deposit unnumbered bag', 'إيداع كيس غير مرقّم')}</Link> : null}
+            {box.actions.some(a => ['pickup','direct_pickup','takeover'].includes(a)) ? <Link className={styles.secondary} href={`/cash-handling/receive?id=${box.id}`}>{text('Physically receive & review', 'استلام فعلي مع مراجعة الصور')}</Link> : null}
           </div> : null}
           {box.amount !== null ? <p className={styles.amount}><bdi>{box.amount} LYD</bdi></p> : null}
           {declaredRemoval && declaredRemoval.knownCount > 0 ? <section className={styles.machineAmounts} aria-label={text('Unverified removal declarations', 'مبالغ السحب غير المتحقق منها')}>
@@ -223,7 +237,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
           {box.delivery_location ? <p className={styles.hint}>{text('Courier delivery location', 'موقع توصيل المندوب')}: {box.delivery_location} · {date(box.delivered_at)}</p> : null}
           {box.seal_exception ? <p className={styles.error}>{text('Seal exception recorded. Count the actual money; owner review is still required.', 'تم تسجيل ملاحظة على الختم. يُعد المبلغ الفعلي، وتبقى مراجعة المالك مطلوبة.')}</p> : null}
           {box.evidence_url ? <a className={styles.secondary} href={box.evidence_url} target="_blank" rel="noreferrer noopener">{text('View storage photo', 'عرض صورة المخزن')}</a> : box.deposited_at ? <p className={styles.hint}>{text('Refresh to load the private storage photo.', 'حدّث الصفحة لتحميل صورة المخزن الخاصة.')}</p> : null}
-          {!action && !cashReferenceMissing(box) ? <div className={styles.buttons}>{box.actions.map(a => <button className={a === 'count' || a === 'pickup' || a === 'dropoff' ? styles.primary : styles.secondary} key={a} disabled={locked} onClick={() => { setAction(a); setError(''); }}>{label(a)}</button>)}</div> : null}
+          {!action && !cashReferenceMissing(box) ? <div className={styles.buttons}>{box.actions.filter(a => !isUnnumberedCashReference(box.bag) || !['dropoff','pickup','direct_pickup','takeover'].includes(a)).map(a => <button className={a === 'count' || a === 'pickup' || a === 'dropoff' ? styles.primary : styles.secondary} key={a} disabled={locked} onClick={() => { setAction(a); setError(''); }}>{label(a)}</button>)}</div> : null}
           {action && !cashReferenceMissing(box) && box.actions.includes(action) && !pending ? <form className={styles.form} onSubmit={e => submit(e, box)} key={`${box.id}-${action}-${box.revision}`}>
             <h3>{label(action)}</h3>
             <fieldset disabled={locked}>
