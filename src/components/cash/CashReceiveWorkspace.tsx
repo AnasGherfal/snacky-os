@@ -156,9 +156,14 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
             لا يوجد رقم كيس للمطابقة. افتح سجل السحب وصوره وطابق الكيس بوقت وموقع السحب وصورة الإيداع. إذا لم تستطع تحديد نفس الكيس، لا تؤكد الاستلام. سيُسجَّل غياب الختم كحالة تحتاج للمراجعة.
           </p>
-          <Link href={`/cash-handling?id=${box.id}`} className="link-secondary text-sm">
-            عرض سجل السحب والصور قبل الاستلام
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link href={`/cash-collections/${box.id}`} className="link-secondary text-sm">
+              صورة السحب عند الماكينة
+            </Link>
+            <Link href={`/cash-handling?id=${box.id}`} className="link-secondary text-sm">
+              صورة الإيداع وسجل العهدة
+            </Link>
+          </div>
           <label className="block space-y-2 text-sm">
             <span>ملاحظة إضافية عن حالة الكيس (اختياري)</span>
             <textarea className="field-input" rows={2} value={note} maxLength={300} onChange={e=>setNote(e.target.value)}/>
