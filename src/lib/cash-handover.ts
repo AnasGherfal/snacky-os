@@ -2,6 +2,21 @@
 export const cashHandlingRoles = ['owner', 'admin', 'supervisor', 'operator', 'warehouse', 'purchasing', 'finance'] as const;
 export const cashUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const cashAmount = /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/;
+export const unnumberedCashReferencePrefix = 'UNNUMBERED_';
+/** Electronic tracking only: this value is NOT printed on the physical cash bag. */
+export function systemUnnumberedCashReference(requestId: string) {
+  if (!cashUuid.test(requestId)) throw new Error('Invalid collection request');
+  return `${unnumberedCashReferencePrefix}${requestId.replaceAll('-', '').toUpperCase()}`;
+}
+export function isUnnumberedCashReference(reference: string | null | undefined) {
+  return typeof reference === 'string' && /^UNNUMBERED_[0-9A-F]{32}$/.test(reference.trim().toUpperCase());
+}
+/** Notes appended on the original removal record so no digital ID is mistaken for a seal. */
+export const unnumberedCashWarning =
+  'UNNUMBERED PHYSICAL BAG: the electronic reference is NOT a printed bag ID or tamper-evident seal. ' +
+  'Match the removal photo, machine and pickup time against the drop-off and physical contents. ' +
+  'Physical seal integrity cannot be independently verified; flag for owner review.';
+
 export type CashAction = 'enable' | 'counter' | 'assign' | 'dropoff' | 'pickup' | 'direct_pickup' | 'takeover' | 'deliver' | 'count';
 export type CashCommand = { request_id: string; collection_id: string | null; action: CashAction; revision: number; payload: Record<string, string | boolean> };
 export type CashReceipt = { ok: true; request_id: string; collection_id: string | null; action: CashAction; revision: number; amount?: string; finance_posted?: boolean };

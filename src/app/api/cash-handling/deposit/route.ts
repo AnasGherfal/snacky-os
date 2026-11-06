@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile, getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { hasAnyRole } from "@/lib/authz";
-import { cashSameOrigin, cashReceiptMatches, cashUuid, type CashCommand, type CashWorkspace } from "@/lib/cash-handover";
+import { cashSameOrigin, cashReceiptMatches, cashUuid, isUnnumberedCashReference, type CashCommand, type CashWorkspace } from "@/lib/cash-handover";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { uploadCashEvidence } from "@/lib/cash-evidence";
 import { CASH_PHOTO_UPLOAD_LIMIT } from "@/lib/cash-photo";
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const raw = await readCompanyBody(request,CASH_PHOTO_UPLOAD_LIMIT+16000);
     body = await new Request(request.url,{method:"POST",
       headers:{"content-type":type},body:new Uint8Array(raw).buffer}).formData();
-    const allowed=new Set(["request_id","collection_id","revision","bag_id","assigned_to","storage_location","photo","notes"]);
+    const allowed=new Set(["request_id","collection_id","revision","bag_id","reference_mode","assigned_to","storage_location","photo","notes"]);
     if ([...body.keys()].some(key=>!allowed.has(key))) throw Error("invalid");
   } catch {
     return respond({ok:false,code:"invalid",message:"Deposit photo missing or exceeds 3 MB."},400);
@@ -38,18 +38,29 @@ export async function POST(request: Request) {
   const read=(key:string)=>String(body.get(key)??"").trim();
   const id=read("collection_id"),requestId=read("request_id"),bag=read("bag_id").toUpperCase();
   const recipient=read("assigned_to"),safe=read("storage_location"),notes=read("notes");
+  const referenceMode=read("reference_mode") || "printed"; // compatible with earlier saved mobile retries
+  const unnumbered=referenceMode==="unnumbered";
   const revision=Number(read("revision")),photo=body.get("photo");
   if (!cashUuid.test(id)||!cashUuid.test(requestId)||!cashUuid.test(recipient)||
+      !["unnumbered","printed"].includes(referenceMode)||
       !/^[A-Z0-9][A-Z0-9_-]{2,79}$/.test(bag)||
       !Number.isSafeInteger(revision)||revision<0||revision>999999999||
       safe.length<2||safe.length>180||notes.length>300||
       (photo!==null&&(!(photo instanceof File)||photo.size===0||photo.size>CASH_PHOTO_UPLOAD_LIMIT||
       !["image/jpeg","image/png","image/webp"].includes(photo.type)))) {
-    return respond({ok:false,code:"invalid",message:"Confirm bag number, safe, recipient and a current seal photo."},400);
+    return respond({ok:false,code:"invalid",message:"Confirm the selected cash pickup, safe, recipient and a current photo."},400);
   }
+  // A system-generated (or historically operator-invented) reference is NOT
+  // a physical seal. Preserve that limitation as a mandatory custody exception.
+  // The operator still needs a photo, a specific cash collection and a receiver.
   const payload={
-    assigned_to:recipient,storage_location:safe,seal_condition:"intact",
-    notes:notes || "Collector confirms bag placed into locked one-way deposit safe. Independent receipt pending.",
+    assigned_to:recipient,storage_location:safe,
+    seal_condition: unnumbered ? "mismatch" : "intact",
+    notes:unnumbered
+      ? ("UNNUMBERED CASH BAG. No physical printed number or independently verifiable seal. " +
+         "Deposit claim matched to the machine, pickup time, collection record and photo. " +
+         "Receiver must compare removal/deposit photographs before physical counting. " + notes).trim()
+      : (notes || "Collector confirms numbered bag placed in the deposit safe. Independent receipt pending."),
   };
   const command:CashCommand={request_id:requestId,collection_id:id,revision,action:"dropoff",payload};
   try {
@@ -67,6 +78,7 @@ export async function POST(request: Request) {
     const box=view.rows.find(row=>row.id===id);
     if (!box||box.revision!==revision||!box.actions.includes("dropoff")||
        box.bag?.trim().toUpperCase()!==bag||
+       (isUnnumberedCashReference(box.bag) && !unnumbered)||
        !view.counters.some(person=>person.id===recipient)) {
       return respond({ok:false,code:"conflict",
         message:"This bag, collector or receiver does not match the current cash record. Refresh before retrying."},409);

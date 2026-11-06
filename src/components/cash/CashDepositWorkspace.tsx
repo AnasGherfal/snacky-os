@@ -2,11 +2,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { prepareCashPhoto } from "@/lib/cash-photo";
-import type { CashWorkspace,CashBox } from "@/lib/cash-handover";
+import { isUnnumberedCashReference, type CashWorkspace,type CashBox } from "@/lib/cash-handover";
 
 type PendingDeposit={
   requestId:string;collectionId:string;revision:number;bagId:string;
-  safe:string;receiverId:string;notes:string;
+  safe:string;receiverId:string;notes:string;referenceMode?:"unnumbered"|"printed";
 };
 const pendingKey=(id:string)=>`snacky.cash.deposit.pending.v1.${id}`;
 function storedPending(id:string):PendingDeposit|null {
@@ -28,6 +28,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
   const [error,setError]=useState("");
   const [selected,setSelected]=useState<string|null>(null);
   const [number,setNumber]=useState("");
+  const [referenceMode,setReferenceMode]=useState<"unnumbered"|"printed">("unnumbered");
   const [receiver,setReceiver]=useState("");
   const [photo,setPhoto]=useState<File|null>(null);
   const [confirmed,setConfirmed]=useState(false);
@@ -74,12 +75,15 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
   function select(id:string){
     const next=bags.find(row=>row.id===id);
     if(!next)return;
-    setSelected(id);setNumber("");setPhoto(null);setConfirmed(false);setNotes("");
+    setSelected(id);setNumber("");setReferenceMode("unnumbered");setPhoto(null);setConfirmed(false);setNotes("");
     setReceiver(next.assigned_to??(view?.counters.some(p=>p.id===suggestedReceiverId)?suggestedReceiverId??"":""));
     setError("");setSuccess("");
     window.history.replaceState(null,"",`/cash-handling/deposit?id=${encodeURIComponent(id)}`);
     const pending=storedPending(id);
-    if(pending)setNumber(pending.bagId);
+    if(pending){
+      setReferenceMode(pending.referenceMode??"printed");
+      if((pending.referenceMode??"printed")==="printed")setNumber(pending.bagId);
+    }
   }
 
   async function save(event:FormEvent<HTMLFormElement>){
@@ -88,16 +92,18 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
     setBusy(true);setError("");setSuccess("");
     try{
       const cleanNumber=number.trim().toUpperCase();
-      if(cleanNumber!==box.bag?.trim().toUpperCase())throw Error("رقم الكيس لا يطابق الكيس المسجل عند الماكينة.");
+      if(referenceMode==="printed"&&cleanNumber!==box.bag?.trim().toUpperCase())
+        throw Error("الرقم المطبوع لا يطابق الرقم المسجل عند الماكينة.");
+      if(!box.bag?.trim())throw Error("مرجع سحب النقدية غير موجود. أبلغ المسؤول.");
       if(!confirmed)throw Error("لا تسجّل الإيداع قبل وضع الكيس فعلياً في الخزنة.");
-      if(!photo&&!storedPending(box.id))throw Error("صوّر الكيس المختوم بجانب فتحة الخزنة قبل إسقاطه.");
+      if(!photo&&!storedPending(box.id))throw Error("صوّر الكيس المغلق بجانب فتحة الخزنة قبل إسقاطه.");
       let pending=storedPending(box.id);
       if(!pending){
         if(!selectedRecipient)throw Error("اختر المستلم المخوّل.");
         pending={
           requestId:crypto.randomUUID(),collectionId:box.id,revision:box.revision,
-          bagId:cleanNumber,safe:safeLabel,receiverId:selectedRecipient,
-          notes:notes.trim(),
+          bagId:box.bag.trim().toUpperCase(),safe:safeLabel,receiverId:selectedRecipient,
+          notes:notes.trim(),referenceMode,
         };
         try{sessionStorage.setItem(pendingKey(box.id),JSON.stringify(pending));}
         catch{throw Error("تعذر حفظ مرجع الطلب على هذا الهاتف. فعّل التخزين وأعد المحاولة.");}
@@ -108,6 +114,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       form.set("collection_id",pending.collectionId);
       form.set("revision",String(pending.revision));
       form.set("bag_id",pending.bagId);
+      form.set("reference_mode",pending.referenceMode??"printed");
       form.set("assigned_to",pending.receiverId);
       form.set("storage_location",pending.safe);
       form.set("notes",pending.notes);
@@ -123,8 +130,10 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
         throw Error(result.message??"تعذر حفظ الإيداع. راجع العهدة قبل المحاولة.");
       }
       try{sessionStorage.removeItem(pendingKey(box.id));}catch{/* already saved */}
-      setSuccess(`تم تسجيل وضع الكيس ${pending.bagId} في ${pending.safe}. بانتظار التأكد من الاستلام الفعلي من المسؤول.`);
-      setSelected(null);setNumber("");setReceiver("");setPhoto(null);setConfirmed(false);setNotes("");
+      setSuccess((pending.referenceMode??"printed")==="unnumbered"
+        ? `تم تسجيل إيداع الكيس غير المرقم في ${pending.safe}. الاستلام والعد الفعليان بانتظار المسؤول.`
+        : `تم تسجيل وضع الكيس ${pending.bagId} في ${pending.safe}. بانتظار التأكد من الاستلام الفعلي من المسؤول.`);
+      setSelected(null);setNumber("");setReferenceMode("unnumbered");setReceiver("");setPhoto(null);setConfirmed(false);setNotes("");
       window.history.replaceState(null,"","/cash-handling/deposit");
       setRefreshKey(value=>value+1);
     }catch(e){setError(e instanceof Error?e.message:"تعذر حفظ الإيداع.");}
@@ -136,8 +145,8 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       <Link href="/cash-handling" className="text-sm font-semibold text-emerald-800">النقدية</Link>
       <h1 className="text-2xl font-bold text-slate-950">إيداع أكياس النقدية في الخزنة</h1>
       <p className="text-sm leading-6 text-slate-600">
-        خطوة واحدة لكل كيس: تأكد من الرقم، صوّر الكيس والخزنة، ضعه داخل فتحة الإيداع وأغلقها ثم احفظ.
-        الإيداع المسجّل هنا <b>إقرار من المشغّل</b>، وليس تأكيد الاستلام النهائي؛ الشخص المخوّل يتحقق منه عند فتح الخزنة.
+        اختَر سجل النقدية حسب الماكينة ووقت السحب، صوّر الكيس المغلق بجانب الخزنة، ثم أودعه واحفظ الإقرار.
+        حالياً يمكن إيداع الأكياس غير المرقمة دون كتابة رقم عليها. الإيداع <b>إقرار من المشغّل فقط</b> وليس تأكيد الاستلام أو العد؛ المسؤول يتحقق من الكيس والصور عند فتح الخزنة.
       </p>
     </header>
     <div className="grid grid-cols-2 gap-3">
@@ -157,17 +166,36 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
     {box ? (
       <form onSubmit={save} className="space-y-4 rounded-2xl border-2 border-emerald-400 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-bold text-slate-950">إيداع الكيس {box.bag}</h2>
+          <h2 className="text-lg font-bold text-slate-950">{referenceMode==="unnumbered"?"إيداع كيس نقدية غير مرقم":`إيداع الكيس ${box.bag}`}</h2>
           <button type="button" className="text-sm font-semibold text-slate-600 underline"
             onClick={()=>{setSelected(null);setError("");}}>رجوع للقائمة</button>
         </div>
         <p className="text-sm text-slate-600">{box.machines.map(m=>m.name).join(" · ")} · تم سحبه <bdi>{formatDate(box.collected_at)}</bdi></p>
-        <label className="block space-y-2 text-sm font-semibold">
-          <span>أعد كتابة رقم الكيس الذي تمسكه فعلياً</span>
+        <fieldset className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
+          <legend className="font-semibold text-emerald-950">هل الكيس يحمل رقماً مطبوعاً؟</legend>
+          <label className="flex min-h-10 items-center gap-2">
+            <input type="radio" name="reference_mode" checked={referenceMode==="unnumbered"}
+              disabled={Boolean(storedPending(box.id))} onChange={()=>setReferenceMode("unnumbered")}/>
+            لا، الكيس بدون رقم مطبوع (المعتاد حالياً)
+          </label>
+          <label className="flex min-h-10 items-center gap-2">
+            <input type="radio" name="reference_mode" checked={referenceMode==="printed"}
+              disabled={Boolean(storedPending(box.id))||isUnnumberedCashReference(box.bag)} onChange={()=>setReferenceMode("printed")}/>
+            نعم، يوجد رقم ختم مطبوع
+          </label>
+          {referenceMode==="unnumbered"?<p className="rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-950">
+            لا تكتب رقماً على الكيس. هذا السحب معروف في النظام بواسطة الماكينة والتاريخ والصورة. عدم وجود رقم مطبوع سيظل ظاهراً للمسؤول عند المراجعة.
+          </p>:null}
+          {isUnnumberedCashReference(box.bag)?<p className="text-xs text-slate-600">
+            مرجع داخلي آلي (ليس رقماً على الكيس): <bdi className="font-mono">{box.bag}</bdi>
+          </p>:null}
+        </fieldset>
+        {referenceMode==="printed"?<label className="block space-y-2 text-sm font-semibold">
+          <span>أعد كتابة رقم الختم المطبوع فعلاً على الكيس</span>
           <input className="field-input" dir="ltr" autoComplete="off" maxLength={80}
             value={number} onChange={e=>setNumber(e.target.value.toUpperCase())}
             required placeholder="رقم الختم على الكيس" />
-        </label>
+        </label>:null}
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
           <span className="font-semibold">مكان الإيداع: </span><bdi>{safeLabel}</bdi>
         </div>
@@ -180,18 +208,22 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
             </select>}
         </label>
         <label className="block space-y-2 text-sm font-semibold">
-          <span>صورة الكيس المختوم بجانب فتحة الخزنة</span>
+          <span>{referenceMode==="unnumbered"?"صورة الكيس المغلق بجانب فتحة الخزنة":"صورة الكيس المختوم بجانب فتحة الخزنة"}</span>
           <input className="field-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"
             required={!storedPending(box.id)} onChange={e=>setPhoto(e.target.files?.[0]??null)} />
-          <span className="block text-xs font-normal text-slate-500">أظهر رقم الكيس والختم ولوحة الخزنة. لا تفتح الكيس ولا تصوّر الأوراق النقدية.</span>
+          <span className="block text-xs font-normal text-slate-500">
+            {referenceMode==="unnumbered"
+              ? "أظهر نفس الكيس ومكان الإيداع بوضوح؛ لا تفتحه ولا تصوّر الأوراق النقدية. سيطابقه المسؤول مع صورة السحب."
+              : "أظهر رقم الختم ولوحة الخزنة. لا تفتح الكيس ولا تصوّر الأوراق النقدية."}
+          </span>
           {storedPending(box.id)?<span className="block text-xs font-semibold text-amber-900">إذا ضاع رد الحفظ بعد رفع الصورة، تستطيع تأكيد المحاولة السابقة بدون إخراج الكيس من الخزنة. النظام يتحقق من صورة الطلب الأصلية.</span>:null}
         </label>
         <label className="flex items-start gap-3 rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">
           <input className="mt-1" type="checkbox" required checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>
-          أؤكد أنني وضعت هذا الكيس داخل فتحة الخزنة وأغلقتها فعلياً. أعلم أن المستلم سيطابق الرقم عند فتح الخزنة.
+          أؤكد أنني وضعت هذا الكيس فعلياً داخل فتحة الخزنة وأغلقتها. أعلم أن المسؤول يجب أن يتحقق من الكيس والصورتين عند الاستلام، ولن يُعتبر مختوماً بختم مرقّم إذا لم يحمل رقماً مطبوعاً.
         </label>
         {storedPending(box.id)?<p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-900">هذه محاولة حفظ سابقة غير مؤكدة. ستُعاد بنفس المرجع، ولا تُسقط الكيس مرة ثانية.</p>:null}
-        <button type="submit" disabled={busy||!confirmed||!number.trim()||(!photo&&!storedPending(box.id))}
+        <button type="submit" disabled={busy||!confirmed||(referenceMode==="printed"&&!number.trim())||(!photo&&!storedPending(box.id))}
           className="btn-primary min-h-12 w-full disabled:opacity-50">
           {busy?"جارٍ التأكيد...":"حفظ إقرار الإيداع"}
         </button>
@@ -203,8 +235,8 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       {bags.length===0?<p className="rounded-xl border bg-white p-5 text-sm text-slate-600">لا توجد أكياس تنتظر منك الإيداع.</p>:null}
       {bags.map(item=><button key={item.id} type="button" onClick={()=>select(item.id)}
         className="w-full rounded-xl border border-slate-200 bg-white p-4 text-right transition hover:border-emerald-500">
-        <span className="block text-base font-bold text-slate-950">{item.bag}</span>
-        <span className="mt-1 block text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</span>
+        <span className="block text-base font-bold text-slate-950">{item.machines.map(m=>m.name).join("، ")}</span>
+        <span className="mt-1 block text-sm text-slate-600">{isUnnumberedCashReference(item.bag)?"كيس بدون رقم مطبوع":"السحب المسجل لهذه الماكينة"}</span>
         <span className="mt-1 block text-xs text-slate-500">سحب: <bdi>{formatDate(item.collected_at)}</bdi></span>
         <span className="mt-2 block text-sm font-bold text-emerald-800">تسجيل الإيداع ←</span>
       </button>)}
@@ -214,7 +246,7 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       <p className="mt-1 text-xs text-emerald-900">لا تُعتبر مستلمة أو معدودة حتى يفحص المسؤول الأكياس بنفسه.</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {deposited.slice(0,15).map(item=><Link key={item.id} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-950"
-          href={`/cash-handling?id=${item.id}`}>{item.bag}</Link>)}
+          href={`/cash-handling?id=${item.id}`}>{isUnnumberedCashReference(item.bag)?"كيس غير مرقم":item.bag}</Link>)}
       </div>
     </section>:null}
     <div className="flex flex-wrap gap-3 text-sm font-semibold">

@@ -5,6 +5,7 @@ import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { uploadCashEvidence, removeCashEvidence } from "@/lib/cash-evidence";
 import { readCompanyBody } from "@/lib/company-request";
+import { systemUnnumberedCashReference, unnumberedCashWarning } from "@/lib/cash-handover";
 
 export const dynamic = "force-dynamic";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -102,17 +103,31 @@ export async function POST(request: Request, { params }: Params) {
       : respond(200, { ok: true, state: "exception" });
   }
 
-  const bagId = String(form.get("bag_id") ?? "").trim().toUpperCase();
+  // Until Snacky has factory-numbered cash bags, the server generates an
+  // electronic reference from the original immutable submission ID.
+  // Never accept a caller-supplied or invented "physical seal" in this mode.
+  const bagMode = String(form.get("bag_mode") ?? "printed");
+  if (bagMode !== "printed" && bagMode !== "unnumbered")
+    return respond(400, { ok: false, error: "Select the cash bag type." });
+  const enteredBagId = String(form.get("bag_id") ?? "").trim().toUpperCase();
+  if (bagMode === "unnumbered" && enteredBagId)
+    return respond(400, { ok: false, error: "Unnumbered bags must use the system's electronic reference, not a typed bag number." });
+  const bagId = bagMode === "unnumbered" ? systemUnnumberedCashReference(requestId) : enteredBagId;
   const photo = form.get("photo");
   const compartments = Array.from(new Set(form.getAll("compartments").map(x => String(x)).filter(Boolean)));
   const removalType = String(form.get("removal_type") ?? "");
-  const notes = String(form.get("notes") ?? "").trim();
+  const operatorNotes = String(form.get("notes") ?? "").trim();
+  if (operatorNotes.length > 500)
+    return respond(400, { ok: false, error: "Cash notes must be under 500 characters." });
+  const notes = bagMode === "unnumbered"
+    ? `${unnumberedCashWarning} ${operatorNotes}`.trim()
+    : operatorNotes;
   if (!bagIdPattern.test(bagId) || !compartments.length || compartments.some(x => !validCompartments.has(x))
     || !["full", "partial"].includes(removalType) || (removalType === "partial" && notes.length < 5))
     return respond(400, { ok: false, error: "Check the bag ID, compartments and partial-removal reason." });
   if (!(photo instanceof File) || !["image/jpeg", "image/png", "image/webp"].includes(photo.type)
     || photo.size < 1 || photo.size > 3 * 1024 * 1024)
-    return respond(400, { ok: false, error: "A sealed-bag photo under 3 MB is required." });
+    return respond(400, { ok: false, error: "A clear photo of the closed cash bag at the machine, under 3 MB, is required." });
 
   if (!prev.data) {
     const { error } = await ctx.admin.from("route_stop_cash_receipts").insert({
@@ -187,7 +202,9 @@ async function savePhysicalCollection(input: CollectionInput) {
           if (evidence) await removeCashEvidence(evidence);
           return respond(409, {
             ok: false, code: "BAG_ALREADY_USED", retryable: false,
-            error: "رقم الكيس مستخدم من قبل. استخدم كيساً جديداً برقم مختلف وسجل السحب.",
+            error: bagId.startsWith("UNNUMBERED_")
+              ? "تعارض في مرجع السحب الإلكتروني. لا تسحب النقدية مرة ثانية؛ راجع المسؤول."
+              : "رقم الكيس مستخدم من قبل. استخدم كيساً جديداً برقم مختلف وسجل السحب.",
           });
         }
       }

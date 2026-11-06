@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect,useMemo,useState,type FormEvent } from "react";
-import { cashReceiptMatches,validateCashCommand,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
+import { cashReceiptMatches,validateCashCommand,isUnnumberedCashReference,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
 
 const fmt=(d:string)=>new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Tripoli",dateStyle:"short",timeStyle:"short"}).format(new Date(d));
 function requestKey(id:string,action:string){return `snacky.cash.owner-receive.v1.${id}.${action}`;}
@@ -17,6 +17,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   const [success,setSuccess]=useState("");
   const [selected,setSelected]=useState<string|null>(null);
   const [bagId,setBagId]=useState("");
+  const [noPrintedNumber,setNoPrintedNumber]=useState(false);
   const [seal,setSeal]=useState<"intact"|"broken"|"mismatch">("intact");
   const [note,setNote]=useState("");
   const [amount,setAmount]=useState("");
@@ -58,9 +59,10 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   const box=[...ready,...toCount].find(r=>r.id===selected)??null;
   const action=box?.actions.includes("count")?"count":box?.actions.includes("pickup")?"pickup":
     box?.actions.includes("takeover")?"takeover":null;
+  const unnumbered=Boolean(box && (isUnnumberedCashReference(box.bag) || noPrintedNumber));
 
   function select(id:string){
-    setSelected(id);setBagId("");setSeal("intact");setNote("");setAmount("");
+    setSelected(id);setBagId("");setNoPrintedNumber(false);setSeal("intact");setNote("");setAmount("");
     setCashLocation(defaultSafeLabel);setPhysical(false);setError("");setSuccess("");
     window.history.replaceState(null,"",`/cash-handling/receive?id=${encodeURIComponent(id)}`);
   }
@@ -76,9 +78,21 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         if(!/^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(amount.trim()))throw Error("أدخل المبلغ الحقيقي بالدينار.");
         payload={amount:amount.trim(),cash_location:cashLocation.trim()};
       } else {
-        if(bagId.trim().toUpperCase()!==box.bag?.trim().toUpperCase())throw Error("رقم الكيس لا يطابق السجل. لا تؤكد استلام كيس آخر.");
-        if((seal!=="intact"||action==="takeover")&&note.trim().length<3)throw Error("اكتب تأكيد الاستلام أو اشرح مشكلة الختم.");
-        payload={confirm_bag_id:bagId.trim(),seal_condition:seal,notes:note.trim()};
+        if(!unnumbered && bagId.trim().toUpperCase()!==box.bag?.trim().toUpperCase())
+          throw Error("رقم الكيس لا يطابق السجل. لا تؤكد استلام كيس آخر.");
+        if(!box.bag?.trim())throw Error("مرجع السحب غير موجود. لا تؤكد الاستلام.");
+        if(!unnumbered && (seal!=="intact"||action==="takeover")&&note.trim().length<3)
+          throw Error("اكتب تأكيد الاستلام أو اشرح مشكلة الختم.");
+        payload=unnumbered
+          ? {
+              // Internal record reference, NOT a number on the physical bag.
+              confirm_bag_id:box.bag.trim(),
+              seal_condition:"mismatch",
+              notes:("UNNUMBERED CASH BAG: no printed or independently verifiable seal. " +
+                "I compared the actual bag with machine, collection time and removal/dropoff photos. " +
+                "Owner variance review remains required. " + note.trim()).trim(),
+            }
+          : {confirm_bag_id:bagId.trim(),seal_condition:seal,notes:note.trim()};
       }
       let command=stored(key);
       if(!command){
@@ -96,14 +110,16 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       if(!res.ok||!cashReceiptMatches(command,result)) {
         const retryable=result.retryable!==false;
         if(retryable)throw Error("الحفظ غير مؤكد. أعد المحاولة بنفس المرجع؛ لا تكرر استلام الكيس أو عدّه.");
-        throw Error("تعذّر اعتماد الخطوة. حدّث الصفحة وطابق الرقم والختم قبل إعادة المحاولة.");
+        throw Error("تعذّر اعتماد الخطوة. حدّث الصفحة وتحقق من نفس سجل السحب والصورة قبل إعادة المحاولة.");
       }
       try{sessionStorage.removeItem(key);}catch{/* committed */}
       const wasCounted=action==="count";
       setSuccess(wasCounted?
-        `تم اعتماد العد الفعلي للكيس ${box.bag}. المبلغ يدخل السجل المالي مرة واحدة، وستبقى XY غير مؤكدة إذا لم توجد معاملات دقيقة.`:
-        `تم تأكيد استلام الكيس ${box.bag} بصفة مستقلة. افتحه وعدّ النقدية وسجّل الإجمالي.`);
-      setSelected(null);setAmount("");setPhysical(false);setBagId("");
+        "تم تسجيل العد الفعلي للكيس؛ يُدخل المبلغ مرة واحدة في السجل المالي، وتظل التسوية منفصلة إذا كانت XY غير مؤكدة أو الكيس غير مرقم.":
+        unnumbered
+          ? "تم تسجيل استلام الكيس غير المرقم مع تنبيه غياب رقم الختم للمراجعة؛ افتحه وعد النقدية الفعلية."
+          : `تم تأكيد استلام الكيس ${box.bag} بصفة مستقلة. افتحه وعدّ النقدية وسجّل الإجمالي.`);
+      setSelected(null);setAmount("");setPhysical(false);setBagId("");setNoPrintedNumber(false);
       window.history.replaceState(null,"","/cash-handling/receive");
       setReload(n=>n+1);
     }catch(e){setError(e instanceof Error?e.message:"لم يكتمل الحفظ.")}
@@ -114,8 +130,8 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       <Link href="/cash-handling" className="text-sm font-semibold text-emerald-800">النقدية</Link>
       <h1 className="text-2xl font-bold text-slate-950">استلام وعدّ أكياس النقدية</h1>
       <p className="text-sm leading-6 text-slate-600">
-        لا تعتمد صورة الإيداع وحدها. ابدأ بالأكياس الأقدم أولاً، وافتح الخزنة، تأكد من وجود الكيس ورقم الختم، ثم أكّد الاستلام.
-        بعد ذلك افتح الكيس وعدّ النقدية بنفسك. لا تستخدم إجمالي XY كبديل عن العدّ.
+        لا تعتمد صورة الإيداع وحدها. افتح الخزنة وتحقق من وجود الكيس فعلياً. للأكياس غير المرقمة طابق الماكينة ووقت السحب وصورة السحب والإيداع؛ لا تعتبرها مختومة برقم.
+        بعد الاستلام افتح الكيس وعدّ النقدية بنفسك، ولا تستخدم XY بديلاً عن العدّ.
       </p>
     </header>
     <div className="grid grid-cols-2 gap-3">
@@ -127,27 +143,49 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
     {success?<div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">{success}</div>:null}
     {box&&action?<form onSubmit={submit} className="space-y-4 rounded-2xl border-2 border-emerald-300 bg-white p-5">
       <div className="flex flex-wrap justify-between gap-2">
-        <h2 className="text-lg font-bold">{box.bag} — {action==="count"?"عدّ النقدية":"تأكيد استلام الكيس"}</h2>
+        <h2 className="text-lg font-bold">{unnumbered?"كيس بدون رقم مطبوع":box.bag} — {action==="count"?"عدّ النقدية":"تأكيد استلام الكيس"}</h2>
         <button type="button" className="text-sm underline" onClick={()=>setSelected(null)}>رجوع</button>
       </div>
       <p className="text-sm text-slate-600">الماكينة: {box.machines.map(m=>m.name).join("، ")} · السحب: <bdi>{fmt(box.collected_at)}</bdi></p>
       {action!=="count"?<>
-        <label className="block space-y-2 text-sm font-semibold">
-          <span>اكتب رقم الكيس الموجود داخل الخزنة</span>
-          <input className="field-input" dir="ltr" required autoComplete="off" maxLength={80} value={bagId} onChange={e=>setBagId(e.target.value.toUpperCase())}/>
-        </label>
-        <label className="block space-y-2 text-sm font-semibold">
-          <span>حالة الختم قبل فتح الكيس</span>
-          <select className="field-input" value={seal} onChange={e=>setSeal(e.target.value as typeof seal)}>
-            <option value="intact">سليم ومطابق</option>
-            <option value="broken">ختم مفتوح أو مكسور</option>
-            <option value="mismatch">وجود اختلاف يحتاج مراجعة</option>
-          </select>
-        </label>
-        {seal!=="intact"||action==="takeover"?<label className="block space-y-2 text-sm">
-          <span>{action==="takeover"?"ملاحظة استلام العهدة من المندوب":"اشرح المشكلة"}</span>
-          <textarea className="field-input" minLength={3} rows={2} required value={note} onChange={e=>setNote(e.target.value)}/>
+        {!isUnnumberedCashReference(box.bag)?<label className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-950">
+          <input type="checkbox" checked={noPrintedNumber} onChange={e=>setNoPrintedNumber(e.target.checked)}/>
+          هذا الكيس لا يحمل رقماً مطبوعاً من المصنع (مرجع السحب القديم داخل النظام ليس ختمًا مادياً)
         </label>:null}
+        {unnumbered?<>
+          <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
+            لا يوجد رقم كيس للمطابقة. افتح سجل السحب وصوره وطابق الكيس بوقت وموقع السحب وصورة الإيداع. إذا لم تستطع تحديد نفس الكيس، لا تؤكد الاستلام. سيُسجَّل غياب الختم كحالة تحتاج للمراجعة.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Link href={`/cash-collections/${box.id}`} className="link-secondary text-sm">
+              صورة السحب عند الماكينة
+            </Link>
+            <Link href={`/cash-handling?id=${box.id}`} className="link-secondary text-sm">
+              صورة الإيداع وسجل العهدة
+            </Link>
+          </div>
+          <label className="block space-y-2 text-sm">
+            <span>ملاحظة إضافية عن حالة الكيس (اختياري)</span>
+            <textarea className="field-input" rows={2} value={note} maxLength={300} onChange={e=>setNote(e.target.value)}/>
+          </label>
+        </>:<label className="block space-y-2 text-sm font-semibold">
+          <span>اكتب رقم الكيس المطبوع الموجود داخل الخزنة</span>
+          <input className="field-input" dir="ltr" required autoComplete="off" maxLength={80} value={bagId} onChange={e=>setBagId(e.target.value.toUpperCase())}/>
+        </label>}
+        {!unnumbered?<>
+          <label className="block space-y-2 text-sm font-semibold">
+            <span>حالة الختم قبل فتح الكيس</span>
+            <select className="field-input" value={seal} onChange={e=>setSeal(e.target.value as typeof seal)}>
+              <option value="intact">سليم ومطابق</option>
+              <option value="broken">ختم مفتوح أو مكسور</option>
+              <option value="mismatch">وجود اختلاف يحتاج مراجعة</option>
+            </select>
+          </label>
+          {seal!=="intact"||action==="takeover"?<label className="block space-y-2 text-sm">
+            <span>{action==="takeover"?"ملاحظة استلام العهدة من المندوب":"اشرح المشكلة"}</span>
+            <textarea className="field-input" minLength={3} rows={2} required value={note} onChange={e=>setNote(e.target.value)}/>
+          </label>:null}
+        </>:null}
       </>:<>
         <label className="block space-y-2 text-sm font-semibold">
           <span>مجموع النقدية التي عُدّت فعلياً — دينار ليبي</span>
@@ -162,7 +200,9 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       <label className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-sm font-semibold">
         <input type="checkbox" className="mt-1" checked={physical} onChange={e=>setPhysical(e.target.checked)} required/>
         {action==="count"?"أؤكد أنني فتحت الكيس وعددت النقدية فعلياً، ولم أنسخ أي توقعات من XY.":
-          "أؤكد أنني فتحت الخزنة وشاهدت الكيس فعلياً وتحققت من الرقم والختم."}
+          unnumbered
+            ? "أؤكد أنني فتحت الخزنة، وشاهدت الكيس فعلياً، وقارنت صور السحب والإيداع واسم الماكينة ووقت السحب. أعلم أن غياب رقم الختم يحتاج مراجعة."
+            : "أؤكد أنني فتحت الخزنة وشاهدت الكيس فعلياً وتحققت من الرقم والختم."}
       </label>
       {stored(requestKey(box.id,action))?<p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">هناك حفظ سابق غير مؤكد؛ ستُعاد نفس العملية بنفس المرجع، دون تكرار عهدة النقد.</p>:null}
       <button type="submit" disabled={busy||!physical} className="btn-primary min-h-12 w-full disabled:opacity-50">
@@ -174,19 +214,19 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       {!ready.length?<p className="rounded-xl border bg-white p-4 text-sm text-slate-600">لا يوجد كيس ينتظر استلامك حالياً.</p>:null}
       {ready.map(item=><button type="button" key={item.id} onClick={()=>select(item.id)}
         className="w-full rounded-xl border border-slate-200 bg-white p-4 text-right hover:border-emerald-400">
-        <b>{item.bag}</b><p className="text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</p>
+        <b>{isUnnumberedCashReference(item.bag)?"كيس غير مرقم":item.bag}</b><p className="text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</p>
         <p className="mt-2 text-sm font-semibold text-emerald-800">تأكيد وجود الكيس واستلامه ←</p>
       </button>)}
       <h2 className="pt-3 font-bold">أكياس استلمتها وتحتاج عدّاً</h2>
       {!toCount.length?<p className="rounded-xl border bg-white p-4 text-sm text-slate-600">لا يوجد مبلغ في عهدتك بانتظار العدّ.</p>:null}
       {toCount.map(item=><button type="button" key={item.id} onClick={()=>select(item.id)}
         className="w-full rounded-xl border border-sky-200 bg-white p-4 text-right hover:border-sky-400">
-        <b>{item.bag}</b><p className="text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</p>
+        <b>{isUnnumberedCashReference(item.bag)?"كيس غير مرقم":item.bag}</b><p className="text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</p>
         <p className="mt-2 text-sm font-semibold text-sky-800">فتح وعدّ النقدية ←</p>
       </button>)}
     </div>:null}
     <p className="text-xs leading-5 text-slate-500">
-      إذا لم تجد الكيس في الخزنة أو كان رقم الختم مختلفاً، لا تؤكد الاستلام. اتركه معلقاً للمراجعة وسجل المشكلة في سجل النقدية.
+      إذا لم تجد الكيس أو لم تستطع مطابقته مع الصور ومعلومات الماكينة، فلا تؤكد الاستلام. اتركه معلقاً وسجّل المشكلة في سجل النقدية.
     </p>
     <div className="flex flex-wrap gap-3 text-sm font-semibold">
       <button type="button" className="text-emerald-800 underline" onClick={()=>setReload(n=>n+1)}>تحديث</button>

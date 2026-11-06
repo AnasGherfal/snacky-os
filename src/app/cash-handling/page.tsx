@@ -90,7 +90,7 @@ export default async function CashHandlingPage({
         {blockedMachine ? (
           <div dir="rtl" className="rounded-xl border border-amber-200 bg-amber-50 p-5">
             <p className="font-bold text-amber-950">تسجيل النقدية لهذه الماكينة يتم أثناء التعبئة فقط.</p>
-            <p className="mt-2 text-sm text-amber-900">افتح الجولة المكلف بها ثم سجّل رقم الكيس وصورة الختم في خطوة النقدية.</p>
+            <p className="mt-2 text-sm text-amber-900">افتح الجولة المكلف بها، وصوّر الكيس المغلق في خطوة النقدية. إذا الكيس بدون رقم، النظام يتتبعه تلقائياً؛ لا تخترع رقماً.</p>
             <SecondaryButton href="/operator/routes">الانتقال إلى الجولات</SecondaryButton>
           </div>
         ) : (
