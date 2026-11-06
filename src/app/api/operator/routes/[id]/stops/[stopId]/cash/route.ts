@@ -202,7 +202,9 @@ async function savePhysicalCollection(input: CollectionInput) {
           if (evidence) await removeCashEvidence(evidence);
           return respond(409, {
             ok: false, code: "BAG_ALREADY_USED", retryable: false,
-            error: "رقم الكيس مستخدم من قبل. استخدم كيساً جديداً برقم مختلف وسجل السحب.",
+            error: bagMode === "unnumbered"
+              ? "تعارض في مرجع السحب الإلكتروني. لا تسحب النقدية مرة ثانية؛ راجع المسؤول."
+              : "رقم الكيس مستخدم من قبل. استخدم كيساً جديداً برقم مختلف وسجل السحب.",
           });
         }
       }
