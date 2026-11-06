@@ -166,7 +166,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         </>:<label className="block space-y-2 text-sm font-semibold">
           <span>اكتب رقم الكيس المطبوع الموجود داخل الخزنة</span>
           <input className="field-input" dir="ltr" required autoComplete="off" maxLength={80} value={bagId} onChange={e=>setBagId(e.target.value.toUpperCase())}/>
-        </label>
+        </label>}
         {!unnumbered?<>
           <label className="block space-y-2 text-sm font-semibold">
             <span>حالة الختم قبل فتح الكيس</span>
