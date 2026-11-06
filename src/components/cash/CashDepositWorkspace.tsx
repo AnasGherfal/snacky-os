@@ -235,8 +235,8 @@ export function CashDepositWorkspace({safeLabel,suggestedReceiverId}:{
       {bags.length===0?<p className="rounded-xl border bg-white p-5 text-sm text-slate-600">لا توجد أكياس تنتظر منك الإيداع.</p>:null}
       {bags.map(item=><button key={item.id} type="button" onClick={()=>select(item.id)}
         className="w-full rounded-xl border border-slate-200 bg-white p-4 text-right transition hover:border-emerald-500">
-        <span className="block text-base font-bold text-slate-950">{isUnnumberedCashReference(item.bag)?"كيس بدون رقم مطبوع":item.bag}</span>
-        <span className="mt-1 block text-sm text-slate-600">{item.machines.map(m=>m.name).join("، ")}</span>
+        <span className="block text-base font-bold text-slate-950">{item.machines.map(m=>m.name).join("، ")}</span>
+        <span className="mt-1 block text-sm text-slate-600">{isUnnumberedCashReference(item.bag)?"كيس بدون رقم مطبوع":"السحب المسجل لهذه الماكينة"}</span>
         <span className="mt-1 block text-xs text-slate-500">سحب: <bdi>{formatDate(item.collected_at)}</bdi></span>
         <span className="mt-2 block text-sm font-bold text-emerald-800">تسجيل الإيداع ←</span>
       </button>)}
