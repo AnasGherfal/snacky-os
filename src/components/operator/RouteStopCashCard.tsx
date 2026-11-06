@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { prepareCashPhoto } from "@/lib/cash-photo";
+import { isUnnumberedCashReference } from "@/lib/cash-handover";
 
 type CashStatus = "pending" | "collected" | "exception" | null;
 type Payload = {
@@ -25,6 +26,7 @@ export function RouteStopCashCard({
   const [required, setRequired] = useState(false);
   const [status, setStatus] = useState<CashStatus>(null);
   const [bagId, setBagId] = useState("");
+  const [bagMode, setBagMode] = useState<"unnumbered" | "printed">("unnumbered");
   const [collectionId, setCollectionId] = useState<string | null>(null);
   const [decision, setDecision] = useState<"collected" | "exception">("collected");
   const [reason, setReason] = useState("");
@@ -52,6 +54,7 @@ export function RouteStopCashCard({
         setRequired(Boolean(data.required));
         setStatus(data.status ?? null);
         setBagId(data.bagId ?? "");
+        if (data.bagId) setBagMode(isUnnumberedCashReference(data.bagId) ? "unnumbered" : "printed");
         setCollectionId(data.collectionId ?? null);
         if (data.requestId) requestRef.current = data.requestId;
         onReadyRef.current(Boolean(data.required), ["collected","exception"].includes(String(data.status)), data.status ?? null);
@@ -96,8 +99,10 @@ export function RouteStopCashCard({
       form.set("request_id", requestRef.current);
       form.set("decision", decision);
       if (decision === "collected") {
-        if (!bagId.trim() || !photo) throw Error("أدخل رقم الكيس وصوّر الختم.");
-        form.set("bag_id", bagId.trim().toUpperCase());
+        if (!photo) throw Error("صوّر الكيس المغلق عند الماكينة.");
+        if (bagMode === "printed" && !bagId.trim()) throw Error("اكتب الرقم المطبوع على الكيس الأمني.");
+        form.set("bag_mode", bagMode);
+        if (bagMode === "printed") form.set("bag_id", bagId.trim().toUpperCase());
         form.set("photo", await prepareCashPhoto(photo));
         form.set("removal_type", partial ? "partial" : "full");
         form.append("compartments", "notes");
@@ -120,6 +125,7 @@ export function RouteStopCashCard({
       }
       const next = result.state ?? null;
       setStatus(next);
+      if (result.bagId) setBagId(result.bagId);
       setCollectionId(result.collectionId ?? null);
       onReadyRef.current(true, ["collected","exception"].includes(String(next)), next);
     } catch (e) {
@@ -140,14 +146,18 @@ export function RouteStopCashCard({
       {status === "collected" || status === "exception" ? (
         <div className="space-y-2 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-950">
           <strong>{status === "collected" ? "تم حفظ سحب النقدية بنجاح" : "تم تسجيل سبب تعذر السحب"}</strong>
-          {status === "collected" ? <p>الكيس: <bdi className="font-mono font-bold">{bagId}</bdi></p> : null}
+          {status === "collected" ? (
+            isUnnumberedCashReference(bagId)
+              ? <p>كيس بدون رقم مطبوع — محفوظ بمرجع إلكتروني تلقائي. لا يوجد رقم مطلوب كتابته على الكيس.</p>
+              : <p>رقم الكيس: <bdi className="font-mono font-bold">{bagId}</bdi></p>
+          ) : null}
           <p>يمكنك الآن إكمال تعبئة الماكينة. سيتم استلام وعدّ النقدية في خطوة منفصلة.</p>
           {collectionId ? <Link href={`/cash-handling/deposit?id=${collectionId}`} className="inline-block font-semibold underline">إيداع الكيس في الخزنة</Link> : null}
         </div>
       ) : (
         <form onSubmit={save} className="space-y-4">
           <p className="text-sm leading-6 text-slate-600">
-            سجّل كيس النقدية المختوم عند كل تعبئة. لا تكتب قيمة المبلغ ولا تصوّر الفلوس.
+            سجّل سحب النقدية عند الماكينة وصوّر الكيس بعد إغلاقه. لا تدخل قيمة المبلغ ولا تصوّر الأوراق النقدية.
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className={`flex min-h-12 items-center gap-2 rounded-xl border px-3 text-sm font-semibold ${decision === "collected" ? "border-emerald-500 bg-emerald-50" : "border-slate-200"}`}>
@@ -160,14 +170,30 @@ export function RouteStopCashCard({
             </label>
           </div>
           {decision === "collected" ? <>
-            <label className="block space-y-2 text-sm font-semibold">
+            <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
+              <p className="font-semibold text-emerald-950">هل الكيس يحمل رقماً مطبوعاً من المصنع؟</p>
+              <label className="flex min-h-10 items-center gap-2">
+                <input type="radio" name="bag_mode" checked={bagMode === "unnumbered"}
+                  disabled={status === "pending"} onChange={() => setBagMode("unnumbered")}/>
+                لا، الكيس بدون رقم (النظام يربطه بالماكينة والجولة تلقائياً)
+              </label>
+              <label className="flex min-h-10 items-center gap-2">
+                <input type="radio" name="bag_mode" checked={bagMode === "printed"}
+                  disabled={status === "pending"} onChange={() => setBagMode("printed")}/>
+                نعم، عندي كيس أمني مرقّم
+              </label>
+              {bagMode === "unnumbered" ? <p className="rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-950">
+                لن تكتب أي رقم على الكيس أو تختار رقماً بنفسك. المعرف الإلكتروني ليس ختماً فعلياً؛ عند الاستلام ستتم مطابقة صور الكيس وموقع السحب ووقته.
+              </p> : null}
+            </div>
+            {bagMode === "printed" ? <label className="block space-y-2 text-sm font-semibold">
               <span>الرقم المطبوع على الكيس الأمني أو الختم</span>
-              <span className="block text-xs font-normal leading-5 text-slate-600">اكتب الرقم الموجود فعلياً على الكيس، مثل SNK-000125 أو 583201. كل كيس له رقم مختلف يُستخدم مرة واحدة فقط. لا تختار رقماً من عندك.</span>
+              <span className="block text-xs font-normal leading-5 text-slate-600">اكتب الرقم المطبوع فعلاً على الكيس. كل رقم يُستخدم مرة واحدة، ولا تختار رقماً من عندك.</span>
               <input className="field-input" dir="ltr" required autoComplete="off" maxLength={80}
                 placeholder="SNK-000125" value={bagId} onChange={e => setBagId(e.target.value.toUpperCase())}/>
-            </label>
+            </label> : null}
             <label className="block space-y-2 text-sm font-semibold">
-              <span>صورة رقم الكيس والختم بعد إغلاقه</span>
+              <span>{bagMode === "unnumbered" ? "صورة الكيس المغلق عند الماكينة" : "صورة رقم الكيس والختم بعد إغلاقه"}</span>
               <input className="field-input" type="file" accept="image/jpeg,image/png,image/webp"
                 capture="environment" required onChange={e => setPhoto(e.target.files?.[0] ?? null)}/>
             </label>
