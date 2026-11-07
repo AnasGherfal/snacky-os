@@ -23,6 +23,30 @@ Keep backup credentials and dump files off this public GitHub repository and do 
 
 This repository does not have permission to create your Cloudflare bucket or save its credentials. It is not configured yet.
 
+## One-click manual backup through GitHub Actions (preferred for non-technical operators)
+
+The repository includes **.github/workflows/vms-cold-archive-manual.yml**, a manual-only workflow; it never runs automatically on pushes, pull requests, or a schedule. The workflow exists in the **Actions** tab after this reviewed PR is merged into the default branch.
+
+Before using it, place these encrypted **GitHub Actions repository secrets** in GitHub > Snacky OS repository > Settings > Secrets and variables > Actions > New repository secret:
+
+| Secret name | Where its value comes from |
+|---|---|
+| `SNACKY_ARCHIVE_SUPABASE_SERVICE_ROLE_KEY` | Existing Supabase project Settings > API Keys, **server-only service_role key**; this key is powerful and must never be pasted into issues or chat |
+| `SNACKY_R2_ACCOUNT_ID` | Your Cloudflare R2 Overview Account ID |
+| `SNACKY_R2_ACCESS_KEY_ID` | The Access Key ID of the new R2 **Object Read & Write** token, restricted only to the private `snacky-vms-archive` bucket |
+| `SNACKY_R2_SECRET_ACCESS_KEY` | The corresponding R2 Secret Access Key, shown only at token creation |
+
+**Important:** GitHub repository secrets are encrypted, but a repository collaborator with write access to GitHub Actions or the default branch could potentially use a workflow to consume them. Review collaborators and code changes carefully. Rotate credentials if suspected compromised. The production application and Vercel environment do **not** need the R2 writer key. If that risk is unacceptable, use the local CLI path below instead and avoid storing the service-role key in GitHub.
+
+Run in GitHub > Actions > **Copy-only VMS archive to Cloudflare R2** > **Run workflow**:
+
+1. Keep mode **inspect** and use the first 183-row batch `50e5063e-5595-4669-b8b1-34b0049bb6a7`. Read the run's JSON result and save `approvalSha256`.
+2. Only if the source row count and scope are correct, select **copy** for the exact same batch, paste the SHA into `approval_sha256`, and type `COPY ONLY - RETAIN SOURCE` into the confirmation field.
+3. Choose **verify** on the same batch. It needs only the R2 credentials and checks that the archive reconstructs completely; it does **not** use the Supabase service-role key.
+4. Examine the proof in the run's output. Do **not** run any SQL DELETE after verification: future release requires its own independent full backup / restore / dependency assessment and owner approval.
+
+No secrets should ever be echoed to logs. A failed validation means **zero Supabase source deletion**.
+
 ## Phase 2: Preview exact export; export one batch at a time
 
 Install Snacky OS dependencies on a trusted machine (using the existing package-lock): npm ci. The runner uses the existing @supabase/supabase-js package, the already-tested internal R2 SigV4 signer and Node 22+. It does not need a new package.
