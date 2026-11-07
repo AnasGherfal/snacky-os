@@ -54,3 +54,27 @@ test("server compression applies only to ordinary machine overview uploads, befo
   assert.match(upload,/contentType: storedFile\.type/);
   assert.doesNotMatch(upload,/route_stop_quantity_confirmations/);
 });
+
+test("optimization is best-effort and cannot block valid operator proof uploads", () => {
+  const src = fs.readFileSync("src/lib/operator-actions.ts","utf8");
+  const start = src.indexOf("export async function uploadRefillProofPhoto");
+  const end = src.indexOf("export async function uploadInventoryAdjustmentPhoto",start);
+  const upload=src.slice(start,end);
+  const branch=upload.slice(upload.indexOf('if (photoPurpose === "completion") {'),
+    upload.indexOf('const extension = safeFileSegment'));
+  assert.match(branch, /catch \{/);
+  assert.doesNotMatch(branch,/throw new Error\(/);
+  assert.match(branch,/retaining original photo/);
+  assert.match(upload,/if \(photoPurpose === "compressor"\) \{/);
+  assert.match(upload,/const objectPath = photoPurpose === "compressor"/);
+});
+
+test("all small PNG and WEBP overviews are retained byte-for-byte", async () => {
+  for (const format of ["png","webp"]) {
+    const pipeline=sharp({create:{width:780,height:520,channels:3,background:"#274d64"}});
+    const src=format==="png"?await pipeline.png().toBuffer():await pipeline.webp({quality:80}).toBuffer();
+    assert.ok(src.length < OVERVIEW_PREPARED_LIMIT_BYTES);
+    const result=await compactMachineOverview(new Uint8Array(src));
+    assert.deepEqual(result,new Uint8Array(src));
+  }
+});
