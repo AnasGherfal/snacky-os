@@ -31,7 +31,6 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SNACKY_R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
       AWS_EC2_METADATA_DISABLED: "true"
-      BACKUP_DIR: ${{ runner.temp }}/snacky-db-backup
     steps:
       - name: Validate explicit owner confirmation before running backup
         env:
@@ -68,7 +67,8 @@ jobs:
           NODE
           command -v docker >/dev/null
           command -v aws >/dev/null
-          install -d -m 700 "$BACKUP_DIR"
+          echo "BACKUP_DIR=$RUNNER_TEMP/snacky-db-backup" >> "$GITHUB_ENV"
+          install -d -m 700 "$RUNNER_TEMP/snacky-db-backup"
       - name: Create consistent read-only PostgreSQL 17 logical dump
         shell: bash
         run: |
