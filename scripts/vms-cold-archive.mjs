@@ -113,7 +113,7 @@ export async function prepareFromSource(source, projectRef, batchId, now = new D
   return prepareArchive(projectRef, batch, rows, now);
 }
 
-async function readVerified(store, part) {
+async function readVerified(store, part, batchId) {
   const bytes = await store.get(part.key, part.bytes);
   check(bytes !== null && bytes.length === part.bytes && hash(bytes) === part.sha256, "archive_readback_mismatch");
   const lines = decode(bytes).trimEnd().split("\n");
@@ -122,13 +122,13 @@ async function readVerified(store, part) {
   for (const line of lines) {
     let row;
     try { row = JSON.parse(line); } catch { throw new VmsArchiveError("archive_restore_invalid_json"); }
-    check(UUID.test(row.id) && (!previous || String(row.id).toLowerCase() > previous),
+    check(UUID.test(row.id) && row.import_batch_id === batchId && (!previous || String(row.id).toLowerCase() > previous),
       "archive_restore_row_order_invalid");
     previous = String(row.id).toLowerCase();
   }
   check(lines.length && JSON.parse(lines[0]).id === part.firstId
     && JSON.parse(lines[lines.length - 1]).id === part.lastId, "archive_restore_boundary_invalid");
-  return lines.length;
+  return { count: lines.length, firstId: lines[0] && JSON.parse(lines[0]).id, lastId: previous };
 }
 
 export async function verifyArchive(store, projectRef, batchId) {
@@ -141,17 +141,22 @@ export async function verifyArchive(store, projectRef, batchId) {
   check(receipt?.version === 1 && receipt.state === "copy_verified_source_retained"
     && receipt.projectRef === projectRef && receipt.batchId === batchId
     && receipt.sourceTable === "public.vms_import_rows" && receipt.originalRowsDeleted === 0
+    && receipt.batchSnapshot?.id === batchId && receipt.batchSnapshot.status === "deleted"
+    && receipt.batchSnapshot.is_active === false
     && Array.isArray(receipt.chunks) && receipt.chunks.length > 0
     && receipt.chunks.length <= Math.ceil(MAX_ROWS / PAGE_SIZE),
     "archive_manifest_invalid");
-  let count = 0, totalBytes = 0;
+  let count = 0, totalBytes = 0, lastId = "";
   for (const chunk of receipt.chunks) {
     check(chunk.key.startsWith(prefix + "objects/") && SHA.test(chunk.sha256)
       && chunk.key === prefix + "objects/" + chunk.sha256 + ".ndjson"
       && Number.isSafeInteger(chunk.rows) && chunk.rows > 0 && chunk.rows <= PAGE_SIZE
       && Number.isSafeInteger(chunk.bytes) && chunk.bytes > 0 && chunk.bytes <= MAX_CHUNK_BYTES,
       "archive_manifest_invalid");
-    count += await readVerified(store, chunk);
+    const verified = await readVerified(store, chunk, batchId);
+    check(!lastId || verified.firstId.toLowerCase() > lastId, "archive_restore_row_order_invalid");
+    lastId = verified.lastId;
+    count += verified.count;
     totalBytes += chunk.bytes;
   }
   check(count === receipt.rowCount && totalBytes === receipt.totalBytes && count <= MAX_ROWS,
@@ -182,7 +187,7 @@ export async function runArchive({ source, store, projectRef, batchId, mode = "i
     if ((await store.get(part.key, part.bytes)) === null) {
       await store.putIfAbsent(part.key, prepared.chunks[i], "application/x-ndjson");
     }
-    await readVerified(store, part);
+    await readVerified(store, part, batchId);
   }
   // Copy-only staging: compare complete rows and batch status a second time.
   const later = await prepareFromSource(source, projectRef, batchId, now);
