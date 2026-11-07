@@ -196,10 +196,12 @@ export default async function CashIntervalComparisonPage({
   const ar = locale === "ar";
   const tr = (en: string, arabic: string) => ar ? arabic : en;
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials(profile) || !canAccessPath({
+  const context = profile ? {
     id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products,
     teamMemberId: profile.team_member_id, activeStatus: profile.active_status,
-  }, "/cash-collections")) redirect("/unauthorized");
+  } : null;
+  if (!context || !canViewFinancials(context) || !canAccessPath(context, "/cash-collections"))
+    redirect("/unauthorized");
 
   const client = await getAuthenticatedSupabaseServerClient();
   const db = getSupabaseAdminClient();
