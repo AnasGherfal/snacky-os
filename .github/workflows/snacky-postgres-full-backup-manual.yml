@@ -33,7 +33,7 @@ jobs:
       AWS_EC2_METADATA_DISABLED: "true"
       BACKUP_DIR: ${{ runner.temp }}/snacky-db-backup
     steps:
-      - name: Validate explicit owner confirmation before accessing secrets
+      - name: Validate explicit owner confirmation before running backup
         env:
           CONFIRM: ${{ inputs.confirmation }}
         shell: bash
@@ -81,9 +81,9 @@ jobs:
             -e PGSSLMODE=require \
             -v "$BACKUP_DIR:/backup" \
             postgres:17.6 \
-            pg_dump --dbname "$SNACKY_DB_BACKUP_URL" \
+            sh -c 'exec pg_dump --dbname "$SNACKY_DB_BACKUP_URL" \
               --format=custom --compress=6 --no-owner --no-acl \
-              --file=/backup/snacky.dump
+              --file=/backup/snacky.dump'
           test -s "$BACKUP_DIR/snacky.dump"
       - name: Validate backup structure before external upload
         shell: bash
