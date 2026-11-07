@@ -167,6 +167,10 @@ test("no source DELETE, TRUNCATE, purge or admin HTTP write commands exist in th
 test("manual VMS archive action is opt-in, copy-only, and never runs on push", () => {
   const workflow = fs.readFileSync(".github/workflows/vms-cold-archive-manual.yml", "utf8");
   assert.match(workflow, /workflow_dispatch:/);
+  // The four secrets are scoped to the GitHub Production environment, not repository secrets.
+  assert.match(workflow, /^    environment: Production$/m);
+  assert.match(workflow, /github\.ref == 'refs\/heads\/master'/);
+  assert.match(workflow, /github\.actor == 'AnasGherfal'/);
   assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
   assert.match(workflow, /COPY ONLY - RETAIN SOURCE/);
   assert.match(workflow, /--copy --approve-sha256 "\$ARCHIVE_SHA"/);
