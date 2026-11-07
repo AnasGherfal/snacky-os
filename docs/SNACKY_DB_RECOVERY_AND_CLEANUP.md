@@ -14,6 +14,8 @@ A fresh read-only preflight verifies those rows are still present. It also found
 Read-only preflight SQL:
 scripts/sql/vms-archived-cleanup-preflight.sql
 
+**Critical application dependency discovered in code review:** Snacky OS currently exposes a "Restore deleted batch" control in src/app/vms-import/[batchId]/page.tsx and an action handler in src/lib/vms-import-actions.ts. For Order Details, the handler uses retained vms_transactions_raw summaries; for other report types it can reactivate a deleted batch even if its raw import rows were removed. Preserving batch headers alone does not prove full historical restoration. Therefore raw-row deletion is BLOCKED until an archive-aware restore/replay flow is implemented, exercised against these exact archived batches, and regression-tested for all affected report types. This is in addition to the full database recovery gate.
+
 ## Full PostgreSQL logical backup (new manual workflow)
 
 Workflow: .github/workflows/snacky-postgres-full-backup-manual.yml
