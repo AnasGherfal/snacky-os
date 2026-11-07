@@ -4,6 +4,9 @@ on:
     paths:
       - 'scripts/vms-cold-archive.mjs'
       - 'scripts/test-vms-cold-archive.mjs'
+      - 'scripts/vms-cold-archive-bulk.mjs'
+      - 'scripts/test-vms-cold-archive-bulk.mjs'
+      - '.github/workflows/vms-cold-archive-bulk-manual.yml'
       - 'src/lib/photo-archive-r2.ts'
       - '.github/workflows/vms-cold-archive-safety.yml'
 permissions:
@@ -30,4 +33,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ""
           SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID: ""
           SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY: ""
-        run: node --experimental-strip-types --test scripts/test-vms-cold-archive.mjs
+        run: node --experimental-strip-types --test scripts/test-vms-cold-archive.mjs scripts/test-vms-cold-archive-bulk.mjs
