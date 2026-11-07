@@ -72,7 +72,7 @@ test("copy uses each inspected batch's exact SHA and verifies each copy, source 
   const result=await runBulk({mode:"copy",approval},{
     runSingle:async(b,mode,sha)=>{
       calls.push([b.id,mode,sha]);
-      return mode==="inspect"?inspected(b):copy(b);
+      return mode==="inspect"?inspected(b):copy(REMAINING.find(x=>x.id===b.id));
     },
     output:x=>out.push(x)
   });
