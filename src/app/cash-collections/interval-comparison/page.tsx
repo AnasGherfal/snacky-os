@@ -23,6 +23,7 @@ type MachineLine = {
   machine_id: string;
   removal_type: string;
   compartments: string[];
+  expectation_metadata?: Record<string, unknown> | null;
 };
 type RawSale = {
   id: string;
@@ -230,7 +231,7 @@ export default async function CashIntervalComparisonPage({
       .select("id,machine_id,operator_id,collected_at,actual_cash_collected,cash_bag_id,custody_status,voided_at")
       .eq("machine_id",selected.machine_id).is("voided_at",null).lt("collected_at",selected.collected_at)
       .order("collected_at",{ascending:false}).limit(1).maybeSingle() : Promise.resolve({ data: null, error: null }),
-    db.from("cash_collection_machines").select("cash_collection_id,machine_id,removal_type,compartments")
+    db.from("cash_collection_machines").select("cash_collection_id,machine_id,removal_type,compartments,expectation_metadata")
       .eq("cash_collection_id",selected.id),
     db.from("vms_transactions_raw").select("payment_time,delivery_time")
       .not("payment_time","is",null).order("payment_time",{ascending:false}).limit(1),
@@ -242,11 +243,20 @@ export default async function CashIntervalComparisonPage({
   const startAt = previous?.collected_at ?? null;
   const currentLine = ((lineResult.data ?? []) as MachineLine[]).find(x=>x.machine_id===selected.machine_id);
   const previousLineResult = previous ? await db.from("cash_collection_machines")
-    .select("cash_collection_id,machine_id,removal_type,compartments")
+    .select("cash_collection_id,machine_id,removal_type,compartments,expectation_metadata")
     .eq("cash_collection_id",previous.id).eq("machine_id",selected.machine_id).maybeSingle()
     : { data: null, error: null };
   const prevLine = previousLineResult.data as MachineLine | null;
   const previousMayBeFull = prevLine?.removal_type === "full";
+  const metadata = prevLine?.expectation_metadata ?? {};
+  const previousTimeIsOnlyProxy = Boolean(
+    metadata.removal_time_placeholder ||
+    metadata.collected_at_is_noon_placeholder ||
+    metadata.interval_end_is_date_only_placeholder ||
+    metadata.time_proxy ||
+    metadata.actual_removal_time_unknown ||
+    metadata.exact_removal_time_unknown
+  );
   const compartmentsVerified = Boolean(currentLine?.compartments?.includes("notes") && currentLine?.compartments?.includes("coins"));
   const lastImportTime = latestSalesResult.data?.[0]?.payment_time ?? null;
 
@@ -294,7 +304,11 @@ export default async function CashIntervalComparisonPage({
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs text-slate-500">{tr("Previous pickup — EXCLUSIVE start","السحب السابق — بداية غير شاملة")}</div>
                 <div className="mt-1 font-bold">{timestamp(startAt,locale)}</div>
-                <p className="mt-1 text-xs text-slate-500">{previous?tr("Based on recorded machine collection time; check historical timing accuracy.","حسب وقت السحب المسجل؛ راجع دقة توقيت السحوبات القديمة."):tr("No previous pickup found. Interval start unknown.","لم يوجد سحب سابق؛ بداية الفترة غير معلومة.")}</p>
+                <p className="mt-1 text-xs text-slate-500">{previous
+                  ? previousTimeIsOnlyProxy
+                    ? tr("⚠ Previous recorded time is a PLACEHOLDER/route arrival, not a verified removal time. Hourly totals cannot be certified.", "⚠ توقيت السحب السابق تقريبي أو وقت وصول الجولة، وليس وقت سحب النقد المؤكد. لا تعتمد نتيجة المقارنة بالساعة.")
+                    : tr("Recorded machine pickup time; confirm it is the actual cash-clearance time.", "وقت السحب المسجل؛ تأكد أنه وقت تفريغ النقد الفعلي.")
+                  : tr("No previous pickup found. Interval start unknown.","لم يوجد سحب سابق؛ بداية الفترة غير معلومة.")}</p>
               </div>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                 <div className="text-xs text-emerald-800">{tr("Current pickup — INCLUSIVE cutoff","السحب الحالي — نهاية شاملة")}</div>
@@ -311,9 +325,10 @@ export default async function CashIntervalComparisonPage({
               {tr("Only successful cash payments belong in an expected cashbox figure; card transactions must be excluded. XY is previewed by exact timestamps, but source coverage, partial pickups, float/coins, refunds, and manual repair sales must be verified before concluding money is missing.",
                   "النقد المتوقع يعتمد على عمليات الدفع النقدي الناجحة فقط؛ معاملات البطاقة مستبعدة. العرض يحترم وقت السحب بالثانية، لكن يجب التأكد من اكتمال بيانات XY وحالة سحب الفكة والعملات والمبيعات اليدوية والاستردادات قبل اعتبار أي مبلغ ناقصاً.")}
             </p>
-            {(!startAt||!previousMayBeFull||!compartmentsVerified)?<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            {(!startAt||previousTimeIsOnlyProxy||!previousMayBeFull||!compartmentsVerified)?<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
               {tr("Evidence limitation: ", "نقص في التوثيق: ")}
               {!startAt?tr("No previous pickup timestamp is available. ","لا يوجد وقت سحب سابق. "):null}
+              {previousTimeIsOnlyProxy?tr("Previous cash pickup time is a placeholder, so hourly start is uncertain. ","وقت السحب السابق تقريبي، لذلك بداية الفترة بالساعة غير مؤكدة. "):null}
               {startAt&&!previousMayBeFull?tr("Previous pickup is not documented as a full cash clearance. ","السحب السابق غير موثّق كسحب كامل. "):null}
               {!compartmentsVerified?tr("Notes/coins compartments are not both documented as cleared. ","تفريغ صندوق الأوراق والعملات غير موثق بالكامل. "):null}
               {tr("These limits prevent treating an indicative sales difference as a proven shortage.",
