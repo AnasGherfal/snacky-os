@@ -267,10 +267,19 @@ export function createR2Store(env, projectRef, fetcher = fetch) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const accountRef = /^https:\/\/([a-z0-9]{20})\.supabase\.co$/.exec(base ?? "")?.[1];
-  check(!!accountRef && !!key && !/[\r\n]/.test(key), "archive_source_config_invalid");
-  // This tool is run on a trusted owner's machine only. No key is ever logged or bundled.
+  check(!!accountRef, "archive_source_config_invalid");
+  // A verification-only run needs no database access or privileged Supabase key.
+  if (args.mode === "verify") {
+    const store = createR2Store(process.env, accountRef);
+    const result = await runArchive({ ...args, source: null, store,
+      projectRef: accountRef, batchId: args.batchId });
+    console.log(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  check(!!key && !/[\r\n]/.test(key), "archive_source_config_invalid");
+  // The source client is used solely for SELECT-only reads. Never log keys.
   const { createClient } = await import("@supabase/supabase-js");
   const supabase = createClient(base, key, {
     auth: { persistSession: false, autoRefreshToken: false },
