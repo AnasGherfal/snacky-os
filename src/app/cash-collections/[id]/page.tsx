@@ -34,6 +34,7 @@ import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buckets";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { isUnnumberedCashReference } from "@/lib/cash-handover";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -267,13 +268,13 @@ export default async function CashCollectionDetailPage({
           <SectionCard>
             <h2 className="text-lg font-semibold">Custody and combined-total details</h2>
             <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <DetailItem label="Bag / seal ID">{row.cash_bag_id ?? "Legacy record"}</DetailItem>
+              <DetailItem label="Bag / seal ID">{isUnnumberedCashReference(row.cash_bag_id) ? "Unnumbered physical bag (electronic reference only)" : row.cash_bag_id ?? "Legacy record"}</DetailItem>
               <DetailItem label="Removed at">{formatDate(row.collected_at)}</DetailItem>
               <DetailItem label="Collected by">{row.operator?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Storage received">{formatDate(row.storage_received_at)}</DetailItem>
               <DetailItem label="Received by">{row.storage_receiver?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Storage location">{row.storage_location ?? "—"}</DetailItem>
-              <DetailItem label="Storage seal">{row.storage_seal_condition ?? "—"}</DetailItem>
+              <DetailItem label="Physical seal verification">{isUnnumberedCashReference(row.cash_bag_id) ? "No printed bag number — unverified, not observed damage" : row.storage_seal_condition ?? "Not recorded / unknown"}</DetailItem>
               <DetailItem label="Counted at">{formatDate(row.counted_at)}</DetailItem>
               <DetailItem label="Counted by">{row.counter?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Cash period">{row.cash_period_start && row.cash_period_end ? `${row.cash_period_start} → ${row.cash_period_end}` : row.actual_cash_collected !== null && row.actual_cash_collected !== undefined ? "Automatic per machine from previous removal" : "—"}</DetailItem>
