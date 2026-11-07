@@ -146,7 +146,8 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
     alerts.push({ severity: "critical", label: "Owner review required", detail: "The combined batch total or custody evidence has an unresolved exception." });
   }
   if ([row.storage_seal_condition, row.count_seal_condition].some((condition) => condition && condition !== "intact")) {
-    if (isUnnumberedCashReference(row.cash_bag_id)) {
+    if (isUnnumberedCashReference(row.cash_bag_id)
+        && ![row.storage_seal_condition,row.count_seal_condition].some(c => c === "broken")) {
       alerts.push({ severity: "warning", label: "Unnumbered cash bag — physical reference not verified",
         detail: "This bag has no printed seal reference. Match the machine, pickup time and photos. This does NOT mean a broken or mismatched physical seal was observed." });
     } else {
