@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { compactCompressorIndicator } from "@/lib/compressor-proof-preview";
+import { compactMachineOverview } from "@/lib/machine-overview-compression";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
@@ -357,7 +358,6 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   let storedFile: File = file;
   if (photoPurpose === "compressor") {
     // A server-side lower bound on storage use, including stale app clients.
-    // Ordinary machine overview photos stay at their higher quality.
     try {
       const compact = await compactCompressorIndicator(new Uint8Array(await file.arrayBuffer()));
       storedFile = new File([new Uint8Array(compact)], originalName.replace(/\.[^.]+$/, "") + ".webp", {
@@ -366,6 +366,25 @@ export async function uploadRefillProofPhoto(formData: FormData) {
       });
     } catch {
       throw new Error("The compressor ON indicator photo could not be reduced clearly. Retake a close photo of the illuminated ON switch.");
+    }
+  }
+  if (photoPurpose === "completion") {
+    // Compress oversized ordinary whole-machine overviews before SHA/path
+    // generation. Compressor ON, quantity, cash and receipts are excluded.
+    // Older clients that send a multi-MB original also benefit from this guard.
+    try {
+      const compact = await compactMachineOverview(new Uint8Array(await file.arrayBuffer()));
+      if (compact.byteLength < file.size) {
+        storedFile = new File([new Uint8Array(compact)], originalName.replace(/\.[^.]+$/, "") + ".webp", {
+          type: "image/webp",
+          lastModified: file.lastModified,
+        });
+      }
+    } catch {
+      // Preserve pre-existing operator workflow on valid source camera files:
+      // an optimization failure must not prevent required machine proof.
+      // The original <=10MB validation above remains the source size guard.
+      console.warn("[operator] Machine overview compression unavailable; retaining original photo");
     }
   }
   const extension = safeFileSegment(storedFile.name.split(".").pop() || "jpg", "jpg");
