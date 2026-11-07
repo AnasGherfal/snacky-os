@@ -73,8 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # pg_dump is read-only. It uses one consistent DB snapshot and cannot
-          # delete, edit, truncate or modify any business table.
+          # pg_dump uses one consistent read-only snapshot; business data stays untouched.
           timeout 1200s docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e SNACKY_DB_BACKUP_URL \
