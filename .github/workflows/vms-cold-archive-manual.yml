@@ -38,6 +38,10 @@ concurrency:
 
 jobs:
   archive:
+    # Encrypted credentials live in GitHub Environment secrets, not Repository secrets.
+    # Limit privileged environment access to the owner on the audited default branch.
+    if: github.ref == 'refs/heads/master' && github.actor == 'AnasGherfal'
+    environment: Production
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
