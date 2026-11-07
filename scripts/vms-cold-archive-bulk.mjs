@@ -3,6 +3,7 @@
 // Does not issue SQL writes, delete rows/files, or discover new batch IDs.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -81,22 +82,51 @@ function parseChildResult(stdout) {
   return output;
 }
 
-export function runSingle(batch, mode, approval = "", spawn = spawnSync, env = process.env) {
+const RETRYABLE_SOURCE_ERRORS = new Set([
+  "archive_batch_read_failed", "archive_count_failed", "archive_rows_read_failed",
+]);
+
+/** Only emit known, code-only reasons from a child process. Never echo stderr,
+ * URLs, tokens, SQL payloads or raw imported data to GitHub Actions logs. */
+export function safeChildFailureCode(stderr) {
+  const lines = String(stderr ?? "").split(/\r?\n/).filter(Boolean).slice(-25);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let parsed;
+    try { parsed = JSON.parse(lines[i]); } catch { continue; }
+    if (parsed?.ok !== false || typeof parsed.reason !== "string") continue;
+    const code = parsed.reason;
+    return /^[a-z][a-z0-9_]{0,70}$/.test(code) ? code : "unknown";
+  }
+  return "unknown";
+}
+
+export async function runSingle(batch, mode, approval = "",
+  spawn = spawnSync, env = process.env, sleep = delay) {
   check(mode === "inspect" || mode === "copy" || mode === "verify", "invalid_child_mode");
   check(mode === "copy" ? SHA.test(approval) : approval === "", "invalid_child_approval");
   const cli = join(dirname(fileURLToPath(import.meta.url)), "vms-cold-archive.mjs");
   const argv = ["--experimental-strip-types", cli, "--batch-id", batch.id];
   if (mode === "copy") argv.push("--copy", "--approve-sha256", approval);
   if (mode === "verify") argv.push("--verify");
-  const run = spawn(process.execPath, argv, {
-    encoding: "utf8", env, timeout: 120_000, maxBuffer: 1024 * 1024,
-    windowsHide: true
-  });
-  // Never echo child's stderr: future drivers might include private request details.
-  check(!run.error && run.status === 0, "archive_child_failed_for_batch_" + batch.id);
-  return parseChildResult(run.stdout || "");
-}
 
+  // An occasional Supabase REST 500 is retried up to twice because these are
+  // idempotent reads. Never retry permission failures, changed source rows,
+  // mismatched approvals, archive-integrity failures or unknown errors.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const run = spawn(process.execPath, argv, {
+      encoding: "utf8", env, timeout: 120_000, maxBuffer: 1024 * 1024,
+      windowsHide: true
+    });
+    if (!run.error && run.status === 0) return parseChildResult(run.stdout || "");
+    const code = safeChildFailureCode(run.stderr);
+    if (!run.error && attempt < 3 && RETRYABLE_SOURCE_ERRORS.has(code)) {
+      await sleep(attempt * 2000);
+      continue;
+    }
+    throw new Error("archive_child_" + code + "_for_batch_" + batch.id);
+  }
+  throw new Error("archive_child_retry_exhausted_for_batch_" + batch.id);
+}
 export async function runBulk(args, deps = {}) {
   const run = deps.runSingle ?? runSingle;
   const output = deps.output ?? (value => console.log(JSON.stringify(value)));
