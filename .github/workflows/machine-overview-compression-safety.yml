@@ -1,0 +1,28 @@
+name: Machine overview photo compression safety
+on:
+  pull_request:
+    paths:
+      - 'src/lib/machine-overview-compression.ts'
+      - 'src/lib/operator-actions.ts'
+      - 'scripts/test-machine-overview-compression.mjs'
+      - '.github/workflows/machine-overview-compression-safety.yml'
+permissions:
+  contents: read
+concurrency:
+  group: machine-overview-compression-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Check photo bounds, full frame, unchanged compressor proof, and fallback
+        run: node --experimental-strip-types --test scripts/test-machine-overview-compression.mjs
