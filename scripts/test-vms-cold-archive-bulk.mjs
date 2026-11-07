@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import {
   PREVIOUSLY_VERIFIED, REMAINING, PROJECT_REF, bundleApproval,
-  validateInspection, parseBulkArgs, runBulk, runSingle
+  validateInspection, parseBulkArgs, runBulk, runSingle, safeChildFailureCode
 } from "./vms-cold-archive-bulk.mjs";
 
 const hash = x => createHash("sha256").update(x).digest("hex");
@@ -121,16 +121,16 @@ test("bad archive receipt fails verification rather than counting success", asyn
   }),/verification_failed_for_batch_/);
 });
 
-test("existing single-batch runner still requires exact per-batch hash", () => {
+test("existing single-batch runner still requires exact per-batch hash", async () => {
   const calls=[];
   const fakeSpawn=(command,argv,opts)=>{
     calls.push({command,argv});
     return {status:0,stdout:JSON.stringify(inspected(REMAINING[0]))+"\n"};
   };
-  assert.equal(runSingle(REMAINING[0],"inspect","",fakeSpawn).rows,249);
+  assert.equal((await runSingle(REMAINING[0],"inspect","",fakeSpawn)).rows,249);
   assert.ok(calls[0].argv.includes("vms-cold-archive.mjs")===false);
   assert.ok(calls[0].argv.some(x=>String(x).endsWith("vms-cold-archive.mjs")));
-  assert.throws(()=>runSingle(REMAINING[0],"copy","not-a-sha",fakeSpawn),/invalid_child_approval/);
+  await assert.rejects(runSingle(REMAINING[0],"copy","not-a-sha",fakeSpawn),/invalid_child_approval/);
 });
 
 test("bulk scripts and owner-only manual workflow contain no destructive data operation", () => {
@@ -146,4 +146,45 @@ test("bulk scripts and owner-only manual workflow contain no destructive data op
   assert.doesNotMatch(workflow,/^\s*(push|pull_request|schedule):/m);
   assert.match(workflow,/COPY ONLY - RETAIN SOURCE/);
   assert.match(workflow,/SNACKY_R2_SECRET_ACCESS_KEY/);
+});
+
+test("Supabase HTTP 500 read failure retries once without copying or printing secret stderr", async () => {
+  let attempts = 0;
+  const waits = [];
+  const fakeSpawn = () => {
+    attempts++;
+    if (attempts === 1) return { status: 1,
+      stderr: JSON.stringify({ ok: false, reason: "archive_rows_read_failed", originalRowsDeleted: 0 }) };
+    return { status: 0, stdout: JSON.stringify(inspected(REMAINING[0])) + "\n" };
+  };
+  const result = await runSingle(REMAINING[0], "inspect", "", fakeSpawn, {}, async ms => waits.push(ms));
+  assert.equal(attempts, 2);
+  assert.deepEqual(waits, [2000]);
+  assert.equal(result.rows, REMAINING[0].expectedRows);
+});
+
+test("persistent transient source failures retry at most twice then fail with a safe error code", async () => {
+  let attempts = 0;
+  const fakeSpawn = () => {
+    attempts++;
+    return { status: 1, stderr: JSON.stringify({ ok: false, reason: "archive_count_failed" }) };
+  };
+  await assert.rejects(runSingle(REMAINING[0], "inspect", "", fakeSpawn, {}, async () => {}),
+    /archive_child_archive_count_failed_for_batch_/);
+  assert.equal(attempts, 3);
+});
+
+test("permission, content mismatch and unknown failures do not retry", async () => {
+  for (const reason of ["archive_source_changed", "archive_batch_too_recent", "archive_approval_mismatch", "archive_integrity_failed"]) {
+    let attempts = 0;
+    const fakeSpawn = () => {
+      attempts++;
+      return { status: 1, stderr: JSON.stringify({ok:false,reason}) };
+    };
+    await assert.rejects(runSingle(REMAINING[0],"inspect","",fakeSpawn,{},async()=>{}),
+      new RegExp("archive_child_"+reason+"_for_batch_"));
+    assert.equal(attempts,1,reason);
+  }
+  assert.equal(safeChildFailureCode('Authorization: Bearer super-secret'),"unknown");
+  assert.equal(safeChildFailureCode('{"ok":false,"reason":"bad\\r\\nextra"}'),"unknown");
 });
