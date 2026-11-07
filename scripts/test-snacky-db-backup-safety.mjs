@@ -26,6 +26,9 @@ test("full backup uses only protected secrets and PG17 read-only pg_dump", () =>
   assert.match(workflow,/--format=custom --compress=6 --no-owner --no-acl/);
   assert.match(workflow,/--user "\$\(id -u\):\$\(id -g\)"/);
   assert.match(workflow,/PGSSLMODE=require/);
+  assert.match(workflow,/BACKUP_DIR=\$RUNNER_TEMP\/snacky-db-backup/);
+  assert.match(workflow,/\$GITHUB_ENV/);
+  assert.doesNotMatch(workflow,/BACKUP_DIR:.*runner\.temp/);
   assert.match(workflow,/url\.port!=="5432"/);
   assert.match(workflow,/url\.username!=="postgres\.thrthmeyhuhxnmizjhqx"/);
   assert.match(workflow,/url\.pathname!=="/postgres"/);
