@@ -1,0 +1,111 @@
+name: Backup remaining old VMS batches to R2 (copy-only)
+
+# Owner-initiated only. No automatic pushes, pull-request secret access, cron,
+# SQL cleanup, source deletion, or mutable source archive operations.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "inspect = review all 7; copy = exact SHA approval; verify = 8-batch independent R2 readback"
+        type: choice
+        required: true
+        default: inspect
+        options:
+          - inspect
+          - copy
+          - verify
+      approval_sha256:
+        description: "Copy only: paste bundleApprovalSha256 from the inspect result"
+        type: string
+        required: false
+        default: ""
+      copy_confirmation:
+        description: "Copy only: type COPY ONLY - RETAIN SOURCE"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize with the existing single-batch archive workflow.
+  group: snacky-vms-cold-archive
+  cancel-in-progress: false
+
+jobs:
+  archive_remaining:
+    if: github.ref == 'refs/heads/master' && github.actor == 'AnasGherfal'
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Validate exact mode and copy approval (before secrets)
+        env:
+          ARCHIVE_MODE: ${{ inputs.mode }}
+          ARCHIVE_SHA: ${{ inputs.approval_sha256 }}
+          CONFIRM: ${{ inputs.copy_confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$ARCHIVE_MODE" in
+            inspect|verify)
+              [[ -z "$ARCHIVE_SHA" && -z "$CONFIRM" ]] || exit 1
+              ;;
+            copy)
+              [[ "$ARCHIVE_SHA" =~ ^[0-9a-f]{64}$ ]] || exit 1
+              [[ "$CONFIRM" == "COPY ONLY - RETAIN SOURCE" ]] || exit 1
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Inspect exactly 7 deleted inactive historical batches (no R2 access)
+        if: ${{ inputs.mode == 'inspect' }}
+        env:
+          SUPABASE_URL: "https://thrthmeyhuhxnmizjhqx.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SNACKY_ARCHIVE_SUPABASE_SERVICE_ROLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          node --experimental-strip-types scripts/vms-cold-archive-bulk.mjs --mode inspect
+      - name: Copy exactly the approved 7-batch snapshot, never remove originals
+        if: ${{ inputs.mode == 'copy' }}
+        env:
+          SUPABASE_URL: "https://thrthmeyhuhxnmizjhqx.supabase.co"
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SNACKY_ARCHIVE_SUPABASE_SERVICE_ROLE_KEY }}
+          SNACKY_VMS_ARCHIVE_ACCOUNT_ID: ${{ secrets.SNACKY_R2_ACCOUNT_ID }}
+          SNACKY_VMS_ARCHIVE_BUCKET: "snacky-vms-archive"
+          SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID: ${{ secrets.SNACKY_R2_ACCESS_KEY_ID }}
+          SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY: ${{ secrets.SNACKY_R2_SECRET_ACCESS_KEY }}
+          ARCHIVE_SHA: ${{ inputs.approval_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$SNACKY_VMS_ARCHIVE_ACCOUNT_ID"
+          test -n "$SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID"
+          test -n "$SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY"
+          node --experimental-strip-types scripts/vms-cold-archive-bulk.mjs --mode copy --approve-sha256 "$ARCHIVE_SHA"
+      - name: Independently verify the 183-row canary and all 7 new archives (R2 read-only)
+        if: ${{ inputs.mode == 'verify' }}
+        env:
+          SUPABASE_URL: "https://thrthmeyhuhxnmizjhqx.supabase.co"
+          SNACKY_VMS_ARCHIVE_ACCOUNT_ID: ${{ secrets.SNACKY_R2_ACCOUNT_ID }}
+          SNACKY_VMS_ARCHIVE_BUCKET: "snacky-vms-archive"
+          SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID: ${{ secrets.SNACKY_R2_ACCESS_KEY_ID }}
+          SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY: ${{ secrets.SNACKY_R2_SECRET_ACCESS_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SNACKY_VMS_ARCHIVE_ACCOUNT_ID"
+          test -n "$SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID"
+          test -n "$SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY"
+          node --experimental-strip-types scripts/vms-cold-archive-bulk.mjs --mode verify
