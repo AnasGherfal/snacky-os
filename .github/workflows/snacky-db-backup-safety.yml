@@ -1,0 +1,27 @@
+name: Snacky DB backup and cleanup preflight safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/snacky-postgres-full-backup-manual.yml'
+      - '.github/workflows/snacky-db-backup-safety.yml'
+      - 'scripts/sql/vms-archived-cleanup-preflight.sql'
+      - 'scripts/test-snacky-db-backup-safety.mjs'
+      - 'docs/SNACKY_DB_RECOVERY_AND_CLEANUP.md'
+permissions:
+  contents: read
+concurrency:
+  group: snacky-db-backup-safety-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate manual-only backup and read-only cleanup preflight without credentials
+        run: node --test scripts/test-snacky-db-backup-safety.mjs
