@@ -1,0 +1,33 @@
+name: VMS cold archive safety
+on:
+  pull_request:
+    paths:
+      - 'scripts/vms-cold-archive.mjs'
+      - 'scripts/test-vms-cold-archive.mjs'
+      - 'src/lib/photo-archive-r2.ts'
+      - '.github/workflows/vms-cold-archive-safety.yml'
+permissions:
+  contents: read
+concurrency:
+  group: vms-archive-safety-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Copy-only archive tests (no external credentials)
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+          SNACKY_VMS_ARCHIVE_ACCESS_KEY_ID: ""
+          SNACKY_VMS_ARCHIVE_SECRET_ACCESS_KEY: ""
+        run: node --experimental-strip-types --test scripts/test-vms-cold-archive.mjs
