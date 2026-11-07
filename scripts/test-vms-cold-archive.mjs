@@ -163,3 +163,17 @@ test("no source DELETE, TRUNCATE, purge or admin HTTP write commands exist in th
   assert.match(src, /archive_approval_mismatch/);
   assert.match(src, /archive_source_changed/);
 });
+
+test("manual VMS archive action is opt-in, copy-only, and never runs on push", () => {
+  const workflow = fs.readFileSync(".github/workflows/vms-cold-archive-manual.yml", "utf8");
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
+  assert.match(workflow, /COPY ONLY - RETAIN SOURCE/);
+  assert.match(workflow, /--copy --approve-sha256 "\$ARCHIVE_SHA"/);
+  assert.match(workflow, /--verify/);
+  assert.match(workflow, /--batch-id "\$BATCH_ID"/);
+  assert.doesNotMatch(workflow, /(?:supabase db reset|DELETE FROM|TRUNCATE TABLE|--remove|--purge)/i);
+  const verifySection = workflow.slice(workflow.indexOf("      - name: Verify readback from private R2"));
+  assert.ok(verifySection.includes("SNACKY_R2_ACCESS_KEY_ID"));
+  assert.ok(!verifySection.includes("SUPABASE_SERVICE_ROLE_KEY"));
+});
