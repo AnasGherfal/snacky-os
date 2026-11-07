@@ -1,0 +1,156 @@
+name: Snacky PostgreSQL full logical backup to private R2
+
+# Explicit, owner-initiated and copy-only. No schedule or automatic data removal.
+# No repository artifacts: the private data stays only in the protected runner
+# until verified in the private Cloudflare R2 bucket.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type BACKUP ONLY - DO NOT CHANGE DATABASE"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snacky-db-full-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    if: github.repository == 'AnasGherfal/snacky-os' && github.ref == 'refs/heads/master' && github.actor == 'AnasGherfal'
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SNACKY_DB_BACKUP_URL: ${{ secrets.SNACKY_DB_BACKUP_URL }}
+      SNACKY_R2_ACCOUNT_ID: ${{ secrets.SNACKY_R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SNACKY_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SNACKY_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - name: Validate explicit owner confirmation before running backup
+        env:
+          CONFIRM: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRM" == "BACKUP ONLY - DO NOT CHANGE DATABASE" ]] || exit 1
+      - name: Validate backup credentials and target without logging them
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SNACKY_DB_BACKUP_URL"
+          test -n "$SNACKY_R2_ACCOUNT_ID"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          node - <<'NODE'
+          const value=process.env.SNACKY_DB_BACKUP_URL || "";
+          let url;
+          try { url=new URL(value); } catch { process.exit(1); }
+          const valid=url.protocol==="postgresql:" || url.protocol==="postgres:";
+          const host=/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(url.hostname);
+          if (!valid || !host || url.port!=="5432" ||
+              url.username!=="postgres.thrthmeyhuhxnmizjhqx" ||
+              url.pathname!=="/postgres" || !url.password ||
+              url.password.includes("YOUR-PASSWORD")) {
+            console.error("Invalid Snacky database URL: use Supabase Connect > Session pooler (port 5432) and the correct project.");
+            process.exit(1);
+          }
+          if (!/^[a-f0-9]{32}$/.test(process.env.SNACKY_R2_ACCOUNT_ID || "")) {
+            console.error("Invalid R2 account ID");
+            process.exit(1);
+          }
+          NODE
+          command -v docker >/dev/null
+          command -v aws >/dev/null
+          echo "BACKUP_DIR=$RUNNER_TEMP/snacky-db-backup" >> "$GITHUB_ENV"
+          install -d -m 700 "$RUNNER_TEMP/snacky-db-backup"
+      - name: Create consistent read-only PostgreSQL 17 logical dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          # pg_dump uses one consistent read-only snapshot; business data stays untouched.
+          timeout 1200s docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e SNACKY_DB_BACKUP_URL \
+            -e PGSSLMODE=require \
+            -v "$BACKUP_DIR:/backup" \
+            postgres:17.6 \
+            sh -c 'exec pg_dump --dbname "$SNACKY_DB_BACKUP_URL" \
+              --format=custom --compress=6 --no-owner --no-acl \
+              --file=/backup/snacky.dump'
+          test -s "$BACKUP_DIR/snacky.dump"
+      - name: Validate backup structure before external upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The image containing pg_restore is matched to our PG17 source.
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$BACKUP_DIR:/backup:ro" \
+            postgres:17.6 \
+            pg_restore --list /backup/snacky.dump > "$BACKUP_DIR/toc.txt"
+          grep -Eq 'TABLE DATA +public +vms_import_rows' "$BACKUP_DIR/toc.txt"
+          grep -Eq 'TABLE DATA +public +system_activity_logs' "$BACKUP_DIR/toc.txt"
+          grep -Eq 'TABLE DATA +auth +users' "$BACKUP_DIR/toc.txt"
+          # Prevent unexpected multi-GB archival costs until deliberately reviewed.
+          bytes="$(stat -c %s "$BACKUP_DIR/snacky.dump")"
+          test "$bytes" -gt 1048576
+          test "$bytes" -le 1073741824
+          echo "Logical dump structure verified (source database unchanged)."
+      - name: Upload private R2 object and independently download / compare bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="snacky-db-backups/v1/thrthmeyhuhxnmizjhqx/run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          endpoint="https://$SNACKY_R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          key="$prefix/snacky.dump"
+          aws --endpoint-url "$endpoint" s3api put-object \
+            --bucket snacky-vms-archive --key "$key" \
+            --body "$BACKUP_DIR/snacky.dump" --if-none-match "*" \
+            --no-cli-pager >/dev/null
+          aws --endpoint-url "$endpoint" s3api get-object \
+            --bucket snacky-vms-archive --key "$key" \
+            "$BACKUP_DIR/verified.dump" --no-cli-pager >/dev/null
+          cmp -s "$BACKUP_DIR/snacky.dump" "$BACKUP_DIR/verified.dump"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$BACKUP_DIR:/backup:ro" \
+            postgres:17.6 \
+            pg_restore --list /backup/verified.dump >/dev/null
+          sha="$(sha256sum "$BACKUP_DIR/snacky.dump" | cut -d' ' -f1)"
+          bytes="$(stat -c %s "$BACKUP_DIR/snacky.dump")"
+          export SHA256="$sha" BYTES="$bytes" KEY="$key"
+          node - <<'NODE' > "$BACKUP_DIR/manifest.json"
+          console.log(JSON.stringify({
+            projectRef:"thrthmeyhuhxnmizjhqx",
+            version:1, backupType:"postgresql17_full_logical_custom",
+            storageObjectsIncluded:false,
+            postgresRolesAndExternalResourcesRestoreNotVerified:true,
+            archiveBucket:"snacky-vms-archive", key:process.env.KEY,
+            bytes:Number(process.env.BYTES),sha256:process.env.SHA256,
+            restoreDrillCompleted:false,
+            sourceDatabaseChanged:false
+          }));
+          NODE
+          aws --endpoint-url "$endpoint" s3api put-object \
+            --bucket snacky-vms-archive --key "$prefix/manifest.json" \
+            --body "$BACKUP_DIR/manifest.json" \
+            --content-type application/json --if-none-match "*" \
+            --no-cli-pager >/dev/null
+          echo "Full logical database dump stored privately, byte-for-byte R2 readback passed."
+          echo "Source database unchanged. This is NOT a tested full disaster-recovery restore."
+      - name: Remove private dump from ephemeral GitHub runner
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -n "$BACKUP_DIR" && "$BACKUP_DIR" == "$RUNNER_TEMP/snacky-db-backup" ]]; then
+            rm -f "$BACKUP_DIR/snacky.dump" "$BACKUP_DIR/verified.dump" \
+              "$BACKUP_DIR/toc.txt" "$BACKUP_DIR/manifest.json"
+            rmdir "$BACKUP_DIR" 2>/dev/null || true
+          fi
