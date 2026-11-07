@@ -1,3 +1,5 @@
+import { isUnnumberedCashReference } from "./cash-handover";
+
 export const CASH_DENOMINATIONS = [0.25, 0.5, 1, 5, 10, 20, 50] as const;
 
 export type CashDenomination = (typeof CASH_DENOMINATIONS)[number];
@@ -19,6 +21,7 @@ export type CashCustodyAlertInput = {
   reconciled_at?: string | null;
   storage_seal_condition?: string | null;
   count_seal_condition?: string | null;
+  cash_bag_id?: string | null;
 };
 
 export function denominationKey(denomination: CashDenomination) {
@@ -143,7 +146,13 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
     alerts.push({ severity: "critical", label: "Owner review required", detail: "The combined batch total or custody evidence has an unresolved exception." });
   }
   if ([row.storage_seal_condition, row.count_seal_condition].some((condition) => condition && condition !== "intact")) {
-    alerts.push({ severity: "critical", label: "Seal exception", detail: "A broken or mismatched seal must be resolved by an owner or admin." });
+    if (isUnnumberedCashReference(row.cash_bag_id)
+        && ![row.storage_seal_condition,row.count_seal_condition].some(c => c === "broken")) {
+      alerts.push({ severity: "warning", label: "Unnumbered cash bag — physical reference not verified",
+        detail: "This bag has no printed seal reference. Match the machine, pickup time and photos. This does NOT mean a broken or mismatched physical seal was observed." });
+    } else {
+      alerts.push({ severity: "critical", label: "Seal exception", detail: "A broken or mismatched seal must be resolved by an owner or admin." });
+    }
   }
 
   const threshold = status === "removed"

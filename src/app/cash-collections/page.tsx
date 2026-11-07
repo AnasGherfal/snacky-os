@@ -165,7 +165,7 @@ export default async function CashCollectionsPage({ searchParams }: { searchPara
     && verifiedCashExpectation(row) === null).length;
   const waitingCount = summaryRows.filter((row: any) => ["removed", "in_storage"].includes(row.custody_status)).length;
   const needsCheckCount = summaryRows.filter((row: any) => row.custody_status === "counted").length;
-  const actions = <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/action-queue">Action queue</SecondaryButton>{canRecordCashRemoval(context)?<PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton>:null}</div>;
+  const actions = <div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/interval-comparison">Compare XY by pickup time</SecondaryButton><SecondaryButton href="/cash-collections/action-queue">Action queue</SecondaryButton>{canRecordCashRemoval(context)?<PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton>:null}</div>;
 
   return (
     <div className="space-y-6">
