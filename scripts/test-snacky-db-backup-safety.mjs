@@ -73,4 +73,6 @@ test("restoration and storage data remain explicit blockers", () => {
   assert.match(doc,/does not include bytes of Supabase Storage objects/i);
   assert.match(doc,/Explicit owner authorization/i);
   assert.match(doc,/no production data cleanup is authorized/i);
+  assert.match(doc,/Restore deleted batch/);
+  assert.match(doc,/raw-row deletion is BLOCKED/);
 });
