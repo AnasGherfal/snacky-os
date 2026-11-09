@@ -13,7 +13,7 @@ export function shouldLogXySyncStart(profile: unknown): boolean {
 
 export function shouldLogXySyncFinish(
   profile: unknown,
-  status: "completed" | "completed_with_warnings" | "failed",
+  status: string,
   statusPersistenceFailed = false,
 ): boolean {
   return profile !== null && profile !== undefined
