@@ -63,7 +63,7 @@ export function CashCountForm({
           <p className="mt-2 text-sm leading-6 text-amber-950">This amount was entered at removal, not during counting. Physically count the cash bag and enter what is actually there.</p>
         </div>
       ) : null}
-      <FormField label="Counted amount (LYD)" required hint="Enter the exact physical count. Zero is valid only after checking the bag is genuinely empty.">
+      <FormField label="Cash physically counted (LYD)" required hint="Enter the exact physical count. Zero is valid only after checking the bag is genuinely empty.">
         <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" autoComplete="off" required className="field-input text-2xl font-semibold" placeholder="0.00" />
       </FormField>
       <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">This saves to the existing removal and records the count date automatically. It does not create a new removal.</p>
