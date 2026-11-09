@@ -180,7 +180,7 @@ export default async function CashCollectionsPage({ searchParams }: { searchPara
   return (
     <div className="space-y-6">
       <PageHeader title="Cash Custody Control" subtitle="Select an existing machine removal, count actual cash, and compare VMS later. No duplicate collection." action={actions} />
-      {defaultCurrentMonth ? <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Showing <strong>{period.label}</strong> removals. Older unresolved records are stored in history, not today's count queue.</p> : scopeParam === "all" ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Viewing all historical records, including legacy uncounted entries. A historical status does not prove that money is currently awaiting a count.</p> : null}
+      {defaultCurrentMonth ? <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Showing <strong>{period.label}</strong> removals. Older unresolved records are stored in history, not today&apos;s count queue.</p> : scopeParam === "all" ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Viewing all historical records, including legacy uncounted entries. A historical status does not prove that money is currently awaiting a count.</p> : null}
       {errorMessage ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMessage}</div> : null}
       {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{successMessage}</div> : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
