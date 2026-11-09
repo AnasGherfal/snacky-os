@@ -54,7 +54,7 @@ export function CashCountForm({
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
       <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
-        No date range is needed here. Snacky OS uses each machine&apos;s previous full cash-removal record as the start and the removal date already saved on this bag as the end.
+        Enter the money you physically counted from this exact operator removal. The original machine and removal date are preserved. Snacky records your count once; XY comparison can be done later.
       </p>
       {recordedMachineTotal !== null && recordedMachineTotal !== undefined ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4" role="note">
@@ -63,11 +63,11 @@ export function CashCountForm({
           <p className="mt-2 text-sm leading-6 text-amber-950">This amount was entered at removal, not during counting. Physically count the cash bag and enter what is actually there.</p>
         </div>
       ) : null}
-      <FormField label="Cash physically counted (LYD)" required hint="Enter the actual cash in the sealed bag, including when earlier amounts were declared. Zero requires an actual empty-bag count.">
+      <FormField label="Counted amount (LYD)" required hint="Enter the exact physical count. Zero is valid only after checking the bag is genuinely empty.">
         <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" autoComplete="off" required className="field-input text-2xl font-semibold" placeholder="0.00" />
       </FormField>
-      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Count independently. VMS expectations and removal declarations are separate comparisons, not a substitute for physical counting.</p>
-      <button className="btn-primary w-full">Save physically counted total</button>
+      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">This saves to the existing removal and records the count date automatically. It does not create a new removal.</p>
+      <button className="btn-primary w-full">Save count to this removal</button>
     </LocalDraftForm>
   );
 }
