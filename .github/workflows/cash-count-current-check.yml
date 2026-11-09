@@ -1,0 +1,35 @@
+name: Current-month cash counting UX
+on:
+  pull_request:
+    paths:
+      - 'src/lib/cash-current-period.ts'
+      - 'src/app/cash-collections/page.tsx'
+      - 'src/app/cash-collections/count/**'
+      - 'src/app/cash-collections/[id]/page.tsx'
+      - 'src/app/cash-collections/action-queue/page.tsx'
+      - 'src/components/CashCustodyForms.tsx'
+      - 'src/components/cash/CashReceiveWorkspace.tsx'
+      - 'scripts/test-cash-count-current.mjs'
+      - '.github/workflows/cash-count-current-check.yml'
+permissions:
+  contents: read
+jobs:
+  current-cash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Focused cash count and current action regression tests
+        run: |
+          node --experimental-strip-types --test scripts/test-cash-count-current.mjs
+          node --test scripts/test-cash-action-queue.mjs
+          node --experimental-strip-types --test scripts/test-cash-independent-physical-count.mjs
+      - name: TypeScript and focused lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/cash-current-period.ts src/app/cash-collections/page.tsx src/app/cash-collections/count/page.tsx 'src/app/cash-collections/[id]/page.tsx' src/app/cash-collections/action-queue/page.tsx src/components/CashCustodyForms.tsx src/components/cash/CashReceiveWorkspace.tsx
