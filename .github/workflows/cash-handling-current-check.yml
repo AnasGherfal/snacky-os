@@ -1,0 +1,23 @@
+name: Cash handling current-month filter
+on:
+  pull_request:
+    paths:
+      - 'src/components/CashHandlingWorkspace.tsx'
+      - 'src/lib/cash-current-period.ts'
+      - 'scripts/test-cash-handling-current.mjs'
+      - '.github/workflows/cash-handling-current-check.yml'
+permissions:
+  contents: read
+jobs:
+  cash-filter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test scripts/test-cash-handling-current.mjs
+      - run: npm run typecheck
