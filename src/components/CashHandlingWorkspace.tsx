@@ -10,6 +10,7 @@ import {
 } from '@/lib/cash-handover';
 import styles from './CashHandlingWorkspace.module.css';
 import { prepareCashPhoto } from '@/lib/cash-photo';
+import { currentLibyaCashMonth } from '@/lib/cash-current-period';
 
 const subscribeHydration = () => () => {};
 const clientSnapshot = () => true;
@@ -121,6 +122,13 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
   }
   const locked = busy || Boolean(pending), box = selected ? view?.rows.find(r => r.id === selected) : null;
   const declaredRemoval = box ? summarizeDeclaredRemoval(box.machines) : null;
+  const currentMonthStartMs = Date.parse(currentLibyaCashMonth().startTimestamp);
+  // Historical uncounted records remain available under History, but do not
+  // appear as current cash action cards.
+  const currentCashRows = (view?.rows ?? []).filter(r =>
+    status === 'all' || Date.parse(r.collected_at) >= currentMonthStartMs);
+  const olderRowReached = status !== 'all' && (view?.rows ?? []).some(r =>
+    Date.parse(r.collected_at) < currentMonthStartMs);
   const label = (a: CashAction) => cashActionLabels[a][ar ? 1 : 0];
   const boxReferenceLabel = (value: CashBox) => cashReferenceMissing(value)
     ? text('Not recorded', 'غير مسجل')
@@ -133,7 +141,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
         <h1>{text('Cash', 'النقدية')}</h1>
         <p>{text('Any assigned operator removes and deposits · authorized recipient verifies · authorized counter counts. Numbered bags use their printed seal. Unnumbered bags use the machine, pickup time and photos, with physical seal verification marked unavailable.', 'الأكياس المرقمة تُطابق برقم الختم؛ الأكياس غير المرقمة تُتبع بالماكينة ووقت السحب والصور، ويظهر أن رقم الختم غير متوفر دون ادعاء وجود تلف أو اختلاف.')}</p></div>
-      <div className={styles.buttons}><Link className={styles.secondary} href="/cash-handling/deposit">{text('Deposit cash bags', 'إيداع الأكياس في الخزنة')}</Link>{view?.owner ? <><Link className={styles.secondary} href="/cash-collections/pilot">{text("Refill cash pilot", "إعدادات النقدية عند التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/refills">{text("Refill cash audit", "سجل نقدية التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/timeline">{text("Machine cash intervals", "فترات السحب والنقص")}</Link><Link className={styles.secondary} href="/cash-handling/receive">{text("Verify bags & count", "استلام وعدّ الأكياس")}</Link><Link className={styles.secondary} href="/cash-collections?status=counted">{text("Review counted cash vs XY", "مطابقة النقدية مع XY")}</Link></> : null}{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
+      <div className={styles.buttons}><Link className={styles.secondary} href="/cash-handling/deposit">{text('Deposit cash bags', 'إيداع الأكياس في الخزنة')}</Link>{view?.owner ? <><Link className={styles.primary} href="/cash-collections/count">{text('Count current cash', 'عدّ نقدية هذا الشهر')}</Link><Link className={styles.secondary} href="/cash-collections/pilot">{text("Refill cash pilot", "إعدادات النقدية عند التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/refills">{text("Refill cash audit", "سجل نقدية التعبئة")}</Link><Link className={styles.secondary} href="/cash-collections/timeline">{text("Machine cash intervals", "فترات السحب والنقص")}</Link><Link className={styles.secondary} href="/cash-handling/receive">{text("Verify bags & count", "استلام وعدّ الأكياس")}</Link><Link className={styles.secondary} href="/cash-collections?status=counted">{text("Review counted cash vs XY", "مطابقة النقدية مع XY")}</Link></> : null}{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
@@ -170,9 +178,10 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
       {!selected ? <>
         <nav className={styles.tabs} aria-label={text('Cash queue', 'قائمة النقد')}>{[['open', 'Needs action', 'تحتاج إجراء'], ['counted', 'Counted', 'تم العد'], ['all', 'History', 'السجل']].map(([value, en, arabic]) =>
           <button key={value} disabled={locked} aria-current={status === value ? 'page' : undefined} onClick={() => { setLoading(true); setStatus(value); setOffset(0); setError(''); }}>{text(en, arabic)}</button>)}</nav>
-        <div className={styles.queueHeader}><h2>{view.owner ? text('Team cash boxes', 'علب نقد الفريق') : text('My cash boxes', 'علب النقد الخاصة بي')}</h2><span>{view.total} {text('records', 'سجلاً')}</span></div>
-        {!view.rows.length && !loading ? <div className={styles.empty}><h3>{text('No boxes in this view', 'لا توجد علب في هذا العرض')}</h3><p>{text('Collected boxes and boxes assigned to you will appear here. No money is added by assigning or moving a box.', 'تظهر هنا العلب التي جمعتها أو أُسندت إليك. الإسناد أو نقل العلبة لا يضيف أي مبلغ.')}</p></div> : null}
-        <div className={styles.grid}>{view.rows.map(row => <article key={row.id} className={styles.card}>
+        {status !== 'all' ? <p className={styles.notice}>{text("Showing only this month’s removals. Older records remain in History, not today’s waiting-for-count list.", "تظهر سحوبات الشهر الحالي فقط. السجلات القديمة محفوظة في تبويب السجل، وليست ضمن النقدية التي تنتظر العد اليوم.")}</p> : null}
+        <div className={styles.queueHeader}><h2>{view.owner ? text('Team cash boxes', 'علب نقد الفريق') : text('My cash boxes', 'علب النقد الخاصة بي')}</h2><span>{status === 'all' ? view.total : currentCashRows.length} {text(status === 'all' ? 'records' : 'current records loaded', status === 'all' ? 'سجلاً' : 'سجلات الشهر المحمّلة')}</span></div>
+        {!currentCashRows.length && !loading ? <div className={styles.empty}><h3>{text('No boxes in this view', 'لا توجد علب في هذا العرض')}</h3><p>{text('Collected boxes and boxes assigned to you will appear here. No money is added by assigning or moving a box.', 'تظهر هنا العلب التي جمعتها أو أُسندت إليك. الإسناد أو نقل العلبة لا يضيف أي مبلغ.')}</p></div> : null}
+        <div className={styles.grid}>{currentCashRows.map(row => <article key={row.id} className={styles.card}>
           <div className={styles.cardTop}><span className={styles.badge}>{(cashStateLabels[row.state] ?? [row.state, row.state])[ar ? 1 : 0]}</span>{row.seal_exception ? <span className={styles.warning}>{isUnnumberedCashReference(row.bag)
             ? text('Unnumbered bag · photo verification needed', 'كيس بدون رقم مطبوع · يحتاج مطابقة الصور')
             : text('Seal exception', 'ملاحظة على الختم')}</span> : null}</div>
@@ -189,7 +198,7 @@ function CashHandlingClient({ userId, defaultSafeLabel }: { userId: string; defa
         </article>)}</div>
         <nav className={styles.buttons} aria-label={text('Queue pages', 'صفحات القائمة')}>
           {offset > 0 ? <button disabled={locked} className={styles.secondary} onClick={() => setOffset(Math.max(0, offset - 25))}>{text('Previous', 'السابق')}</button> : null}
-          {offset + 25 < view.total ? <button disabled={locked} className={styles.secondary} onClick={() => setOffset(offset + 25)}>{text('Next', 'التالي')}</button> : null}
+          {offset + 25 < view.total && !olderRowReached ? <button disabled={locked} className={styles.secondary} onClick={() => setOffset(offset + 25)}>{text('Next', 'التالي')}</button> : null}
         </nav>
       </> : <>
         <button className={styles.secondary} disabled={locked} onClick={() => open(null)}>{text('Back to cash boxes', 'العودة إلى علب النقد')}</button>
