@@ -4,6 +4,10 @@ import { useEffect,useMemo,useState,type FormEvent } from "react";
 import { cashReceiptMatches,validateCashCommand,isUnnumberedCashReference,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
 
 const fmt=(d:string)=>new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Tripoli",dateStyle:"short",timeStyle:"short"}).format(new Date(d));
+function monthKey(date:Date|string){
+  const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Tripoli",year:"numeric",month:"2-digit"}).formatToParts(new Date(date));
+  return `${parts.find(p=>p.type==="year")?.value}-${parts.find(p=>p.type==="month")?.value}`;
+}
 function requestKey(id:string,action:string){return `snacky.cash.owner-receive.v1.${id}.${action}`;}
 function stored(key:string):CashCommand|null{
   try{const x=sessionStorage.getItem(key);return x?validateCashCommand(JSON.parse(x)):null;}
@@ -16,6 +20,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   const [error,setError]=useState("");
   const [success,setSuccess]=useState("");
   const [selected,setSelected]=useState<string|null>(null);
+  const [showHistory,setShowHistory]=useState(false);
   const [bagId,setBagId]=useState("");
   const [noPrintedNumber,setNoPrintedNumber]=useState(false);
   const [seal,setSeal]=useState<"intact"|"broken"|"mismatch">("intact");
@@ -54,9 +59,11 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   // Oldest sealed bags first: counting in pickup order keeps previous verified
   // full removals available as the baseline for later XY intervals.
   const oldestFirst=(a:CashBox,b:CashBox)=>Date.parse(a.collected_at)-Date.parse(b.collected_at);
-  const ready=useMemo(()=>(view?.rows.filter(r=>r.actions.includes("pickup")||r.actions.includes("takeover"))??[]).sort(oldestFirst),[view]);
-  const toCount=useMemo(()=>(view?.rows.filter(r=>r.actions.includes("count"))??[]).sort(oldestFirst),[view]);
-  const box=[...ready,...toCount].find(r=>r.id===selected)??null;
+  const visibleRows=useMemo(()=>(view?.rows??[]).filter(r=>showHistory||monthKey(r.collected_at)===monthKey(new Date())),[view,showHistory]);
+  const ready=useMemo(()=>visibleRows.filter(r=>r.actions.includes("pickup")||r.actions.includes("takeover")).sort(oldestFirst),[visibleRows]);
+  const toCount=useMemo(()=>visibleRows.filter(r=>r.actions.includes("count")).sort(oldestFirst),[visibleRows]);
+  // A direct link to a historical bag still opens its exact record.
+  const box=(view?.rows??[]).find(r=>r.id===selected)??null;
   const action=box?.actions.includes("count")?"count":box?.actions.includes("pickup")?"pickup":
     box?.actions.includes("takeover")?"takeover":null;
   const unnumbered=Boolean(box && (isUnnumberedCashReference(box.bag) || noPrintedNumber));
@@ -134,6 +141,16 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         بعد الاستلام افتح الكيس وعدّ النقدية بنفسك، ولا تستخدم XY بديلاً عن العدّ.
       </p>
     </header>
+    {view?.owner ? <Link href="/cash-collections/count"
+      className="block rounded-xl bg-emerald-700 p-4 text-center text-base font-bold text-white">
+      عدّ النقدية بسهولة — سحوبات هذا الشهر مع صور السحب والتخزين
+    </Link> : null}
+    <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950">
+      {showHistory ? "تعرض أيضاً السجلات القديمة للمراجعة، وليست بالضرورة نقدية معلّقة اليوم." : "تُعرض سحوبات الشهر الحالي فقط. السجلات القديمة محفوظة في الأرشيف."}
+      <button type="button" className="mr-3 font-bold underline" onClick={()=>setShowHistory(v=>!v)}>
+        {showHistory?"إخفاء السجلات القديمة":"عرض السجلات القديمة"}
+      </button>
+    </div>
     <div className="grid grid-cols-2 gap-3">
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-sm text-amber-900">بانتظار الاستلام الفعلي</div><b className="text-2xl">{ready.length}</b></div>
       <div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><div className="text-sm text-sky-900">استلمت ولم تُعدّ بعد</div><b className="text-2xl">{toCount.length}</b></div>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -222,6 +223,12 @@ export default async function CashCollectionDetailPage({
   const isOwnCollection = row.operator_id === profile.team_member_id;
   const mayReceive = canReceive && (!isOwnCollection || isOwnerOrAdmin);
   const status = String(row.custody_status ?? "removed");
+  const removalPhotoPath = (events ?? []).find((event: any) => event.event_type === "removed" && event.evidence_storage_path)?.evidence_storage_path;
+  const storagePhotoPath = [...(events ?? [])].reverse().find((event: any) => event.event_type === "stored" && event.evidence_storage_path)?.evidence_storage_path;
+  const photoEvidence = [
+    { label: "Photo at machine removal", path: removalPhotoPath },
+    { label: "Photo when placed in storage", path: storagePhotoPath },
+  ];
   const manualRepairCash = Number(row.manual_repair_cash_lyd ?? 0);
   const xyExpected = verifiedExpectedCash === null ? null : verifiedExpectedCash - manualRepairCash;
   const hasRecordedMachineAmounts = machines.length > 0 && machines.every((entry) => {
@@ -244,6 +251,24 @@ export default async function CashCollectionDetailPage({
       {messages.success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{messages.success}</div> : null}
       {alerts.map((alert, index) => <div key={`${alert.label}-${index}`} className={`rounded-lg border p-4 text-sm ${alert.severity === "critical" ? "border-rose-200 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}><div className="font-semibold">{alert.label}</div><p className="mt-1">{alert.detail}</p></div>)}
 
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5" aria-label="Identify this cash removal">
+        <h2 className="text-base font-bold text-emerald-950">Identify this existing removal before counting</h2>
+        <p className="mt-1 text-sm text-emerald-900">Machine: <strong>{summary}</strong> · Operator: <strong>{row.operator?.full_name ?? "Not recorded"}</strong> · Removed: <strong>{formatDate(row.collected_at)}</strong></p>
+        <p className="mt-1 text-sm text-slate-600">The removal date above stays unchanged. The count is dated when saved. No duplicate machine removal is created.</p>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          {photoEvidence.map((item) => {
+            const url = privateStorageObjectUrl(CASH_EVIDENCE_BUCKET, item.path);
+            return <div key={item.label} className="min-w-0 rounded-xl border border-slate-200 bg-white p-2">
+              <div className="mb-2 text-xs font-semibold text-slate-700">{item.label}</div>
+              {url ? <Link href={url} target="_blank" rel="noopener noreferrer" className="block">
+                <Image src={url} alt={item.label} unoptimized width={520} height={300} className="h-40 w-full rounded-lg object-contain" />
+                <span className="mt-2 block text-xs font-semibold text-emerald-800">Open full photo ↗</span>
+              </Link> : <p className="flex h-40 items-center justify-center rounded-lg bg-slate-50 p-2 text-center text-xs text-amber-900">Photo not recorded</p>}
+            </div>;
+          })}
+        </div>
+        <p className="mt-3 text-xs text-slate-700">Match the actual bag to both images, the machine and pickup time. An unnumbered digital reference is not a printed tamper-evident seal.</p>
+      </section>
       <SectionCard><CustodyStages status={status} /></SectionCard>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -312,9 +337,9 @@ export default async function CashCollectionDetailPage({
         </div>
 
         <div className="space-y-6">
-          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "You collected this bag. As owner/admin, you can receive it into storage yourself; Snacky OS records that it was a self-receipt." : "A different person verifies the seal, photographs the handoff, and records the exact safe location."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "removed" && mayReceive ? <SectionCard><div id="cash-storage-receipt"><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "You collected this bag. As owner/admin, you can receive it into storage yourself; Snacky OS records that it was a self-receipt." : "A different person verifies the seal, photographs the handoff, and records the exact safe location."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></div></SectionCard> : null}
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
-          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">Count the stored cash bag</h2><p className="mt-1 text-sm text-slate-500">Physically count the contents and enter the actual total. Earlier per-machine removal declarations remain reference values, not a cash count.</p><CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} recordedMachineTotal={recordedMachineTotal} /></SectionCard> : null}
+          {status === "in_storage" && canCount ? <SectionCard><div id="cash-count"><h2 className="text-lg font-semibold">Count this existing cash removal</h2><p className="mt-1 text-sm text-slate-500">Physically count the contents and enter the actual total. Earlier per-machine removal declarations remain reference values, not a cash count.</p><CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} recordedMachineTotal={recordedMachineTotal} /></div></SectionCard> : null}
           {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">{tr("Optional follow-up: compare with XY + manual cash", "متابعة اختيارية: مقارنة XY والنقد اليدوي")}</h2><p className="mt-1 text-sm text-slate-500">The cash count is already saved and available in Snacky LYD. This comparison is not required now—you can return and complete it later.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "counted" && row.reconciliation_status === "variance_review" && canResolve && verifiedExpectedCash !== null ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "counted" && row.reconciliation_status === "variance_review" && canResolve && verifiedExpectedCash === null ? <SectionCard><h2 className="text-lg font-semibold text-amber-900">{tr("Expected cash is not verified", "النقد المتوقع غير موثق")}</h2><p className="mt-1 text-sm text-amber-900">{tr("This historical variance flag has no dated expected-cash source. It is not proof of missing cash. Review the original XY report and audit the case in Data Health before any owner decision; approving a shortage here is disabled.", "هذا الفرق التاريخي بدون مصدر موثق وتاريخ لحساب النقد المتوقع، ولا يثبت وجود عجز نقدي. راجع تقرير XY الأصلي وحالة السجل في سلامة البيانات قبل الاعتماد. تم تعطيل الموافقة على العجز هنا.")}</p><div className="mt-3"><SecondaryButton href="/operations-health">{tr("Review in Data Health", "المراجعة في سلامة البيانات")}</SecondaryButton></div></SectionCard> : null}

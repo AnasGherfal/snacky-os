@@ -88,8 +88,8 @@ test("cash list leads with combined custody totals instead of machine allocation
   assert.match(cashList, /verifiedCashExpectation/);
   assert.match(cashList, /unverifiedCount/);
   assert.match(cashList, /overages offset shortages/);
-  assert.match(cashList, /Available Snacky cash/);
-  assert.match(cashList, /Counted cash already added to Snacky LYD/);
+  assert.match(cashList, /Counted cash in selected period/);
+  assert.match(cashList, /Cash totals are tied to these recorded removals/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Expected cash"/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Variance"/);
 });
