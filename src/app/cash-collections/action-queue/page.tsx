@@ -85,7 +85,7 @@ export default async function CashActionQueuePage(){
  ].filter(([,count])=>Number(count)>0) as Array<[string,number,string]>;
 
  return <div className="space-y-6">
-  <PageHeader title="Cash Action Queue" subtitle="This month's current removals only. Legacy backlog stays in Data Health and does not pollute today's operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/count">Count current cash</SecondaryButton><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
+  <PageHeader title="Cash Action Queue" subtitle="Current cash only — this month's removals. Legacy backlog stays in Data Health and does not pollute today's operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/count">Count current cash</SecondaryButton><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
 
   {rawCashSourceFreshness === "stale" && buckets.vms.length ? (
    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
