@@ -5,6 +5,7 @@ import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from "@/lib/auth
 import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
 import {verifiedCashExpectation} from "@/lib/cash-custody";
+import {currentLibyaCashMonth} from "@/lib/cash-current-period";
 import {getXyLiveSalesConfig} from "@/lib/xy-live-sales-sync";
 import {CASH_ELIGIBLE_VMS_BATCH_STATUSES} from "@/lib/vms-cash-source";
 
@@ -36,7 +37,7 @@ export default async function CashActionQueuePage(){
  const db=await getAuthenticatedSupabaseServerClient();
  if(!db)return <EmptyState title="Cash Action Queue unavailable" body="The signed-in database session is unavailable."/>;
 
- const cutoff=new Date(Date.now()-30*86400000).toISOString();
+ const cutoff=currentLibyaCashMonth().startTimestamp;
  const liveSalesConfig=getXyLiveSalesConfig();
  const {data,error,count}=await db.from("cash_collections")
   .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
@@ -84,7 +85,7 @@ export default async function CashActionQueuePage(){
  ].filter(([,count])=>Number(count)>0) as Array<[string,number,string]>;
 
  return <div className="space-y-6">
-  <PageHeader title="Cash Action Queue" subtitle="Current cash only. Legacy backlog stays in Data Health and does not pollute today’s operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
+  <PageHeader title="Cash Action Queue" subtitle="This month's current removals only. Legacy backlog stays in Data Health and does not pollute today's operating queue." action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections/count">Count current cash</SecondaryButton><SecondaryButton href="/cash-collections">Cash Custody</SecondaryButton><SecondaryButton href="/operations-health">Data Health</SecondaryButton></div>}/>
 
   {rawCashSourceFreshness === "stale" && buckets.vms.length ? (
    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -108,8 +109,8 @@ export default async function CashActionQueuePage(){
   {visibleCards.length?<section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{visibleCards.map(([label,count,href])=><Link key={label} href={href} className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-medium text-slate-600">{label}</div><strong className="mt-1 block text-3xl">{count}</strong></Link>)}</section>:<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{incompleteRead?"Loaded cash records contain no current actions, but the full queue is not yet verified.":"No current cash actions need attention."}</div>}
 
   <section className="surface-card" id="all-current">
-   <div className="mb-4"><h2 className="text-lg font-semibold">Current actions</h2><p className="mt-1 text-sm text-slate-500">Sorted by oldest first. Open the cash bag to complete the existing custody/count/VMS workflow.</p></div>
-   {!actionable.length?<EmptyState title={incompleteRead?"Loaded cash slice has no actions":"Current cash is clear"} body={incompleteRead?"The full queue could not be verified; review the full cash custody list.":"No unresolved cash from the last 30 days requires action."}/>:
+   <div className="mb-4"><h2 className="text-lg font-semibold">Current actions</h2><p className="mt-1 text-sm text-slate-500">Current month, oldest first. Use Count current cash to save actual money to existing removal; XY may be reviewed later.</p></div>
+   {!actionable.length?<EmptyState title={incompleteRead?"Loaded cash slice has no actions":"Current cash is clear"} body={incompleteRead?"The full queue could not be verified; review the full cash custody list.":"No unresolved cash from this month's removals requires action."}/>:
    <DataTable headers={["Age","Bag","Collector","Stage","Counted","Expected","Variance","Next action"]}>{actionable.map((row:any)=>{
     const machines=(row.machine_links??[]).map((x:any)=>x.machine?.location?.name??x.machine?.name??x.machine?.machine_code).filter(Boolean);
     return <tr key={row.id} id={row.action.key}>
