@@ -11,6 +11,18 @@ import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buc
 
 export const dynamic = "force-dynamic";
 
+type CashToCount = {
+  id: string;
+  cash_bag_id: string | null;
+  collected_at: string;
+  custody_status: "removed" | "in_storage";
+  storage_seal_condition: string | null;
+  operator: { full_name: string | null } | null;
+  machine_links: Array<{
+    machine: { name: string | null; machine_code: string | null } | null;
+  }>;
+};
+
 function dateTime(value: string | null | undefined) {
   if (!value) return "Not recorded";
   return new Intl.DateTimeFormat("en-GB", {
@@ -63,7 +75,7 @@ export default async function CashCountCurrentMonthPage() {
   }
   if (count !== null && count !== undefined && (data ?? []).length !== count)
     return <ErrorState title="Cash count list incomplete" body="Some current removals were not loaded. No counts were changed. Use Cash Custody to review the full list." />;
-  const rows = (data ?? []) as any[];
+  const rows = (data ?? []) as unknown as CashToCount[];
   const ids = rows.map((row) => String(row.id));
   const [receipts, events] = ids.length ? await Promise.all([
     db.from("cash_removal_receipts").select("cash_collection_id,removal_evidence_path").in("cash_collection_id", ids),
@@ -106,10 +118,10 @@ export default async function CashCountCurrentMonthPage() {
       <div className="space-y-5">
         {sorted.map((row) => {
           const bagLabel = String(row.cash_bag_id ?? "").startsWith("UNNUMBERED_") ? "Unnumbered physical bag" : row.cash_bag_id || "No printed bag reference";
-          const machines = (row.machine_links ?? []).map((item: any) => item.machine?.name || item.machine?.machine_code).filter(Boolean);
+          const machines = (row.machine_links ?? []).map((item) => item.machine?.name || item.machine?.machine_code).filter(Boolean);
           const removalPath = receiptByCollection.get(row.id) ?? removalEventPhoto.get(row.id);
           const storagePath = latestStoragePhoto.get(row.id);
-          const operator = (row.operator as { full_name?: string } | null)?.full_name ?? "Not recorded";
+          const operator = row.operator?.full_name ?? "Not recorded";
           return (
             <section key={row.id} id={`cash-count-${row.id}`} className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
