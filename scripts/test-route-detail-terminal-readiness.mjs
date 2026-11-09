@@ -40,3 +40,12 @@ test("open discrepancy units reuse the loaded page and fetch every overflow page
   assert.match(compact, /offset \+= rows\.length/);
   assert.match(compact, /openRouteDiscrepancyUnits === null.*?complete unit total could not be loaded/);
 });
+
+test("route payroll is manager-only and does not query absent legacy tables", () => {
+  assert.match(compact, /import \{[^}]*canManagePayroll[^}]*\} from "@\/lib\/authz"/);
+  assert.match(compact, /\{canManagePayroll\(profile\) \? \( <section className="surface-card p-4">/);
+  assert.match(compact, /<SecondaryButton href="\/payroll">/);
+  assert.doesNotMatch(routeDetail, /from\("route_pay_breakdowns"\)/);
+  assert.doesNotMatch(routeDetail, /payroll\/routes\/\$\{id\}/);
+  assert.doesNotMatch(routeDetail, /routePayBreakdown|total_pay_lyd/);
+});
