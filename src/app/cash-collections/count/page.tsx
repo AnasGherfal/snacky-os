@@ -111,7 +111,7 @@ export default async function CashCountCurrentMonthPage() {
           const storagePath = latestStoragePhoto.get(row.id);
           const operator = (row.operator as { full_name?: string } | null)?.full_name ?? "Not recorded";
           return (
-            <section key={row.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <section key={row.id} id={`cash-count-${row.id}`} className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-bold text-slate-950">{machines.join(" + ") || "Machine not linked"}</h2>
