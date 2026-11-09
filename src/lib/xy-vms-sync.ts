@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
+import { shouldLogXySyncStart, shouldLogXySyncFinish } from "@/lib/xy-vms-activity-policy";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
@@ -616,15 +617,19 @@ async function createSyncRun(supabase: SupabaseServer, syncType: SyncType, profi
   if (error?.code === "23505") throw new XySyncAlreadyRunningError();
   if (error || !data?.id) throw new Error(`Could not create XY sync run: ${error?.message ?? "missing id"}`);
 
-  await logActivity({
-    profile,
-    action: "xy_vms_sync_started",
-    entityType: "vms_sync",
-    entityId: data.id,
-    entityLabel: `XY ${syncType}`,
-    metadata: { sync_type: syncType, provider: "xy", merchant_id: config.maskedMerchantId },
-    summary: `Started XY VMS ${syncType.replaceAll("_", " ")} sync`,
-  });
+  // Each automatic start is already durable in vms_sync_runs (status=running).
+  // Preserve activity timeline for user-triggered runs, not duplicate cron noise.
+  if (shouldLogXySyncStart(profile)) {
+    await logActivity({
+      profile,
+      action: "xy_vms_sync_started",
+      entityType: "vms_sync",
+      entityId: data.id,
+      entityLabel: `XY ${syncType}`,
+      metadata: { sync_type: syncType, provider: "xy", merchant_id: config.maskedMerchantId },
+      summary: `Started XY VMS ${syncType.replaceAll("_", " ")} sync`,
+    });
+  }
 
   return data.id as string;
 }
@@ -664,16 +669,20 @@ async function finishSyncRun({
 
   if (error) console.error("[xy-vms] Failed to update sync run", error);
 
-  await logActivity({
-    profile,
-    action: status === "failed" ? "xy_vms_sync_failed" : "xy_vms_sync_completed",
-    entityType: "vms_sync",
-    entityId: syncRunId,
-    entityLabel: `XY ${syncType}`,
-    afterData: { status, ...stats, errors: stats.errors.slice(0, 25) },
-    metadata: { sync_type: syncType, provider: "xy" },
-    summary: message,
-  });
+  // vms_sync_runs retains all successes. Preserve warning/failure events,
+  // user-triggered activity and any outcome whose canonical update failed.
+  if (shouldLogXySyncFinish(profile, status, Boolean(error))) {
+    await logActivity({
+      profile,
+      action: status === "failed" ? "xy_vms_sync_failed" : "xy_vms_sync_completed",
+      entityType: "vms_sync",
+      entityId: syncRunId,
+      entityLabel: `XY ${syncType}`,
+      afterData: { status, ...stats, errors: stats.errors.slice(0, 25) },
+      metadata: { sync_type: syncType, provider: "xy" },
+      summary: message,
+    });
+  }
 }
 
 function revalidateXyPages() {
