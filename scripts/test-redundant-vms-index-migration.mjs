@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
 
-const sql = fs.readFileSync("supabase/migrations/20261110160000_remove_redundant_vms_import_lookup_indexes.sql", "utf8");
+const sql = fs.readFileSync("supabase/migrations/20261110140952_remove_redundant_vms_import_lookup_indexes.sql", "utf8");
 test("only exactly two known redundant non-unique index names can be dropped", () => {
   const drops=[...sql.matchAll(/DROP INDEX\s+(?:IF EXISTS\s+)?([a-z_]+\.[a-z_]+)\s*;/gi)].map(m=>m[1]);
   assert.deepEqual(drops,[

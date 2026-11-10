@@ -2,7 +2,7 @@ name: VMS duplicate-index safe migration
 on:
   pull_request:
     paths:
-      - 'supabase/migrations/20261110160000_remove_redundant_vms_import_lookup_indexes.sql'
+      - 'supabase/migrations/20261110140952_remove_redundant_vms_import_lookup_indexes.sql'
       - 'scripts/test-redundant-vms-index-migration.mjs'
       - '.github/workflows/vms-duplicate-index-safety.yml'
 permissions:
