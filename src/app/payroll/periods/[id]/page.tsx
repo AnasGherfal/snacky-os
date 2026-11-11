@@ -109,7 +109,8 @@ export default async function PayrollRunDetailPage({
           <div><div className="text-sm text-slate-500">Distance pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.distance_pay_amount_lyd ?? 0)}</div></div>
           <div><div className="text-sm text-slate-500">Fuel allowance</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.fuel_allowance_amount_lyd ?? 0)}</div></div>
           <div><div className="text-sm text-slate-500">Bonuses</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.bonus_amount_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Deductions</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.deduction_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Total deductions / previously paid</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.deduction_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Salary already paid this month</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(preview?.salaryPrepaymentAmount ?? (runRow.calculation_snapshot?.salary_prepayment_amount_lyd as number | string | null) ?? 0)}</div><div className="text-xs text-slate-500">Prepayments, not employee penalties</div></div>
           <div><div className="text-sm text-slate-500">Gross pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.gross_pay_lyd ?? 0)}</div></div>
           <div><div className="text-sm text-slate-500">Paid at</div><div className="mt-1 font-semibold text-slate-900">{runRow.paid_at ? new Date(runRow.paid_at).toLocaleString("en-US") : "-"}</div></div>
         </div>
@@ -120,6 +121,14 @@ export default async function PayrollRunDetailPage({
         ) : null}
       </section>
 
+      {preview && preview.salaryPrepayments.length>0?<section className="surface-card mb-6">
+        <h2 className="text-lg font-semibold text-slate-950">Previously paid against salary</h2>
+        <p className="mt-1 text-sm text-slate-600">Recorded salary prepayments reduce the outstanding payout once. Exact original payment dates may be unknown. They have not been separately booked into Finance by this page.</p>
+        <div className="mt-3 space-y-2">{preview.salaryPrepayments.map(advance=><div key={advance.id} className="flex justify-between gap-3 rounded-lg bg-slate-50 p-3 text-sm">
+          <span>{advance.description}</span><strong>{moneyLabel(advance.amountLyd)}</strong>
+        </div>)}</div>
+        <div className="mt-3 font-semibold">Total already paid: {moneyLabel(preview.salaryPrepaymentAmount)}</div>
+      </section>:null}
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>

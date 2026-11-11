@@ -567,6 +567,9 @@ export async function markPayrollRunPaid(formData: FormData) {
     existingRunId: existingRun.id,
   });
   if (!preview) fail(path, "This payroll run no longer has an active pay profile.");
+  if (!Number.isFinite(preview.netPay) || preview.netPay < 0) {
+    fail(path, "Previously paid salary advances and other deductions exceed gross pay. Review the advances before marking payroll paid.");
+  }
 
   const refreshPayload = {
     pay_profile_id: preview.payProfile.id,

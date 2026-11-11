@@ -44,6 +44,7 @@ export default async function PayrollOverviewPage({
     incidentsResult,
     { data: teamMembers },
     { count: completedRouteCount },
+    salaryPrepaymentsResult,
   ] = await Promise.all([
     supabase.from("operator_pay_profile_versions").select("*").eq("is_active", true).order("updated_at", { ascending: false }),
     supabase.from("payroll_runs").select("*").order("period_start", { ascending: false }).limit(8),
@@ -51,6 +52,9 @@ export default async function PayrollOverviewPage({
     supabase.from("operator_incidents").select("id, status", { count: "exact" }).in("status", ["pending", "approved"]),
     supabase.from("team_members").select("id, full_name"),
     supabase.from("routes").select("id", { count: "exact", head: true }).gte("completed_at", `${monthStart}T00:00:00`).in("status", ["completed", "reviewed", "verified", "payroll_pending", "paid", "disputed"]),
+    supabase.from("operator_salary_prepayments")
+      .select("id,operator_id,amount_lyd,description,paid_at,reported_at")
+      .eq("service_month", monthStart).eq("status", "active").order("created_at",{ascending:true}),
   ]);
 
   const payProfiles = payProfilesResult.data ?? [];
@@ -62,6 +66,7 @@ export default async function PayrollOverviewPage({
     { table: "payroll_runs", step: "load_recent_payroll_runs", error: payrollRunsResult.error, resultEmpty: !payrollRunsResult.error && payrollRuns.length === 0 },
     { table: "locations", step: "load_active_locations", error: locationsResult.error, resultEmpty: !locationsResult.error && locations.length === 0 },
     { table: "operator_incidents", step: "load_pending_incidents", error: incidentsResult.error, resultEmpty: !incidentsResult.error && incidents.length === 0 },
+    { table: "operator_salary_prepayments", step: "load_month_salary_prepayments", error: salaryPrepaymentsResult.error },
   ].filter((issue) => Boolean(issue.error));
 
   if (issues.length) {
@@ -99,6 +104,8 @@ export default async function PayrollOverviewPage({
     .filter((run) => run.period_start === monthStart)
     .reduce((sum, run) => sum + Number(run.net_pay_lyd ?? 0), 0);
   const teamMemberById = new Map(((teamMembers ?? []) as TeamMemberNameRow[]).map((member) => [member.id, member.full_name ?? "Operator"]));
+  const salaryPrepayments = (salaryPrepaymentsResult.data ?? []) as Array<{id:string;operator_id:string;amount_lyd:number|string;description:string;paid_at:string|null;reported_at:string|null}>;
+  const salaryPrepaymentTotal = salaryPrepayments.reduce((total,row)=>total+Number(row.amount_lyd??0),0);
 
   const quickLinks = [
     {
@@ -135,6 +142,20 @@ export default async function PayrollOverviewPage({
       {params.saved ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Payroll changes saved.</div> : null}
       {params.paid ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Payroll run marked paid.</div> : null}
 
+      {salaryPrepayments.length>0?<section className="surface-card mb-6" aria-label="Already paid salary advances">
+        <h2 className="text-lg font-semibold text-slate-950">Salary already paid this month</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          These are prepayments against monthly wages, not disciplinary deductions. They reduce the amount still payable at month-end; no second cash payment is created here. Exact original payment dates and funding accounts may be unrecorded.
+        </p>
+        <div className="mt-3 text-2xl font-semibold tabular-nums text-slate-950">{moneyLabel(salaryPrepaymentTotal)}</div>
+        <div className="mt-3 space-y-2">
+          {salaryPrepayments.map(row=><div key={row.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <span>{teamMemberById.get(row.operator_id)??"Operator"} · {row.description}</span>
+            <strong>{moneyLabel(row.amount_lyd)}</strong>
+          </div>)}
+        </div>
+        <p className="mt-2 text-xs text-amber-800">The current payroll module requires an operator pay profile before it can calculate the final monthly amount. Recording these prepayments does not mark payroll as paid or create a Finance cash-out entry.</p>
+      </section>:null}
       <div className="mb-6 grid gap-4 md:grid-cols-4">
         <div className="surface-card">
           <div className="text-sm text-slate-500">Active pay profiles</div>
