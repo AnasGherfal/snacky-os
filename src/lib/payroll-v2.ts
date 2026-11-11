@@ -195,6 +195,8 @@ export type PayrollRunPreview = {
   includedRoutes: PayrollRunIncludedRoute[];
   includedStops: PayrollRunIncludedStop[];
   includedIncidents: PayrollRunIncludedIncident[];
+  salaryPrepayments: Array<{ id: string; amountLyd: number; paidAt: string | null; description: string }>;
+  salaryPrepaymentAmount: number;
   missingDistanceWarnings: PayrollDistanceWarning[];
   completedRoutesCount: number;
   completedStopsCount: number;
@@ -479,7 +481,9 @@ export async function buildPayrollRunPreview({
   const payProfileData = await loadEffectiveOperatorPayProfileVersion(supabase, operatorId, periodEnd);
   if (!payProfileData) return null;
 
-  const [{ data: routeRows }, { data: incidentRows }, { data: operator }] = await Promise.all([
+  const fullMonthlyPayroll = /^\d{4}-\d{2}-01$/.test(periodStart)
+    && periodEnd === new Date(Date.UTC(Number(periodStart.slice(0,4)),Number(periodStart.slice(5,7)),0)).toISOString().slice(0,10);
+  const [{ data: routeRows }, { data: incidentRows }, { data: operator }, salaryPrepaymentsResult] = await Promise.all([
     supabase.from("routes").select("id, route_date, status, completed_at, paid_at").eq("operator_id", operatorId),
     supabase
       .from("operator_incidents")
@@ -490,7 +494,20 @@ export async function buildPayrollRunPreview({
       .order("incident_date", { ascending: true })
       .order("created_at", { ascending: true }),
     supabase.from("team_members").select("id, full_name").eq("id", operatorId).maybeSingle(),
+    fullMonthlyPayroll
+      ? supabase.from("operator_salary_prepayments")
+          .select("id,amount_lyd,paid_at,description")
+          .eq("operator_id",operatorId).eq("service_month",periodStart).eq("status","active")
+          .order("created_at",{ascending:true})
+      : Promise.resolve({data:[],error:null}),
   ]);
+  if (salaryPrepaymentsResult.error) {
+    console.error("[payroll-v2] Salary prepayment source unavailable", salaryPrepaymentsResult.error);
+    throw new Error("Salary advance records could not be verified. Payroll was not calculated.");
+  }
+  const salaryPrepayments = ((salaryPrepaymentsResult.data ?? []) as Array<{id:string;amount_lyd:number|string;paid_at:string|null;description:string}>)
+    .map(row=>({id:row.id,amountLyd:toMoney(row.amount_lyd),paidAt:row.paid_at,description:row.description}));
+  const salaryPrepaymentAmount = toMoney(salaryPrepayments.reduce((sum,row)=>sum+row.amountLyd,0));
 
   const typedRouteRows = (routeRows ?? []) as PayrollRouteRow[];
   const completedRoutes = typedRouteRows
@@ -649,7 +666,9 @@ export async function buildPayrollRunPreview({
   const distancePayAmount = toMoney(totalPayrollDistanceKm * toMoney(payProfileData.version.pay_per_km_lyd));
   const fuelAllowanceAmount = toMoney(totalPayrollDistanceKm * toMoney(payProfileData.version.fuel_allowance_per_km_lyd));
   const bonusAmount = 0;
-  const deductionAmount = toMoney(includedIncidents.reduce((sum, incident) => sum + incident.deductionAmountLyd, 0));
+  const incidentDeductionAmount = toMoney(includedIncidents.reduce((sum, incident) => sum + incident.deductionAmountLyd, 0));
+  // Salary prepayments reduce the outstanding wage payment, not the gross salary.
+  const deductionAmount = toMoney(incidentDeductionAmount + salaryPrepaymentAmount);
   const grossPay = toMoney(baseSalaryAmount + routePayAmount + stopPayAmount + distancePayAmount + fuelAllowanceAmount + bonusAmount);
   const netPay = toMoney(grossPay - deductionAmount);
 
@@ -679,6 +698,8 @@ export async function buildPayrollRunPreview({
       fuel_allowance_amount_lyd: fuelAllowanceAmount,
       bonus_amount_lyd: bonusAmount,
       deduction_amount_lyd: deductionAmount,
+      incident_deductions_lyd: incidentDeductionAmount,
+      previously_paid_salary_lyd: salaryPrepaymentAmount,
       gross_pay_lyd: grossPay,
       net_pay_lyd: netPay,
       missing_distance_stop_count: missingDistanceWarnings.length,
@@ -686,6 +707,9 @@ export async function buildPayrollRunPreview({
     included_routes: includedRoutes,
     included_stops: includedStops,
     included_incidents: includedIncidents,
+    salary_prepayments: salaryPrepayments,
+    salary_prepayment_amount_lyd: salaryPrepaymentAmount,
+    monthly_prepayments_included: fullMonthlyPayroll,
     missing_distance_warnings: missingDistanceWarnings,
   } satisfies Record<string, unknown>;
 
@@ -699,6 +723,8 @@ export async function buildPayrollRunPreview({
     includedRoutes,
     includedStops,
     includedIncidents,
+    salaryPrepayments,
+    salaryPrepaymentAmount,
     missingDistanceWarnings,
     completedRoutesCount,
     completedStopsCount,
