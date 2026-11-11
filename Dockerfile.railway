@@ -1,0 +1,30 @@
+# Non-production Railway container build. NOT deployed automatically.
+# The current Vercel app keeps operating until a separately approved cutover.
+FROM node:24-bookworm-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:24-bookworm-slim AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV SNACKY_RAILWAY_STANDALONE=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# GitHub CI already runs prebuild regressions; compile only once on Railway.
+RUN node scripts/next-build.mjs
+RUN test -f .next/standalone/server.js
+
+FROM node:24-bookworm-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN mkdir -p /app/.next && chown -R node:node /app
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+USER node
+EXPOSE 3000
+CMD ["node","server.js"]
