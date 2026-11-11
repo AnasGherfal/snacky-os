@@ -1,0 +1,23 @@
+name: Vercel production build cost guard
+on:
+  pull_request:
+    paths:
+      - 'scripts/vercel-build-gate.mjs'
+      - 'scripts/vercel-build-policy.mjs'
+      - 'scripts/test-vercel-build-gate.mjs'
+      - '.github/workflows/vercel-cost-gate-safety.yml'
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate production fail-open and non-runtime skip behavior
+        run: node --test scripts/test-vercel-build-gate.mjs
