@@ -1,0 +1,20 @@
+# Keep production credentials, developer state and generated files out of builds.
+.git
+.github
+.vercel
+.next
+node_modules
+.env
+.env.*
+*.pem
+*.key
+*.log
+coverage
+docs
+supabase/migrations
+screenshots
+tmp
+temp
+.cache
+# Tests run in GitHub CI, not inside paid hosting builds.
+scripts/test-*
