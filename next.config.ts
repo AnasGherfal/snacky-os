@@ -27,6 +27,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  ...(process.env.SNACKY_RAILWAY_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   experimental: {
     serverActions: {
       bodySizeLimit: "12mb",
