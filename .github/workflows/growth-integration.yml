@@ -24,6 +24,7 @@ jobs:
         run: |
           python .growth-integration/apply.py
           python .growth-integration/purchase.py
+          python .growth-integration/types.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -49,6 +50,13 @@ jobs:
           const t=spawnSync('npx',['tsc','--noEmit'],{encoding:'utf8',timeout:180000,maxBuffer:16*1024*1024});
           fs.writeFileSync('integration-evidence/typescript.log',`${t.stdout??''}\n${t.stderr??''}`);
           checks.push({name:'typescript',status:t.status===0?'passed':'failed',exit_code:t.status});
+          if(checks.every(c=>c.status==='passed')){
+            const start=Date.now();
+            const b=spawnSync('npm',['run','build'],{encoding:'utf8',timeout:540000,maxBuffer:32*1024*1024});
+            fs.writeFileSync('integration-evidence/production-build.log',`${b.stdout??''}\n${b.stderr??''}`);
+            checks.push({name:'production-build-with-prebuild',status:b.status===0?'passed':'failed',exit_code:b.status,duration_ms:Date.now()-start});
+            console.log('production-build-with-prebuild',b.status);
+          }
           fs.writeFileSync('integration-evidence/summary.json',JSON.stringify({source:process.env.GITHUB_SHA,checks},null,2));
           if(checks.some(c=>c.status==='failed'))process.exitCode=1;
           NODE
