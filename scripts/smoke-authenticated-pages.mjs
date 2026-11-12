@@ -147,6 +147,7 @@ test("authenticated high-risk pages render without crash and viewer is redirecte
       "/dashboard",
       "/inventory",
       "/inventory/movements",
+      "/inventory/movements/new",
       "/inventory-dashboard",
       "/products",
       "/products/new",
@@ -172,7 +173,7 @@ test("authenticated high-risk pages render without crash and viewer is redirecte
       await assertPageOk(path, owner.cookie);
     }
 
-    for (const path of ["/inventory/movements/new", "/storage-locations", "/purchases/new", "/products/new"]) {
+    for (const path of ["/storage-locations", "/purchases/new", "/products/new"]) {
       await assertPageOk(path, warehouse.cookie);
     }
 
@@ -180,6 +181,14 @@ test("authenticated high-risk pages render without crash and viewer is redirecte
       await assertPageOk(path, operator.cookie);
     }
 
+    // Warehouse staff may receive/count stock, but only owner/admin may post
+    // direct physical balance corrections. Never grant access just for a test.
+    for (const account of [warehouse, operator]) {
+      const denied = await fetchPage("/inventory/movements/new", account.cookie, "manual");
+      assert.ok([303, 307, 308].includes(denied.status), "Non-admin adjustment must be denied");
+      assert.match(denied.headers.get("location") ?? "", /\/unauthorized/);
+      await denied.body?.cancel();
+    }
     const unauthorized = await fetchPage("/inventory", viewer.cookie, "manual");
     assert.ok([303, 307, 308].includes(unauthorized.status), `viewer /inventory should redirect, got ${unauthorized.status}`);
     assert.match(unauthorized.headers.get("location") ?? "", /\/unauthorized/);
