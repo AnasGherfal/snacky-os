@@ -16,6 +16,14 @@ for shard in sorted((root / '.growth-integration').glob('part-*.json')):
         name = edit['path']
         assert name.startswith(('src/', 'scripts/', 'docs/', '.github/workflows/')) or name == 'package.json'
         assert '..' not in Path(name).parts and name not in pending
+        # Restore the reviewed packaging lookup omitted during patch transport.
+        # The independently recorded final file hash below is still mandatory.
+        if name == 'src/app/inventory/OperatorBagStockView.tsx':
+            for operation in edit['ops']:
+                if operation[:2] == [74, 79]:
+                    expected_transport = '      .order("id").range(from, to).abortSignal(signal),\n    { key: row => row.id, maxRows: ROW_LIMIT, signal },\n  );\n'
+                    assert operation[2] == expected_transport
+                    operation[2] += '  const byProduct = packages.error ? null : new Map(packages.data.map((row) => [row.id, row]));\n'
         path = root / name
         if edit['base'] is None:
             assert not path.exists(), f'New file already exists: {name}'
