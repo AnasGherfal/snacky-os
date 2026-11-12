@@ -14,11 +14,14 @@ test("dashboard caps only the optional restock sales-velocity query", () => {
   assert.match(dashboard, /repairMissingRouteStockLines: false/);
   assert.match(dashboard, /recommendationsPromise/);
   assert.match(restockData, /salesQueryTimeoutMs\?: number/);
-  assert.match(restockData, /AbortSignal\.timeout\(options\.salesQueryTimeoutMs\)/);
-  assert.match(restockData, /query\.abortSignal\(/);
+  assert.match(restockData, /AbortSignal\.any/);
+  assert.match(restockData, /Math\.min\(10000,options\.salesQueryTimeoutMs\)/);
+  assert.match(restockData, /\.abortSignal\(signal\)/);
 });
 
-test("dedicated restock page keeps exact uncapped loading", () => {
+test("dedicated restock page paginates exact counts with a shared deadline", () => {
   assert.match(restockPage, /loadRestockPriorityData\(supabase\)/);
   assert.doesNotMatch(restockPage, /salesQueryTimeoutMs/);
+  assert.match(restockData, /readCompleteList/);
+  assert.match(restockData, /\.eq\("sales_month",salesMonth\)/);
 });

@@ -10,12 +10,13 @@ function database(responses) {
     const query = {
       select(columns) { call.columns = columns; return this; },
       in(column, values) { call.filters.push([column, values]); return this; },
+      range(from, to) { call.range = [from, to]; return this; },
       order(column, options) { call.order = [column, options]; return this; },
       abortSignal(signal) { call.signal = signal; return this; },
       then(resolve, reject) {
         const response = responses[table]?.shift();
         if (!response) return Promise.reject(new Error(`Unexpected read: ${table}`)).then(resolve, reject);
-        return Promise.resolve(response).then(resolve, reject);
+        return Promise.resolve({ count: response.error ? null : response.data?.length ?? 0, ...response }).then(resolve, reject);
       },
     };
     return query;
@@ -23,7 +24,7 @@ function database(responses) {
   return { db, calls };
 }
 const machine = { id: 'm1', name: 'Machine', machine_code: 'M1', location: { id: 'l1', name: 'Site' } };
-const stop = { route_id: 'r1', machine_id: 'm1', stop_order: 1 };
+const stop = { id: 's1', route_id: 'r1', machine_id: 'm1', stop_order: 1 };
 
 test('normal summary is two parallel reads, no extra machine round trip', async () => {
   const { db, calls } = database({ team_members: [{ data: [{ id: 'u1', full_name: 'Operator' }], error: null }], route_stops: [{ data: [{ ...stop, machine }], error: null }] });

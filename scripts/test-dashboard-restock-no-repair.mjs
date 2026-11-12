@@ -13,10 +13,11 @@ test("dashboard never performs route-stock repair writes while loading restock s
   assert.match(dashboard, /salesQueryTimeoutMs: 1000/);
   assert.match(dashboard, /repairMissingRouteStockLines: false/);
   assert.match(dashboard, /recommendationsPromise/);
-  assert.match(restockData, /options\.repairMissingRouteStockLines !== false/);
+  assert.doesNotMatch(restockData, /\.(upsert|insert|update|delete|rpc)\s*\(/);
 });
 
-test("dedicated restock page keeps repair behavior by default", () => {
+test("dedicated restock page uses in-memory fallback without repairing route records on GET", () => {
   assert.match(restockPage, /loadRestockPriorityData\(supabase\)/);
-  assert.doesNotMatch(restockPage, /repairMissingRouteStockLines: false/);
+  assert.doesNotMatch(restockData, /async function repairMissingRouteStockLines/);
+  assert.match(restockData, /read-only fallback/);
 });

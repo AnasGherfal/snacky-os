@@ -56,5 +56,9 @@ test("route completion cannot create a cash removal", () => {
   assert.doesNotMatch(routeStop, /name="cash_bag_id"/);
   assert.match(routeStop, /cashCollected: false/);
   assert.match(routeStop, /cashBagId: ""/);
-  assert.match(routeStop, /Cash removal is not part of route completion/);
+  assert.match(routeStop, /Cash removal is recorded separately/);
+  const completion = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
+  assert.match(completion, /cashCollected: false/);
+  assert.match(completion, /cashBagId: ""/);
+  assert.doesNotMatch(completion, /record_standalone_cash_removal_group_v1/);
 });

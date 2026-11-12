@@ -1,3 +1,4 @@
+import { readCompleteList } from "@/lib/complete-list-read";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import {
@@ -8,7 +9,6 @@ import {
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { RouteCashPanel } from "@/components/cash/RouteCashPanel";
@@ -172,6 +172,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const routeRow: any = route;
   const canReviewRouteInventory = isAdminRole(profile);
   const supportClient = getSupabaseAdminClient() ?? supabase;
+  const routeReadSignal = AbortSignal.timeout(10000);
   const [routeDiscrepancyResult, { data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
     canReviewRouteInventory
       ? supabase
@@ -186,32 +187,47 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
-    supabase
-      .from("route_stops")
-      .select("id, stop_order, status, machine_id")
-      .eq("route_id", id)
-      .order("stop_order", { ascending: true }),
-    supabase
-      .from("route_stop_items")
-      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, slot_code, planned_quantity, recommended_take_qty, final_take_qty, picked_quantity, filled_quantity, source, notes, slot_allocations")
-      .eq("route_id", id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("route_stock_lines")
-      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
-      .eq("route_id", id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("route_stop_fill_lines")
-      .select("id, route_stop_id, machine_id, assigned_product_id, product_id, substitute_product_id, action_type, assigned_qty, actual_qty, difference_qty, reason, notes, missing_product_name, needs_review, created_at")
-      .eq("route_id", id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("route_pick_list_items")
-      .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, is_active, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
-      .eq("route_id", id)
-      .order("created_at", { ascending: true }),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("route_stops")
+        .select("id, stop_order, status, machine_id", { count: "exact" }).eq("route_id", id)
+        .order("stop_order", { ascending: true }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id, signal: routeReadSignal },
+    ),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("route_stop_items")
+        .select("id, route_stop_id, machine_id, product_id, machine_slot_id, slot_code, planned_quantity, recommended_take_qty, final_take_qty, picked_quantity, filled_quantity, source, notes, slot_allocations", { count: "exact" }).eq("route_id", id)
+        .order("created_at", { ascending: true }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id, signal: routeReadSignal },
+    ),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("route_stock_lines")
+        .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)", { count: "exact" }).eq("route_id", id)
+        .order("created_at", { ascending: true }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id, signal: routeReadSignal },
+    ),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("route_stop_fill_lines")
+        .select("id, route_stop_id, machine_id, assigned_product_id, product_id, substitute_product_id, action_type, assigned_qty, actual_qty, difference_qty, reason, notes, missing_product_name, needs_review, created_at", { count: "exact" }).eq("route_id", id)
+        .order("created_at", { ascending: true }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id, signal: routeReadSignal },
+    ),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("route_pick_list_items")
+        .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, is_active, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)", { count: "exact" }).eq("route_id", id)
+        .order("created_at", { ascending: true }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id, signal: routeReadSignal },
+    ),
   ]);
+
+  const criticalRouteReadError = stopsError ?? stopItemsError ?? routeStockError ?? fillLinesError ?? pickListItemsError;
+  if (criticalRouteReadError) {
+    console.error("[routes:detail] Complete route stock could not be verified", { id, error: criticalRouteReadError });
+    return <ErrorState
+      title={tr(locale, "Route quantities could not be verified", "تعذر التحقق من كميات الجولة")}
+      body={tr(locale, "The complete route could not be loaded. No partial quantity is treated as zero, and no inventory was changed. Refresh before taking action.", "لم يتم تحميل الجولة بالكامل. لن نعتبر البيانات الناقصة صفراً، ولم يتغير المخزون. حدّث الصفحة قبل تنفيذ أي إجراء.")}
+      action={<SecondaryButton href={`/routes/${id}`}>{tr(locale, "Reload route", "إعادة تحميل الجولة")}</SecondaryButton>}
+    />;
+  }
 
   const routeDiscrepancySchemaMissing = Boolean(
     routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
@@ -312,10 +328,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const [
     { data: machines },
     { data: products },
-    { data: movements },
+    { data: movements, error: movementsError },
     { data: cashCollections },
     { data: issues },
-    { data: routePayBreakdown, error: routePayError },
     terminalReconciliationResult,
     canonicalRouteBagSnapshotResult,
     pendingStopInventoryCommitResult,
@@ -326,11 +341,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
-    supabase
-      .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)")
-      .eq("related_route_id", id)
-      .order("created_at", { ascending: false }),
+    readCompleteList<any>(
+      ({ from, to, signal }) => supabase.from("inventory_movements")
+        .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)", { count: "exact" }).eq("related_route_id", id)
+        .order("created_at", { ascending: false }).order("id").range(from, to).abortSignal(signal),
+      { key: row => row.id },
+    ),
     supabase
       .from("cash_collections")
       .select("id, machine_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at")
@@ -343,7 +359,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           .in("machine_id", machineIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
-    supabase.from("route_pay_breakdowns").select("id, total_pay_lyd, payroll_period_id, recalculated_at").eq("route_id", id).maybeSingle(),
     supportClient
       .from("route_inventory_reconciliations")
       .select("id, action, status, returned_units, discrepancy_units, reason, finalized_at")
@@ -381,7 +396,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .in("action", ["xy_slot_product_change", "xy_slot_product_change_unverified", "xy_slot_product_change_rejected"])
       .order("created_at", { ascending: true }),
   ]);
-  if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
+  if (movementsError) {
+    return <ErrorState title={tr(locale, "Route movement history is incomplete", "سجل حركة الجولة غير مكتمل")}
+      body={tr(locale, "Refresh to verify the full route before reviewing stock or cash. Nothing has been changed.", "حدّث الصفحة للتحقق من الجولة كاملة قبل مراجعة المخزون أو النقد. لم تتغير أي بيانات.")}
+      action={<SecondaryButton href={`/routes/${id}`}>{tr(locale, "Reload route", "إعادة تحميل الجولة")}</SecondaryButton>} />;
+  }
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
     console.error("[routes:detail] Failed to load terminal inventory reconciliation", { id, error: terminalReconciliationResult.error });
   }
@@ -853,28 +872,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <RouteCashPanel routeId={id} routeStatus={String(routeRow.status)} />
 
         <section className="surface-card p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold">{tr(locale, "Payroll", "الأجور")}</h2>
-              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Saved route pay breakdown used for verification and monthly payroll periods.", "تفصيل أجر الجولة المحفوظ المستخدم للمراجعة وفترات الأجور الشهرية.")}</p>
+              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Payroll uses completed work and the operator's current pay profile. Review it in Payroll; this route page does not infer a wage from missing legacy records.", "تُحتسب الأجور من العمل المكتمل وإعدادات أجر المشغل. راجع قسم المرتبات؛ لا يتم تخمين أجر الجولة من سجلات قديمة غير متوفرة.")}</p>
             </div>
-            <SecondaryButton href={`/payroll/routes/${id}`}>{tr(locale, "Open route pay detail", "فتح تفاصيل أجر الجولة")}</SecondaryButton>
-          </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Route pay", "أجر الجولة")}</div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">{routePayBreakdown ? moneyLabel(routePayBreakdown.total_pay_lyd) : tr(locale, "Not calculated yet", "لم يتم احتسابه بعد")}</div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Payroll period", "فترة الأجور")}</div>
-              <div className="mt-1 font-medium text-slate-900">
-                {routePayBreakdown?.payroll_period_id ? <Link href={`/payroll/periods/${routePayBreakdown.payroll_period_id}`} className="link-secondary">{tr(locale, "Open linked period", "فتح الفترة المرتبطة")}</Link> : tr(locale, "Not linked yet", "غير مرتبطة بعد")}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">{tr(locale, "Last recalculated", "آخر إعادة احتساب")}</div>
-              <div className="mt-1 font-medium text-slate-900">{routePayBreakdown?.recalculated_at ? new Date(routePayBreakdown.recalculated_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : "-"}</div>
-            </div>
+            <SecondaryButton href="/payroll/periods">{tr(locale, "Open payroll", "فتح المرتبات")}</SecondaryButton>
           </div>
         </section>
 

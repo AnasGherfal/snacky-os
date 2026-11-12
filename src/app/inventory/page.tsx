@@ -8,6 +8,7 @@ import { getServerI18n } from "@/lib/i18n/server";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { readCompleteList } from "@/lib/complete-list-read";
 import { loadPhysicalStorageData } from "@/lib/storage-inventory-data";
 import { parseRouteReservationUnits, physicalStockStatus } from "@/lib/storage-inventory-model";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
@@ -32,6 +33,7 @@ type InventoryRouteReservation = {
 };
 
 type RouteReservationSourceRow = {
+  id: string;
   route_id?: string | null;
   product_id?: string | null;
   planned_qty?: unknown;
@@ -163,13 +165,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     data: routeReservationsData,
     error: routeReservationsError,
     count: routeReservationsCount,
-  } = await inventoryReadClient.from("route_stock_lines")
-    .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
-    // Completed or cancelled routes are not reservations. The definitive
-    // legacy/status filter below remains in isRouteReservationStatus.
-    .neq("routes.status", "completed")
-    .neq("routes.status", "cancelled")
-    .limit(10001);
+  } = await readCompleteList<RouteReservationSourceRow>(
+    ({ from, to, signal }) => inventoryReadClient.from("route_stock_lines")
+      .select("id, route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)", { count: "exact" })
+      .neq("routes.status", "completed").neq("routes.status", "cancelled")
+      .order("id").range(from, to).abortSignal(signal),
+    { key: row => row.id, maxRows: 10000 },
+  );
   let reservationsKnown = !routeReservationsError && routeReservationsCount !== null
     && routeReservationsCount === (routeReservationsData?.length ?? 0)
     && (routeReservationsData?.length ?? 0) < 10001;
