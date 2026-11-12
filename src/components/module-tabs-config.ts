@@ -12,6 +12,7 @@ const operationsTabs: ModuleTab[] = [
 const cashTabs: ModuleTab[] = [
   { label: "Cash Collections", href: "/cash-collections", labelAr: "تحصيل النقدية" },
   { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
+  { label: "Cash Handling", href: "/cash-handling", labelAr: "تداول النقد", exact: true, group: "Review", groupAr: "المراجعة" },
   { label: "Receive & Count", href: "/cash-handling/receive", labelAr: "استلام وعد النقد" },
   { label: "XY by Pickup Time", href: "/cash-collections/interval-comparison", labelAr: "مطابقة XY بوقت السحب" },
   { label: "Action Queue", href: "/cash-collections/action-queue", labelAr: "ما يحتاج إجراء", group: "Review", groupAr: "المراجعة" },
