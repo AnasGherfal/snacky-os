@@ -21,7 +21,9 @@ jobs:
           ref: fix/snacky-growth-integrate-20261112
           fetch-depth: 1
       - name: Verify exact baseline and apply checked edits
-        run: python .growth-integration/apply.py
+        run: |
+          python .growth-integration/apply.py
+          python .growth-integration/purchase.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
