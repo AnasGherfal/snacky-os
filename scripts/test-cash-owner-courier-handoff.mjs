@@ -26,7 +26,12 @@ assert.match(sql,/c.picked_up_by<>c.delivered_by then 'received'/);
 });
 test("operator and owner use one connected box timeline",()=>{
 const ui=fs.readFileSync("src/components/CashHandlingWorkspace.tsx","utf8");
-assert.match(ui,/suggestedAhmed/);
+// Recipients must come from the server-authorized list, never a hard-coded employee.
+assert.match(ui,/view\.counters\.map/);
+assert.match(ui,/defaultValue=\{box\.assigned_to \?\? ''\}/);
+assert.match(ui,/name="assigned_to"[\s\S]*?required/);
+assert.match(ui,/Choose an authorized person/);
+assert.doesNotMatch(ui,/suggestedAhmed/);
 assert.match(ui,/storage_location/);
 assert.match(ui,/action === 'deliver' \? \{ delivery_location/);
 assert.match(ui,/action === 'takeover'/);

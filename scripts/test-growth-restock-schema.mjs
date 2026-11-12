@@ -40,7 +40,9 @@ function fixture({missingSummary=false,failTable=null}={}) {
     machine_slots:[],latest_vms_stock_by_slot:[],kpi_product_monthly:[],
   };
   const filters=[];
+  const reads=[];
   const client={from(table){
+    reads.push(table);
     assert.ok(Object.hasOwn(tables,table),`Unexpected table: ${table}`);
     let range=[0,499];
     const query={
@@ -66,7 +68,7 @@ function fixture({missingSummary=false,failTable=null}={}) {
     }
     return query;
   }};
-  return {client,filters};
+  return {client,filters,reads};
 }
 test('restock loader queries only valid database statuses and keeps actual route demand',async()=>{
   const {client,filters}=fixture();
@@ -90,4 +92,20 @@ test('failed storage reads withhold recommendations rather than invent zero stoc
   assert.deepEqual(result.items,[]);
   assert.equal(result.storageLoaded,false);
   assert.match(result.errors.storage,/timed out/);
+});
+
+test('dashboard recommendation promise is reused without a second recommendation query',async()=>{
+  const {client,reads}=fixture();
+  const recommendations=[{product_id:'p1',product_name:'Snack',machine_id:'m1',machine_name:'Fixture',current_qty:0,suggested_qty:12,final_qty_to_take:12,priority:'high'}];
+  const result=await loadRestockPriorityData(client,{recommendationsPromise:Promise.resolve(recommendations)});
+  assert.deepEqual(result.errors,{});
+  assert.equal(reads.filter(table=>table==='refill_recommendations').length,0);
+  assert.equal(result.items.length,1);
+  assert.ok(result.items[0].recommendedRefillQty>=12);
+});
+test('dedicated restock query occurs exactly once for a single-page source',async()=>{
+  const {client,reads}=fixture();
+  const result=await loadRestockPriorityData(client);
+  assert.deepEqual(result.errors,{});
+  assert.equal(reads.filter(table=>table==='refill_recommendations').length,1);
 });
