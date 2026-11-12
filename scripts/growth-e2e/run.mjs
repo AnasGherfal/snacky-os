@@ -71,7 +71,7 @@ try{
     const stops=machines.map((m,i)=>({id:randomUUID(),route_id:routes[i%20].id,machine_id:m.id,stop_order:Math.floor(i/20)+1,status:'pending'}));await insert('route_stops',stops);
     const lines=stops.flatMap(stop=>products.map(product=>({id:randomUUID(),route_id:stop.route_id,route_stop_id:stop.id,machine_id:stop.machine_id,product_id:product.id,planned_quantity:1,source:'manual_admin_assignment'})));
     for(let i=0;i<lines.length;i+=250)await insert('route_stop_items',lines.slice(i,i+250));
-    largeRoute={id:randomUUID(),route_date:today,status:'draft',created_by:owner.member,notes:'Unassigned 50-machine draft for overflow-read acceptance'};
+    largeRoute={id:randomUUID(),route_date:today,operator_id:operators[0].member,status:'draft',created_by:owner.member,notes:'Unassigned 50-machine draft for overflow-read acceptance'};
     await insert('routes',largeRoute);
     const largeStops=machines.map((m,i)=>({id:randomUUID(),route_id:largeRoute.id,machine_id:m.id,stop_order:i+1,status:'pending'}));await insert('route_stops',largeStops);
     const largeLines=largeStops.flatMap(stop=>products.map(product=>({id:randomUUID(),route_id:stop.route_id,route_stop_id:stop.id,machine_id:stop.machine_id,product_id:product.id,planned_quantity:1,source:'manual_admin_assignment'})));
@@ -102,6 +102,10 @@ try{
       assert.equal(data.routeItemCount,(i<10?3:2)*30);
       assert.equal(data.pendingStopCount,i<10?3:2);
     }));
+  });
+  await check('large operator pickup API includes all 1,500 planned lines and 50 stops',async()=>{
+    const data=await json(`/api/operator/routes/${largeRoute.id}/pick-list`,operators[0]);
+    assert.equal(data.routeItemCount,1500);assert.equal(data.pendingStopCount,50);
   });
   await check('cross-operator route identifiers are denied under 20 simultaneous requests',async()=>{
     await Promise.all(operators.map(async(op,i)=>{
