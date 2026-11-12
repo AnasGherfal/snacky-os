@@ -8,13 +8,13 @@ import {
 } from "@/components/ui";
 import { formatSignedProductQuantity } from "@/lib/product-quantity";
 import { type SearchParamsRecord } from "@/lib/pagination";
-import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { readCompleteList } from "@/lib/complete-list-read";
 import {
   normalizeOperatorBagBalances,
   type BagLedgerRow, type ProductPackagingRow, type BagDisplayRow,
 } from "@/lib/operator-bag-stock";
 
-const ROW_LIMIT = 5001;
+const ROW_LIMIT = 20000;
 
 function labelError(locale: string, english: string, arabic: string) {
   return locale === "ar" ? arabic : english;
@@ -51,14 +51,14 @@ export async function OperatorBagStockView({
   canReviewHealth: boolean;
 }) {
   const tr = (en: string, ar: string) => labelError(locale, en, ar);
-  const balances = await safeSupabaseQuery<BagLedgerRow>({
-    label: "storage.operator-bag-custody",
-    promise: client.from("current_inventory_by_location")
+  const signal = AbortSignal.timeout(10000);
+  const balances = await readCompleteList<BagLedgerRow>(
+    ({ from, to, signal }) => client.from("current_inventory_by_location")
       .select("product_id, product_name, location_id, location_name, quantity_on_hand", { count: "exact" })
       .eq("location_type", "operator_bag")
-      .order("location_name").order("product_name")
-      .limit(ROW_LIMIT),
-  });
+      .order("location_id").order("product_id").range(from, to).abortSignal(signal),
+    { key: row => JSON.stringify([row.location_id, row.product_id]), maxRows: ROW_LIMIT, signal },
+  );
   if (balances.error || balances.count !== balances.data.length || balances.data.length >= ROW_LIMIT) {
     return <ErrorState
       title={tr("Operator bag stock is unavailable", "تعذر تحميل مخزون حقائب المشغلين")}
@@ -68,15 +68,13 @@ export async function OperatorBagStockView({
   }
   // Optional packaging details may fail independently; the signed unit count
   // is still trustworthy and stays visible with a clear warning.
-  const packages = await safeSupabaseQuery<ProductPackagingRow>({
-    label: "storage.operator-bag-product-packaging",
-    promise: client.from("products")
+  const packages = await readCompleteList<ProductPackagingRow>(
+    ({ from, to, signal }) => client.from("products")
       .select("id,sku,category,case_quantity", { count: "exact" })
-      .order("id")
-      .limit(ROW_LIMIT),
-  });
-  const packagingVerified = !packages.error && packages.count === packages.data.length && packages.data.length < ROW_LIMIT;
-  const byProduct = packagingVerified ? new Map(packages.data.map((r) => [r.id, r])) : null;
+      .order("id").range(from, to).abortSignal(signal),
+    { key: row => row.id, maxRows: ROW_LIMIT, signal },
+  );
+  const byProduct = packages.error ? null : new Map(packages.data.map((row) => [row.id, row]));
   let records: BagDisplayRow[];
   try {
     records = normalizeOperatorBagBalances(balances.data, byProduct, locale === "ar");

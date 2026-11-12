@@ -87,7 +87,8 @@ test("cash count asks only for one combined total and derives its period automat
   assert.doesNotMatch(actions, /formData\.get\("period_start"\)|formData\.get\("period_end"\)/);
   assert.match(custodyForms, /name="total_amount_lyd"/);
   assert.doesNotMatch(custodyForms, /name="period_start"|name="period_end"|Cash period from|Cash period to/);
-  assert.match(custodyForms, /previous full cash-removal record/);
+  assert.match(custodyForms, /original machine and removal date are preserved/);
+  assert.match(custodyForms, /does not create a new removal/);
   assert.match(detailPage, /Automatic per machine from previous removal/);
   assert.doesNotMatch(custodyForms, /name="count_witness_id"|denominationFieldName|Count every denomination/);
   assert.doesNotMatch(custodyForms, /formType="cash-total-count"[\s\S]*name="evidence_file"/);
@@ -137,7 +138,8 @@ test("cash records are immutable and route completion cannot create them", () =>
   assert.match(migration, /cash_collection_events/);
   assert.match(migration, /revoke all on table public\.cash_collection_events from public, anon, authenticated/);
   assert.match(editPage, /Cash custody records are immutable/);
-  assert.match(operatorActions, /Cash removal is not part of route completion/);
+  assert.match(operatorActions, /if \(cashCollected \|\| cashBagId\?\.trim\(\)\)/);
+  assert.match(operatorActions, /Do not submit a second cash amount or bag with refill inventory/);
   assert.doesNotMatch(operatorActions, /\.from\("cash_collections"\)/);
   assert.match(migration, /Submission ID was already used for a different custody event/);
 });

@@ -19,8 +19,9 @@ test("authorized inventory pages use protected server reads for expensive aggreg
   assert.doesNotMatch(inventoryPage, /\.from\("inventory_movements"\)/);
   assert.match(operatorBagView, /client\.from\("current_inventory_by_location"\)/);
   assert.match(physicalStorageLoader, /client\.from\("route_storage_stock_by_product"\)/);
+  assert.match(physicalStorageLoader, /readCompleteList/);
   assert.match(movementLog, /supabase\s*\.from\("inventory_movements"\)/);
-  assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors\)/);
+  assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors, signal\)/);
   assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
   assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(newMovementPage, /inventoryReadClient\.from\("current_inventory_by_location"\)/);

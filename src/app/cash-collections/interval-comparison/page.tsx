@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { readCompleteList } from "@/lib/complete-list-read";
+import { classifyPaymentTender, xyTransactionIdentity, cashAmountCents, withinCashInterval, tripoliHourKey } from "@/lib/cash-interval-model";
 import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
@@ -63,18 +65,12 @@ type XyPreview = {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
 const cashStatuses = new Set(["imported", "imported_with_warnings", "partially_imported"]);
 const formatter = (locale: "en" | "ar") => new Intl.DateTimeFormat(locale === "ar" ? "ar-LY" : "en-GB", {
-  timeZone: "Africa/Tripoli", dateStyle: "medium", timeStyle: "short", hour12: false,
+  timeZone: "Africa/Tripoli", dateStyle: "medium", timeStyle: "medium", hour12: false,
 });
 function timestamp(value: string | null | undefined, locale: "en" | "ar") {
   if (!value) return "—";
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? "—" : formatter(locale).format(d);
-}
-function localHour(value: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Africa/Tripoli", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", hourCycle: "h23",
-  }).format(new Date(value));
 }
 const money = (value: number | string | null) => value == null ? "—" :
   `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LYD`;
@@ -86,19 +82,12 @@ function classifyPayment(row: RawSale): "cash" | "card" | "unknown" {
     }
     return "";
   };
-  const keys = ["payment_method", "payment_type", "paymentMethod", "Payment Method", "Payment method",
+  const keys = ["mode_of_payment", "Mode of payment", "Mode of Payment", "payment_method", "payment_type", "paymentMethod", "Payment Method", "Payment method",
     "Payment Type", "payment", "Payment", "tender", "Tender", "method", "Method"];
   const value = (pick(row.normalized_row, keys) || pick(row.raw_row, keys)).toLowerCase().replace(/\s+/g, " ");
-  // Same categorization as snacky_vms_normalize_payment_method in the existing SQL.
-  if (/(cash|coin|coins|banknote|bank note|notes)/.test(value)) return "cash";
-  if (/(card|credit|debit|visa|master|mastercard|pos|electronic|online|wallet|alipay|wechat|apple ?pay|google ?pay|qr|scan)/.test(value)) return "card";
-  return "unknown";
+  return classifyPaymentTender(value);
 }
-function identity(row: RawSale) {
-  const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
-  const orderKey = [clean(row.machine_code), clean(row.order_number)].filter(Boolean).join("|");
-  return clean(row.third_party_transaction_number) || orderKey || clean(row.duplicate_hash) || row.id;
-}
+
 async function loadDetailedXyPreview(
   db: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   machineId: string,
@@ -108,23 +97,19 @@ async function loadDetailedXyPreview(
   // Pagination is bounded and fail-closed. This is a read-only exploratory preview;
   // the authoritative Finance reconciliation never uses these numbers automatically.
   const rows: RawSale[] = [];
+  const readSignal = AbortSignal.timeout(10000);
   const fields = "id,import_batch_id,created_at,machine_code,order_number,third_party_transaction_number,duplicate_hash,payment_time,delivery_time,payment_amount,transaction_status,raw_row,normalized_row";
   for (const source of ["payment", "delivery"] as const) {
-    for (let offset = 0; offset < 10000; offset += 1000) {
-      let q = db.from("vms_transactions_raw").select(fields)
-        .eq("mapped_machine_id", machineId)
-        .eq("transaction_status", "successful_sale");
-      if (source === "payment") q = q.gt("payment_time", start).lte("payment_time", end);
-      else q = q.is("payment_time", null).gt("delivery_time", start).lte("delivery_time", end);
-      const { data, error } = await q.order("created_at", { ascending: false }).range(offset, offset + 999);
-      if (error) return { status: "error", cash: null, card: null, unknown: null,
-        numberOfSales: 0, unknownMethods: 0, unknownAmounts: 0, hours: [], error: "XY transaction read failed." };
-      rows.push(...(data ?? []) as RawSale[]);
-      if ((data ?? []).length < 1000) break;
-      if (offset + 1000 >= 10000) return { status: "error", cash: null, card: null, unknown: null,
-        numberOfSales: 0, unknownMethods: 0, unknownAmounts: 0, hours: [],
-        error: "Too many transaction rows to verify completely; a partial sum is deliberately withheld." };
-    }
+    const result = await readCompleteList<RawSale>(({from,to,signal}) => {
+      let query = db.from("vms_transactions_raw").select(fields,{count:"exact"}).eq("mapped_machine_id",machineId);
+      query = source === "payment"
+        ? query.gt("payment_time",start).lte("payment_time",end)
+        : query.is("payment_time",null).gt("delivery_time",start).lte("delivery_time",end);
+      return query.order("created_at",{ascending:false}).order("id").range(from,to).abortSignal(signal);
+    }, {key:row=>row.id,maxRows:10000,signal:readSignal});
+    if (result.error) return {status:"error",cash:null,card:null,unknown:null,numberOfSales:0,unknownMethods:0,unknownAmounts:0,hours:[],
+      error:"The complete XY interval could not be verified. No partial cash total is shown."};
+    rows.push(...result.data);
   }
   if (!rows.length) return { status: "no_data", cash: null, card: null, unknown: null,
     numberOfSales: 0, unknownMethods: 0, unknownAmounts: 0, hours: [] };
@@ -133,7 +118,7 @@ async function loadDetailedXyPreview(
   const batches = new Map<string, ImportBatch>();
   for (let n = 0; n < batchIds.length; n += 100) {
     const { data, error } = await db.from("vms_import_batches")
-      .select("id,status,deleted_at,is_active,imported_at").in("id", batchIds.slice(n, n + 100));
+      .select("id,status,deleted_at,is_active,imported_at").in("id", batchIds.slice(n, n + 100)).abortSignal(readSignal);
     if (error) return { status: "error", cash: null, card: null, unknown: null,
       numberOfSales: 0, unknownMethods: 0, unknownAmounts: 0, hours: [],
       error: "XY source provenance could not be checked." };
@@ -154,21 +139,23 @@ async function loadDetailedXyPreview(
   const hourly = new Map<string, Hour>();
   let cashCents = 0, cardCents = 0, unknownCents = 0, unknownMethods = 0, unknownAmounts = 0, numberOfSales = 0;
   for (const row of eligible) {
-    const key = identity(row);
+    const key = xyTransactionIdentity(row);
     if (seen.has(key)) continue;
     seen.add(key);
+    // Latest imported state wins BEFORE eligibility: a later refund/failed
+    // delivery cannot revive an older successful row for the same order.
+    if (row.transaction_status !== "successful_sale") continue;
     const time = row.payment_time ?? row.delivery_time;
-    if (!time || Date.parse(time) <= Date.parse(start) || Date.parse(time) > Date.parse(end)) continue;
+    if (!time || !withinCashInterval(time, start, end)) continue;
     const category = classifyPayment(row);
-    const amount = row.payment_amount === null ? NaN : Number(row.payment_amount);
-    if (!Number.isFinite(amount) || amount < 0) {
+    const cents = cashAmountCents(row.payment_amount);
+    if (cents === null) {
       unknownAmounts++;
       continue;
     }
-    const cents = Math.round(amount * 100);
     numberOfSales++;
     if (category === "unknown") unknownMethods++;
-    const hourKey = localHour(time);
+    const hourKey = tripoliHourKey(time);
     const hour = hourly.get(hourKey) ?? { label: hourKey, cash: 0, card: 0, unknown: 0, transactions: 0 };
     hour.transactions++;
     hour[category] += cents;
