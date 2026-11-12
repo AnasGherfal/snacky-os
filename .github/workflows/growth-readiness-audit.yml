@@ -1,0 +1,76 @@
+name: Snacky growth readiness audit
+on:
+  workflow_dispatch:
+  push:
+    branches: [qa/snacky-growth-hardening-20261112]
+permissions:
+  contents: read
+concurrency:
+  group: growth-readiness-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked application sources (no runtime secrets)
+        run: |
+          mkdir -p /tmp/snacky-audit
+          git archive --format=tar.gz --output=/tmp/snacky-audit/source.tar.gz HEAD src scripts supabase package.json package-lock.json tsconfig.json next.config.ts .github/workflows
+          git rev-parse HEAD > /tmp/snacky-audit/commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: growth-source-${{ github.sha }}
+          path: /tmp/snacky-audit/
+          retention-days: 3
+  regression-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CI: true
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Run independent checks without production credentials
+        shell: bash
+        run: |
+          mkdir -p audit-results
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+          const scripts = JSON.parse(fs.readFileSync('package.json','utf8')).scripts;
+          const requested = ['audit:performance','test','test:role-mobile-nav','test:admin-shell-usability','test:header-primary-destination','test:dashboard-cache','test:dashboard-read-cache','test:critical-mutation-feedback','test:route-stop-validation','test:route-stop-quantity-contract','test:route-pick-list-checked-only','test:route-ledger-core','test:finance-ledger-idempotency-contract','test:finance-retry-runtime','test:finance-capability-routing','test:finance-manager-acl','test:cash-handover','test:cash-independent-physical-count','test:cash-route-physical-closure','test:payroll-v2','test:payroll-runtime-access','test:xy-live-sales','test:inventory-trust','test:growth-hardening'];
+          const results=[];
+          for(const name of requested){
+            if(!scripts[name]) { results.push({name,status:'not_configured'});continue; }
+            const start=Date.now();
+            const r=spawnSync('npm',['run',name],{encoding:'utf8',timeout:90000,maxBuffer:8*1024*1024});
+            const safe=name.replace(/[^a-zA-Z0-9_-]/g,'_');
+            fs.writeFileSync(`audit-results/${safe}.log`,`${r.stdout??''}\n${r.stderr??''}`);
+            results.push({name,exit_code:r.status,status:r.status===0?'passed':'failed',duration_ms:Date.now()-start,error:r.error?.code??null});
+            console.log(name,r.status===0?'PASS':'FAIL');
+          }
+          const t=spawnSync('npx',['tsc','--noEmit'],{encoding:'utf8',timeout:180000,maxBuffer:8*1024*1024});
+          fs.writeFileSync('audit-results/typescript.log',`${t.stdout??''}\n${t.stderr??''}`);
+          results.push({name:'typescript',status:t.status===0?'passed':'failed',exit_code:t.status});
+          fs.writeFileSync('audit-results/summary.json',JSON.stringify({commit:process.env.GITHUB_SHA,checks:results},null,2));
+          console.log(JSON.stringify(results,null,2));
+          if(results.some(r=>r.status==='failed')) process.exitCode=1;
+          NODE
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-verification-${{ github.sha }}
+          path: audit-results/
+          retention-days: 14
