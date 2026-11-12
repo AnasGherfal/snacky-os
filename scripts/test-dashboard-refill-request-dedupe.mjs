@@ -23,7 +23,9 @@ test("dashboard restock reuses the in-flight refill rows", () => {
   );
   assert.match(restockData, /recommendationsPromise\?: PromiseLike<RestockRecommendationRow\[]>/);
   assert.match(restockData, /options\.recommendationsPromise/);
-  assert.match(restockData, /: safeSupabaseQuery<RestockRecommendationRow>\(/);
+  assert.match(restockData, /Promise\.resolve\(options\.recommendationsPromise\)/);
+  assert.match(restockData, /: complete<RestockRecommendationRow/);
+  // Actual no-second-query behavior is checked in test-growth-restock-schema.mjs.
 });
 
 test("dedicated restock page keeps its own recommendation read", () => {
