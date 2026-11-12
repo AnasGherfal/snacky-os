@@ -5,12 +5,17 @@ export type ModuleTabGroup = { name: string; nameAr: string; tabs: ModuleTab[]; 
 const operationsTabs: ModuleTab[] = [
   { label: "Routes", href: "/routes", labelAr: "المسارات" },
   { label: "New Route", href: "/routes/new", labelAr: "مسار جديد" },
-  { label: "Refills", href: "/refills", labelAr: "التعبئة" },
+  { label: "Operator Notes", href: "/routes/notes", labelAr: "ملاحظات المشغلين" },
+  { label: "Inventory Review", href: "/routes/inventory-review", labelAr: "مراجعة فروق الجولة", group: "Review", groupAr: "المراجعة" },
+  { label: "Refills", href: "/refills", labelAr: "التعبئة", group: "History", groupAr: "السجلات", advanced: true },
 ];
 const cashTabs: ModuleTab[] = [
   { label: "Cash Collections", href: "/cash-collections", labelAr: "تحصيل النقدية" },
   { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
-  { label: "Cash Handling", href: "/cash-handling", labelAr: "تسليم وعد النقد" },
+  { label: "Cash Handling", href: "/cash-handling", labelAr: "تداول النقد", exact: true, group: "Review", groupAr: "المراجعة" },
+  { label: "Receive & Count", href: "/cash-handling/receive", labelAr: "استلام وعد النقد" },
+  { label: "XY by Pickup Time", href: "/cash-collections/interval-comparison", labelAr: "مطابقة XY بوقت السحب" },
+  { label: "Action Queue", href: "/cash-collections/action-queue", labelAr: "ما يحتاج إجراء", group: "Review", groupAr: "المراجعة" },
 ];
 const stockTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },

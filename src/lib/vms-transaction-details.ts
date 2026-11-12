@@ -1,4 +1,5 @@
-﻿import { createHash } from "node:crypto";
+import { classifyPaymentTender } from "./cash-interval-model.ts";
+import { createHash } from "node:crypto";
 import { detectHeaderRowIndex, normalizeHeader, type VmsSalesReportPeriod } from "./vms-parser.ts";
 import { orderDetailsNumber } from "./vms-order-details.ts";
 
@@ -207,23 +208,7 @@ export function monthlyTransactionQuantity(row: Record<string, string>) {
 }
 
 export function monthlyTransactionPaymentMethod(row: Record<string, string>) {
-  const raw = monthlyTransactionValue(row, monthlyTransactionAliases.modeOfPayment);
-  const normalized = stableText(raw).replace(/\s+/g, " ");
-  const compact = compactText(raw);
-  if (!normalized) return "unknown";
-  if (normalized.includes("cash") || compact.includes("cash") || compact.includes("banknote") || compact.includes("coin")) return "cash";
-  if (
-    normalized.includes("card")
-    || normalized.includes("credit")
-    || normalized.includes("debit")
-    || normalized.includes("visa")
-    || normalized.includes("master")
-    || normalized.includes("wallet")
-    || compact.includes("card")
-    || compact.includes("credit")
-    || compact.includes("debit")
-  ) return "card";
-  return "unknown";
+  return classifyPaymentTender(monthlyTransactionValue(row, monthlyTransactionAliases.modeOfPayment));
 }
 
 function statusText(value: string) {

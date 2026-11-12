@@ -1,4 +1,4 @@
-import { isUnnumberedCashReference } from "./cash-handover";
+import { isUnnumberedCashReference } from "./cash-handover.ts";
 
 export const CASH_DENOMINATIONS = [0.25, 0.5, 1, 5, 10, 20, 50] as const;
 

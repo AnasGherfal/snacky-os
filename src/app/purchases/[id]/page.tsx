@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { readCompleteList } from "@/lib/complete-list-read";
 import { notFound } from "next/navigation";
 import { PersistentPurchaseConfirmDialog, PurchaseOperationForm } from "@/components/PurchaseOperationForm";
 import { cancelPurchase, receivePurchase, recordPurchasePayment, voidPurchasePayment, voidReceivedPurchase } from "@/lib/purchase-actions";
@@ -93,6 +94,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
     return <ErrorState title="Purchase unavailable" body="Snacky OS could not connect to the purchase database. No missing purchase or empty history is being inferred." action={<SecondaryButton href={`/purchases${moduleQuery}`}>Back to purchases</SecondaryButton>} />;
   }
 
+  const purchaseReadSignal = AbortSignal.timeout(10000);
   const [
     { data: purchase, error: purchaseError },
     { data: lines, error: linesError },
@@ -107,17 +109,20 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       .select("*, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
       .eq("id", id)
       .maybeSingle(),
-    supabase
-      .from("purchase_order_lines")
-      .select("id, line_position, boxes_qty, units_per_box, loose_units_qty, total_units, ordered_qty, received_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd, product:products(id, sku, name)")
-      .eq("purchase_order_id", id)
-      .order("line_position")
-      .order("created_at"),
-    supabase
-      .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, to_entity_type, reason, related_purchase_line_id, unit_cost_lyd, line_total_lyd, notes, created_at, product:products(name, sku), created_by_member:team_members(full_name)", { count: "exact" })
-      .eq("related_purchase_id", id)
-      .order("created_at", { ascending: false }),
+    readCompleteList<any>(
+      ({from,to,signal}) => supabase.from("purchase_order_lines")
+        .select("id, line_position, boxes_qty, units_per_box, loose_units_qty, total_units, ordered_qty, received_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd, product:products!purchase_order_lines_product_id_fkey(id, sku, name)", {count:"exact"})
+        .eq("purchase_order_id",id).order("line_position").order("created_at").order("id")
+        .range(from,to).abortSignal(signal),
+      {key:row=>row.id,signal:purchaseReadSignal},
+    ),
+    readCompleteList<any>(
+      ({from,to,signal}) => supabase.from("inventory_movements")
+        .select("id, product_id, quantity, from_entity_type, to_entity_type, reason, related_purchase_line_id, unit_cost_lyd, line_total_lyd, notes, created_at, product:products(name, sku), created_by_member:team_members(full_name)", {count:"exact"})
+        .eq("related_purchase_id",id).order("created_at",{ascending:false}).order("id")
+        .range(from,to).abortSignal(signal),
+      {key:row=>row.id,signal:purchaseReadSignal},
+    ),
     supabase
       .from("financial_transactions")
       .select("id, amount, signed_amount, transaction_date, transaction_status, review_status, related_purchase_id, linked_purchase_id, source_type, source_id")
@@ -148,6 +153,11 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   if (!purchase) notFound();
   if (linesError) console.error("[purchases:detail] Failed to load purchase lines", { purchase_id: id, supabase_error: linesError });
   if (movementsError) console.error("[purchases:detail] Failed to load inventory movements", { purchase_id: id, supabase_error: movementsError });
+  if (linesError || movementsError) {
+    return <ErrorState title="Purchase details are incomplete"
+      body="Snacky could not verify every purchase item and inventory receipt. This is not an empty purchase. No changes were made; reload before receiving, paying or correcting this purchase."
+      action={<SecondaryButton href={`/purchases/${id}${moduleQuery}`}>Retry complete purchase</SecondaryButton>} />;
+  }
 
   const paymentFinanceIds = (payments ?? [])
     .map((payment: any) => String(payment.finance_transaction_id ?? ""))

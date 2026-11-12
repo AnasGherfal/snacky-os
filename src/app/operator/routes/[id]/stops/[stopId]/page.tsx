@@ -2955,6 +2955,10 @@ export default function MachineStopPage() {
           }}
         />
 
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          <h2 className="font-semibold text-slate-900">{tr("Cash is recorded separately", "النقدية تُسجّل في خطوة مستقلة")}</h2>
+          <p className="mt-1">{tr("Record the removal or exception below. Receiving and counting the cash happen later; do not add a second cash amount to the refill.", "سجّل السحب أو سبب تعذره أدناه. الاستلام والعد يتمان لاحقاً؛ لا تضف مبلغاً نقدياً ثانياً إلى التعبئة.")}</p>
+        </div>
         <RouteStopCashCard
           routeId={routeId}
           stopId={stopId}

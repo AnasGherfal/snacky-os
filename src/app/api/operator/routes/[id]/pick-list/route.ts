@@ -1,3 +1,4 @@
+import { readPickupRouteRows } from "@/lib/route-pickup-read";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
@@ -250,13 +251,10 @@ export async function GET(
       }
     }
 
+    const routeReadSignal = AbortSignal.timeout(10000);
     failingStep = "load_route_stops";
     failingResource = "route_stops";
-    const { data: stopsData, error: stopsError } = await readClient
-      .from("route_stops")
-      .select("id, machine_id, stop_order, status")
-      .eq("route_id", routeId)
-      .order("stop_order", { ascending: true });
+    const { data: stopsData, error: stopsError } = await readPickupRouteRows(readClient, "route_stops", "id, machine_id, stop_order, status", routeId, routeReadSignal);
     if (stopsError) throw stopsError;
 
     const stops = stopsData ?? [];
@@ -341,18 +339,12 @@ export async function GET(
     let stopItemsError: any = null;
     failingStep = "load_route_stop_items";
     failingResource = "route_stop_items";
-    const stopItemsResponse = await readClient
-      .from("route_stop_items")
-      .select("id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, is_checked, checked_at, checked_by, source")
-      .eq("route_id", routeId);
+    const stopItemsResponse = await readPickupRouteRows(readClient, "route_stop_items", "id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, is_checked, checked_at, checked_by, source", routeId, routeReadSignal);
     stopItems = stopItemsResponse.data ?? [];
     stopItemsError = stopItemsResponse.error;
 
     if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by"])) {
-      const fallback = await readClient
-        .from("route_stop_items")
-        .select("id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, source")
-        .eq("route_id", routeId);
+      const fallback = await readPickupRouteRows(readClient, "route_stop_items", "id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, source", routeId, routeReadSignal);
       stopItems = (fallback.data ?? []).map((item: any) => ({
         ...item,
         is_checked: false,
@@ -362,6 +354,9 @@ export async function GET(
       stopItemsError = fallback.error;
     }
 
+    // Only a verified legacy missing-table case may use a compatibility source.
+    // Timeouts, permissions, count drift or a failed later page are not zero stock.
+    if (stopItemsError && !isMissingTable(stopItemsError, "route_stop_items")) throw stopItemsError;
     if (stopItemsError) {
       logOptionalFailure({
         step: "load_route_stop_items",
@@ -384,7 +379,7 @@ export async function GET(
             fallback_reason: isMissingTable(stopItemsError, "route_stop_items") ? "route_stop_items_missing" : "route_stop_items_query_failed",
           },
         });
-        stopItems = [];
+        throw fallbackError;
       }
     } else if (!stopItems.length) {
       try {
@@ -404,26 +399,17 @@ export async function GET(
     let pickListItems: any[] = [];
     failingStep = "load_route_pick_list_items";
     failingResource = "route_pick_list_items";
-    const pickListResponse = await readClient
-      .from("route_pick_list_items")
-      .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked, is_active")
-      .eq("route_id", routeId);
+    const pickListResponse = await readPickupRouteRows(readClient, "route_pick_list_items", "id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked, is_active", routeId, routeReadSignal);
     pickListItems = (pickListResponse.data ?? []).filter((item: any) => item.is_active !== false);
     let pickListError: any = pickListResponse.error;
 
     if (pickListError && isMissingColumn(pickListError, ["is_checked"])) {
-      const fallback = await readClient
-        .from("route_pick_list_items")
-        .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active")
-        .eq("route_id", routeId);
+      const fallback = await readPickupRouteRows(readClient, "route_pick_list_items", "id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active", routeId, routeReadSignal);
       pickListItems = (fallback.data ?? []).filter((item: any) => item.is_active !== false).map((item: any) => ({ ...item, is_checked: false }));
       pickListError = fallback.error;
     }
     if (pickListError && isMissingColumn(pickListError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
-      const fallback = await readClient
-        .from("route_pick_list_items")
-        .select("id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active")
-        .eq("route_id", routeId);
+      const fallback = await readPickupRouteRows(readClient, "route_pick_list_items", "id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active", routeId, routeReadSignal);
       pickListItems = (fallback.data ?? []).filter((item: any) => item.is_active !== false).map((item: any) => ({
         ...item,
         route_stop_id: null,
@@ -433,6 +419,7 @@ export async function GET(
       }));
       pickListError = fallback.error;
     }
+    if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
     if (pickListError) {
       logOptionalFailure({
         step: "load_route_pick_list_items",

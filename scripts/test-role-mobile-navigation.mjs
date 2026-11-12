@@ -26,9 +26,9 @@ function profile(role, roles = [role]) {
 function routes(role, roles) { return getRoleMobileDestinations(profile(role, roles)).map((x) => x.href); }
 
 test("role shortcuts prioritize the correct daily workflow instead of an owner-only menu", () => {
-  assert.deepEqual(routes("owner"), ["/dashboard", "/routes", "/inventory", "/cash-collections"]);
+  assert.deepEqual(routes("owner"), ["/routes", "/inventory", "/cash-collections", "/finance"]);
   assert.deepEqual(routes("crm"), ["/my-work", "/issues", "/locations-pipeline", "/follow-ups"]);
-  assert.deepEqual(routes("operator"), ["/operator/routes", "/operator/routes?view=available", "/operator/issues", "/cash-handling"]);
+  assert.deepEqual(routes("operator"), ["/operator/routes", "/operator/routes?view=available", "/operator/issues", "/cash-handling/deposit"]);
   assert.deepEqual(routes("warehouse"), ["/my-day", "/warehouse/pick-lists", "/inventory", "/buying-lists"]);
   assert.deepEqual(routes("purchasing"), ["/my-day", "/buying-lists", "/purchases", "/products"]);
   assert.deepEqual(routes("finance"), ["/finance", "/finance/transactions", "/cash-handling", "/buying-lists"]);
@@ -84,7 +84,7 @@ test("active state differentiates Available routes and ledger from their parent 
   assert.equal(activeMobileShortcutIndex(fin, "/finance/transactions", "", "finance"), 1);
   assert.equal(activeMobileShortcutIndex(fin, "/finance", "", "finance"), 0);
   const mgr = getRoleMobileDestinations(profile("owner"));
-  assert.equal(activeMobileShortcutIndex(mgr, "/restock-priority", "", "stock"), 2);
+  assert.equal(activeMobileShortcutIndex(mgr, "/restock-priority", "", "stock"), 1);
 });
 
 test("sidebar no longer duplicates CRM Notes, supervisor Cash, and warehouse stock active state", () => {

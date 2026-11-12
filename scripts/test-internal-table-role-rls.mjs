@@ -41,7 +41,9 @@ test("route completion uses the protected client but never writes cash", () => {
   assert.match(completeStopAction, /if \(!completionWorkflowClient\) \{[\s\S]*?protected stop-completion workflow is not configured/);
   assert.doesNotMatch(completeStopAction, /getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("route_stop_inventory_commits"\)/);
-  assert.match(completeStopAction, /Cash removal is not part of route completion/);
+  // Test the refusal itself, not an obsolete English error sentence.
+  assert.match(completeStopAction, /if \(cashCollected \|\| cashBagId\?\.trim\(\)\) \{\s*throw new Error\(/);
+  assert.doesNotMatch(completeStopAction, /\.rpc\(\s*["']record_standalone_cash_removal/);
   assert.doesNotMatch(completeStopAction, /\.from\("vms_sales_snapshots"\)/);
   assert.doesNotMatch(completeStopAction, /\.from\("cash_collections"\)/);
 });

@@ -23,6 +23,10 @@ const management: MobileShortcut[] = [
   { href: "/inventory", en: "Stock", ar: "المخزون", icon: "warehouse", module: "stock" },
   { href: "/cash-collections", en: "Cash", ar: "النقدية", icon: "cash", module: "cash" },
 ];
+const ownerDaily: MobileShortcut[] = [
+  ...management.slice(1),
+  { href: "/finance", en: "Finance", ar: "المالية", icon: "finance", module: "finance" },
+];
 const customerRelations: MobileShortcut[] = [
   { href: "/my-work", en: "My Work", ar: "عملي", icon: "work" },
   { href: "/issues", en: "Issues", ar: "البلاغات", icon: "issues" },
@@ -72,7 +76,8 @@ export function mobileRoleKind(profile: MobileRoleProfile): AppRole {
 export function getRoleMobileDestinations(profile: MobileRoleProfile): MobileShortcut[] {
   if (profile.active_status !== "active") return [];
   const mode = mobileRoleKind(profile);
-  const candidates = mode === "owner" || mode === "admin" || mode === "supervisor" ? management
+  const candidates = mode === "owner" || mode === "admin" ? ownerDaily
+    : mode === "supervisor" ? management
     : mode === "crm" ? customerRelations
     : mode === "operator" ? operator
     : mode === "warehouse" ? warehouse
