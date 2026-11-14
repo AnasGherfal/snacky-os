@@ -1,0 +1,34 @@
+name: Manual XY cash comparison by machine and pickup window
+on:
+  pull_request:
+    paths:
+      - 'src/lib/cash-vms-window.ts'
+      - 'src/lib/cash-vms-server.ts'
+      - 'src/lib/cash-vms-manual-actions.ts'
+      - 'src/app/cash-collections/compare/**'
+      - 'src/app/cash-collections/[id]/page.tsx'
+      - 'src/app/cash-collections/page.tsx'
+      - 'src/app/cash-collections/interval-comparison/page.tsx'
+      - 'scripts/test-cash-vms-window.mjs'
+      - '.github/workflows/manual-xy-cash-comparison-check.yml'
+permissions:
+  contents: read
+jobs:
+  test-window:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Window correctness and prior cash custody safety
+        run: |
+          node --experimental-strip-types --test scripts/test-cash-vms-window.mjs
+          node --test scripts/test-cash-count-current.mjs
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Lint new files
+        run: npx eslint src/lib/cash-vms-window.ts src/lib/cash-vms-server.ts src/lib/cash-vms-manual-actions.ts src/app/cash-collections/compare/page.tsx

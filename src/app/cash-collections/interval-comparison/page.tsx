@@ -276,7 +276,7 @@ export default async function CashIntervalComparisonPage({
         breadcrumbs={[{label:tr("Cash custody","النقدية"),href:"/cash-collections"},{label:tr("Exact pickup intervals","فترات السحب الدقيقة")}]}
         action={<div className="flex flex-wrap gap-2">
           <SecondaryButton href="/cash-collections">{tr("Cash history","سجل النقد")}</SecondaryButton>
-          <SecondaryButton href="/vms-import">{tr("Import XY transactions","استيراد معاملات XY")}</SecondaryButton>
+          <SecondaryButton href={`/cash-collections/compare?collection=${selected.id}`}>{tr("Enter XY cash total for this exact period","إدخال إجمالي نقد XY لهذه الفترة")}</SecondaryButton><SecondaryButton href="/vms-import">{tr("Import XY transactions","استيراد معاملات XY")}</SecondaryButton>
         </div>}/>
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
         <strong>{tr("XY data availability", "توفر بيانات XY")}</strong>
