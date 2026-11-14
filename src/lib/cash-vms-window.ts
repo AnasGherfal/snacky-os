@@ -30,6 +30,7 @@ export type CashVmsPickup = {
   timeUncertain: boolean;
   fullClearanceUnverified: boolean;
   comparison: CashVmsComparisonSnapshot | null;
+  officialComparison?: boolean;
 };
 
 export type CashVmsWindow = {
@@ -69,7 +70,8 @@ export function planCashVmsWindow(rows: CashVmsPickup[], targetId: string): Cash
   const targetTime = Date.parse(target.removedAt);
   if (!Number.isFinite(targetTime)) throw new Error("The cash removal time is invalid.");
   const earlier = sorted.filter((row) => Date.parse(row.removedAt) < targetTime);
-  const latestSaved = [...earlier].reverse().find((row) => row.comparison && row.comparison.end_collection_id === row.id);
+  const latestSaved = [...earlier].reverse().find((row) =>
+    (row.comparison && row.comparison.end_collection_id === row.id) || row.officialComparison === true);
   const latestFull = [...earlier].reverse().find((row) => row.removalType === "full");
   const startPickup = latestSaved ?? latestFull ?? null;
   const startReason: CashVmsWindow["startReason"] = latestSaved ? "previous_saved_comparison" :
