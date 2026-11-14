@@ -114,6 +114,11 @@ export default async function PayrollOverviewPage({
       href: "/payroll/profiles",
     },
     {
+      title: "Route Travel Distances",
+      body: "Owner-only storage-to-stop and stop-to-stop history, with monthly/all-time KM by operator. Separate from salary calculations.",
+      href: "/reports/route-distances",
+    },
+    {
       title: "Location Payroll Distance",
       body: "Maintain the manual one-way or round-trip distance each completed stop should use.",
       href: "/payroll/distances",
