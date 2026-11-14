@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { parseBulkMissingDistances } from "@/lib/route-distance-bulk";
+import { loadAdminRouteDistances } from "@/lib/route-distance-server";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -82,4 +84,45 @@ export async function deleteRouteDistanceEdge(form: FormData) {
   if (!uuidPattern.test(edgeId)) finish("Invalid distance record.");
   const { error } = await db.from("route_distance_edges").delete().eq("id", edgeId);
   finish(error?.message ?? null);
+}
+
+/**
+ * Save all entered missing connections at once from the private fill-in form.
+ * Validation happens against live missing links, preventing arbitrary/replayed
+ * submissions from overwriting already verified road distances.
+ */
+export async function saveBulkMissingRouteDistances(form: FormData) {
+  const db = await adminClient();
+  const live = await loadAdminRouteDistances();
+  let entries;
+  try {
+    entries = parseBulkMissingDistances(form, live.missingLinks);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid distance values.";
+    redirect("/reports/route-distances/fill?error=" + encodeURIComponent(message));
+  }
+
+  if (!entries.length) {
+    redirect("/reports/route-distances/fill?error=" + encodeURIComponent("Enter at least one distance before saving. Blank entries remain unknown."));
+  }
+
+  // One INSERT ensures all submitted legs are committed together or none are.
+  // Direction is preserved: A → B and B → A are separate records.
+  const rows = entries.map((entry) => ({
+    from_storage_location_id: entry.fromKind === "storage" ? entry.fromId : null,
+    from_machine_id: entry.fromKind === "machine" ? entry.fromId : null,
+    to_machine_id: entry.toId,
+    distance_km: entry.km,
+    notes: "Owner-entered one-way road distance via bulk form",
+  }));
+  const { error } = await db.from("route_distance_edges").insert(rows);
+  if (error) {
+    console.error("[route-distances:bulk-save] Could not save entered links", { code: error.code, message: error.message });
+    redirect("/reports/route-distances/fill?error=" +
+      encodeURIComponent("Could not save the distances. No values from this form were saved. Reload and try again."));
+  }
+
+  revalidatePath("/reports/route-distances");
+  revalidatePath("/reports/route-distances/fill");
+  redirect("/reports/route-distances/fill?saved=" + entries.length);
 }
