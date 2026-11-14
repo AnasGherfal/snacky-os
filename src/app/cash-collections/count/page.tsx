@@ -112,7 +112,7 @@ export default async function CashCountCurrentMonthPage() {
     <div className="space-y-6">
       <PageHeader title="Count cash — this month"
         subtitle={`${period.label}: count real money against the operator's EXISTING machine removal. No duplicate collection and no need to enter VMS figures now.`}
-        action={<div className="flex gap-2"><SecondaryButton href="/cash-collections">Cash custody</SecondaryButton><SecondaryButton href="/cash-collections?scope=all&status=waiting">Older records</SecondaryButton></div>} />
+        action={<div className="flex gap-2"><SecondaryButton href="/cash-collections/owner-reported">Finish Anas reported counts</SecondaryButton><SecondaryButton href="/cash-collections">Cash custody</SecondaryButton><SecondaryButton href="/cash-collections?scope=all&status=waiting">Older records</SecondaryButton></div>} />
       <section className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><div className="text-sm font-medium text-emerald-900">In storage · ready for physical count</div><div className="mt-1 text-3xl font-bold">{ready}</div></div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-sm font-medium text-amber-900">Removed · storage receipt needed</div><div className="mt-1 text-3xl font-bold">{toReceive}</div></div>

@@ -1,0 +1,32 @@
+name: Owner-reported cash count confirmation
+on:
+  pull_request:
+    paths:
+      - 'src/lib/cash-owner-reported.ts'
+      - 'src/lib/cash-owner-reported-actions.ts'
+      - 'src/app/cash-collections/owner-reported/**'
+      - 'src/app/cash-collections/page.tsx'
+      - 'src/app/cash-collections/count/page.tsx'
+      - 'scripts/test-owner-reported-cash-counts.mjs'
+      - '.github/workflows/owner-reported-cash-counts.yml'
+permissions:
+  contents: read
+jobs:
+  owner-counts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Owner count and existing cash safety tests
+        run: |
+          node --test scripts/test-owner-reported-cash-counts.mjs
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Focused lint
+        run: npx eslint src/lib/cash-owner-reported.ts src/lib/cash-owner-reported-actions.ts src/app/cash-collections/owner-reported/page.tsx
