@@ -15,7 +15,7 @@ type RawCashCollection = {
   machine_links: Array<{
     machine_id: string;
     expectation_metadata: Record<string, unknown> | null;
-    machine: { name: string | null; machine_code: string | null } | null;
+    machine: { name: string | null; machine_code: string | null } | Array<{ name: string | null; machine_code: string | null }> | null;
   }>;
 };
 
@@ -59,10 +59,11 @@ export async function loadOwnerReportedCountRows():Promise<OwnerCountReport[]> {
       throw new Error("An owner-reported cash amount is invalid. Do not invent a count.");
     if(!row.cash_bag_id || !row.cash_bag_id.trim())throw new Error("Missing cashbox reference in owner report.");
     const counted=row.actual_cash_collected===null ? null:Number(row.actual_cash_collected);
+    const machine = Array.isArray(line.machine) ? line.machine[0] : line.machine;
     result.push({
       id:row.id,bag:row.cash_bag_id,removedAt:row.collected_at,
       operatorId:row.operator_id,machineId:line.machine_id,
-      machineName:line.machine?.name??line.machine?.machine_code??line.machine_id,
+      machineName:machine?.name??machine?.machine_code??line.machine_id,
       amount,source:String(fields.source),
       custodyStatus:row.custody_status,countedAmount:counted,
     });
