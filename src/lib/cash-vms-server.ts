@@ -20,6 +20,10 @@ type Collection = {
   voided_at: string | null;
   notes: string | null;
   operator_id: string | null;
+  reconciliation_status: string | null;
+  expected_source: string | null;
+  expected_calculated_at: string | null;
+  vms_expected_cash: string | number | null;
 };
 type Machine = { id: string; name: string | null; machine_code: string | null };
 type Team = { id: string; full_name: string | null };
@@ -28,7 +32,7 @@ export async function loadCashVmsWindow(collectionId: string) {
   const db = getSupabaseAdminClient();
   if (!db) throw new Error("Cash database is unavailable.");
   const { data: selected, error: selectedError } = await db.from("cash_collections")
-    .select("id,machine_id,collected_at,actual_cash_collected,custody_status,voided_at,notes,operator_id")
+    .select("id,machine_id,collected_at,actual_cash_collected,custody_status,voided_at,notes,operator_id,reconciliation_status,expected_source,expected_calculated_at,vms_expected_cash")
     .eq("id",collectionId).maybeSingle();
   if (selectedError || !selected || selected.voided_at)
     throw new Error("The selected cash removal could not be verified.");
@@ -55,7 +59,7 @@ export async function loadCashVmsWindow(collectionId: string) {
   const collections: Collection[] = [];
   for (let i = 0; i < ids.length; i += 100) {
     const { data, error } = await db.from("cash_collections")
-      .select("id,machine_id,collected_at,actual_cash_collected,custody_status,voided_at,notes,operator_id")
+      .select("id,machine_id,collected_at,actual_cash_collected,custody_status,voided_at,notes,operator_id,reconciliation_status,expected_source,expected_calculated_at,vms_expected_cash")
       .in("id",ids.slice(i,i+100));
     if (error) throw new Error("Could not verify every cash removal in this period.");
     collections.push(...(data ?? []) as Collection[]);
@@ -95,6 +99,10 @@ export async function loadCashVmsWindow(collectionId: string) {
       machineCode:machine.machine_code,removedAt:collection.collected_at,
       removedBy:collection.operator_id ? byTeam.get(collection.operator_id) ?? null : null,
       custodyStatus:collection.custody_status,removalType:line.removal_type,
+      officialComparison:["matched","resolved"].includes(String(collection.reconciliation_status)) &&
+        ["vms_exact","manual_override"].includes(String(collection.expected_source)) &&
+        Boolean(collection.expected_calculated_at && Number.isFinite(Date.parse(collection.expected_calculated_at))) &&
+        collection.vms_expected_cash !== null,
       compartments,countedAmount:count,timeUncertain,fullClearanceUnverified,comparison:manual,
     });
   }
