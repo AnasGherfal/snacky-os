@@ -22,6 +22,9 @@ export type CashCustodyAlertInput = {
   storage_seal_condition?: string | null;
   count_seal_condition?: string | null;
   cash_bag_id?: string | null;
+  vms_expected_cash?: number | string | null;
+  expected_source?: string | null;
+  expected_calculated_at?: string | null;
 };
 
 export function denominationKey(denomination: CashDenomination) {
@@ -150,7 +153,8 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
       status === "counted"
       && isUnnumberedCashReference(row.cash_bag_id)
       && row.storage_seal_condition !== "broken"
-      && row.count_seal_condition !== "broken";
+      && row.count_seal_condition !== "broken"
+      && verifiedCashExpectation(row) === null;
     alerts.push(unnumberedReferenceOnly
       ? { severity: "warning", label: "Cash counted — unnumbered bag needs evidence review",
           detail: "The physical count is saved. The electronic bag reference is not a printed seal. This flag alone is not a cash shortage; cash-only XY comparison remains separate." }
