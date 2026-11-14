@@ -97,7 +97,7 @@ export default async function CompareCashWithXyPage({
                 <p className="text-xs font-semibold text-slate-600">FROM — after this timestamp</p>
                 <p className="mt-2 text-lg font-bold">{when(window.startAt)}</p>
                 <p className="mt-2 text-xs text-slate-700">{baseline?
-                  "This is the END of the last saved VMS comparison for this machine." :
+                  "This is the END of the last dated VMS comparison saved for this machine (an official reconciliation or owner-entered comparison)." :
                   noBaseline?
                   "No previous full removal or saved comparison found. A reliable start has not been established.":
                   "First VMS comparison: the previous recorded FULL cash removal. It has NOT already been reconciled to XY."}</p>
