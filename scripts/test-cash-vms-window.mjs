@@ -81,3 +81,27 @@ test("manual comparison UI must not post money or invent a verified API result",
   assert.match(page,/Cash removals included in this XY period/);
   assert.match(page,/No previous/);
 });
+
+
+test("dated and sourced official XY reconciliation becomes the next comparison baseline",()=>{
+  const all=[
+    pickup("official",3,1200,{officialComparison:true}),
+    pickup("nov9",9,638),
+    pickup("nov12",12,2177),
+  ];
+  const window=planCashVmsWindow(all,"nov12");
+  assert.equal(window.startReason,"previous_saved_comparison");
+  assert.equal(window.startPickup?.id,"official");
+  assert.deepEqual(window.included.map(r=>r.id),["nov9","nov12"]);
+  assert.equal(window.physicalCashTotal,2815);
+});
+
+test("unsourced historical matched status does not become a verified comparison baseline",()=>{
+  const all=[
+    pickup("old",1,300,{officialComparison:false}),
+    pickup("new",12,457),
+  ];
+  const window=planCashVmsWindow(all,"new");
+  assert.equal(window.startReason,"previous_full_removal");
+  assert.equal(window.quality,"provisional");
+});
