@@ -36,7 +36,7 @@ export async function saveOwnerXyCashWindow(formData:FormData) {
 
   const window=await loadCashVmsWindow(id);
   if(!window.canSave || window.physicalCashTotal===null || !window.startPickup || !window.startAt)
-    fail(id,"This machine period is not ready. Review the previous pickup and count every intervening removal first.");
+    fail(id,"The selected removal has no physical cash count, its previous pickup is missing, or its timestamps conflict. An uncounted previous pickup does not block the comparison.");
   if(originalFingerprint!==window.fingerprint)
     fail(id,"The removal history changed since this comparison was opened. Refresh to see the updated exact period.");
   if(window.included.length>1000)fail(id,"Comparison period is too large for safe review.");

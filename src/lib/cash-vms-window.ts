@@ -30,13 +30,12 @@ export type CashVmsPickup = {
   timeUncertain: boolean;
   fullClearanceUnverified: boolean;
   comparison: CashVmsComparisonSnapshot | null;
-  officialComparison?: boolean;
 };
 
 export type CashVmsWindow = {
   target: CashVmsPickup;
   startPickup: CashVmsPickup | null;
-  startReason: "previous_saved_comparison" | "previous_full_removal" | "missing";
+  startReason: "previous_removal" | "missing";
   startAt: string | null;
   endAt: string;
   included: CashVmsPickup[];
@@ -48,71 +47,84 @@ export type CashVmsWindow = {
   canSave: boolean;
   fingerprint: string;
   existing: CashVmsComparisonSnapshot | null;
+  existingMatchesCurrentWindow: boolean;
 };
 
-function roundedCents(value: number) {
-  return Math.round(value * 100);
-}
-
 /**
- * Window rule:
- * - From the last saved machine-specific XY comparison, exclusive; or
- * - For a first comparison, from the preceding recorded full cash removal,
- *   explicitly labelled as NOT previously VMS-compared.
- * - Through this machine's selected removal, inclusive.
- * - Count all intervening pickups, not just the selected cash bag.
+ * Every XY period covers exactly ONE physical cash removal, from the immediately
+ * preceding recorded machine removal (exclusive) through the selected one
+ * (inclusive). Never use last "counted", last "VMS compared", or last "full"
+ * pickup as the boundary. An earlier pickup need not be counted or reconciled.
+ *
+ * If either pickup was partial or its clock time/compartments uncertain, the
+ * same date interval is displayed but flagged as provisional. This is NOT
+ * a finding of missing cash.
  */
 export function planCashVmsWindow(rows: CashVmsPickup[], targetId: string): CashVmsWindow {
+  const machineIds = new Set(rows.map((row) => row.machineId));
+  if (machineIds.size > 1) throw new Error("Cannot compare pickups from different machines.");
   const sorted = [...rows].sort((a, b) =>
     Date.parse(a.removedAt) - Date.parse(b.removedAt) || a.id.localeCompare(b.id));
-  const target = sorted.find((row) => row.id === targetId);
-  if (!target) throw new Error("The cash removal could not be found.");
+  const index = sorted.findIndex((row) => row.id === targetId);
+  if (index < 0) throw new Error("The cash removal could not be found.");
+  const target = sorted[index];
   const targetTime = Date.parse(target.removedAt);
   if (!Number.isFinite(targetTime)) throw new Error("The cash removal time is invalid.");
-  const earlier = sorted.filter((row) => Date.parse(row.removedAt) < targetTime);
-  const latestSaved = [...earlier].reverse().find((row) =>
-    (row.comparison && row.comparison.end_collection_id === row.id) || row.officialComparison === true);
-  const latestFull = [...earlier].reverse().find((row) => row.removalType === "full");
-  const startPickup = latestSaved ?? latestFull ?? null;
-  const startReason: CashVmsWindow["startReason"] = latestSaved ? "previous_saved_comparison" :
-    latestFull ? "previous_full_removal" : "missing";
+
+  // By design: the single immediately preceding non-voided removal, regardless
+  // of amount, count status, XY reconciliation, or whether it was a full pickup.
+  const startPickup = index > 0 ? sorted[index - 1] : null;
   const startAt = startPickup?.removedAt ?? null;
-  const included = startPickup ? sorted.filter((row) => {
-    const time = Date.parse(row.removedAt);
-    return time > Date.parse(startPickup.removedAt) && time <= targetTime;
-  }) : [];
-  const missingCounts = included.filter((row) => row.countedAmount === null ||
-    !["counted", "reconciled", "banked"].includes(row.custodyStatus)).map((row) => row.id);
-  const partialRemovals = included.filter((row) => row.removalType !== "full").map((row) => row.id);
-  const unknownCutoff = included.some((row) => row.timeUncertain);
-  const uncertainStart = Boolean(startPickup?.timeUncertain || startPickup?.fullClearanceUnverified);
-  const previousComparisonProvisional = Boolean(latestSaved?.comparison?.quality === "provisional");
-  const quality: CashVmsWindow["quality"] = (startReason === "previous_full_removal" ||
-    uncertainStart || unknownCutoff || previousComparisonProvisional ||
-    included.some((row) => row.fullClearanceUnverified)) ? "provisional" : "owner_reported_exact_window";
-  const warnings: string[] = [];
-  if (!startAt) warnings.push("No earlier full pickup or saved XY comparison exists. Do not guess a starting timestamp.");
-  if (startReason === "previous_full_removal")
-    warnings.push("No previous saved VMS comparison exists for this machine. Start is its preceding FULL removal, NOT a previous verified XY comparison.");
-  if (uncertainStart) warnings.push("The starting pickup time or full cash clearance is not independently verified (historical placeholder or missing compartment evidence). This comparison is provisional.");
-  if (unknownCutoff) warnings.push("At least one included removal time is approximate. The exact XY sales cutoff cannot be certified.");
-  if (previousComparisonProvisional) warnings.push("The previous owner-entered XY comparison was provisional. Review that earlier period separately.");
-  if (missingCounts.length) warnings.push("One or more removals within this window have not been physically counted. Count them before comparing.");
-  if (partialRemovals.length) warnings.push("A partial cash removal appears in this window; remaining float or money needs separate verification.");
-  const later = sorted.some((row) => Date.parse(row.removedAt) > targetTime &&
-    row.comparison?.included_collection_ids?.includes(targetId));
-  if (later) warnings.push("This removal is already included in a later saved XY comparison. Correct the later record first to prevent double counting.");
-  const physicalCashTotal = !startAt || missingCounts.length ? null :
-    included.reduce((sum, row) => sum + roundedCents(row.countedAmount ?? 0), 0) / 100;
-  const fingerprint = [target.id, startPickup?.id ?? "NO_START",
-    ...included.map((row) => row.id + ":" + (row.countedAmount ?? "UNC")),
-  ].join("|");
+  const startTime = startAt ? Date.parse(startAt) : null;
+  const invalidClock = startTime !== null && (!Number.isFinite(startTime) || startTime >= targetTime);
+  const included = startPickup && !invalidClock ? [target] : [];
+  const missingCounts = target.countedAmount === null ||
+    !["counted", "reconciled", "banked"].includes(target.custodyStatus) ? [target.id] : [];
+  const partialRemovals = [startPickup,target].filter((row):row is CashVmsPickup =>
+    Boolean(row && row.removalType !== "full")).map((row) => row.id);
+  const uncertainTimes = Boolean(startPickup?.timeUncertain || target.timeUncertain);
+  const unverifiedClearance = Boolean(startPickup?.fullClearanceUnverified || target.fullClearanceUnverified);
+  const provisional = uncertainTimes || unverifiedClearance || partialRemovals.length > 0;
+  const quality:CashVmsWindow["quality"] = provisional ? "provisional" : "owner_reported_exact_window";
+
+  const warnings:string[] = [];
+  if (!startAt) warnings.push("No previous cash removal exists for this machine. The XY start is unknown; do not assume a month or previous comparison.");
+  if (invalidClock) warnings.push("Two cash removals have an identical or invalid timestamp. Check the actual pickup times before comparing.");
+  if (startPickup && startPickup.countedAmount === null)
+    warnings.push("The previous removal has not been counted. That does NOT change this XY interval: it still starts at the preceding removal.");
+  if (startPickup && !startPickup.comparison)
+    warnings.push("The previous removal has no saved XY comparison. That does NOT change the start date or require an earlier comparison.");
+  if (uncertainTimes)
+    warnings.push("One of these pickup times is a historical approximation. This is a provisional comparison, not a verified shortage.");
+  if (unverifiedClearance)
+    warnings.push("The cash compartments were not independently verified as fully emptied. Use the displayed adjacent pickup timestamps, but treat any difference as provisional.");
+  if (partialRemovals.length)
+    warnings.push("A pickup was recorded as partial. The adjacent timestamps are still correct, but retained cash may affect the difference.");
+  if (missingCounts.length) warnings.push("This selected removal has not been physically counted yet. Record its actual cash before comparing XY.");
+
+  const existing = target.comparison;
+  const existingMatchesCurrentWindow = Boolean(existing && startPickup &&
+    existing.start_collection_id === startPickup.id &&
+    existing.start_at === startPickup.removedAt &&
+    existing.end_collection_id === target.id &&
+    existing.end_at === target.removedAt &&
+    existing.included_collection_ids.length === 1 &&
+    existing.included_collection_ids[0] === target.id &&
+    existing.physical_cash_lyd === target.countedAmount);
+  if (existing && !existingMatchesCurrentWindow)
+    warnings.push("An older XY report was saved for a DIFFERENT interval. Its amount is preserved, but must be rechecked for the period between these two consecutive removals.");
+
+  const physicalCashTotal = included.length && !missingCounts.length ? target.countedAmount : null;
+  const fingerprint = [target.id,startPickup?.id ?? "NO_START",
+    startAt ?? "NO_TIME",target.removedAt, target.countedAmount ?? "UNC"].join("|");
+
   return {
-    target, startPickup, startReason, startAt, endAt: target.removedAt,
-    included, physicalCashTotal, missingCounts, partialRemovals, quality, warnings,
-    canSave: Boolean(startAt && included.length && missingCounts.length === 0 &&
-      partialRemovals.length === 0 && !later),
-    fingerprint, existing: target.comparison,
+    target,startPickup,startReason:startPickup ? "previous_removal" : "missing",
+    startAt,endAt:target.removedAt,included,physicalCashTotal,
+    missingCounts,partialRemovals,quality,warnings,
+    // Earlier removal's counting status and XY comparison are NEVER blockers.
+    canSave:Boolean(startAt && !invalidClock && included.length===1 && missingCounts.length===0),
+    fingerprint,existing,existingMatchesCurrentWindow,
   };
 }
 
