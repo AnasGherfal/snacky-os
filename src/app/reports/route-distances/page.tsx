@@ -193,6 +193,7 @@ export default async function RouteDistancesPage({
 
     <section className="surface-card p-5">
       <h2 className="text-lg font-semibold">{tr(locale, "Missing route connections · prioritized by use", "المسافات الناقصة · حسب تكرار استخدامها")}</h2>
+      <div className="mt-3 mb-4"><Link href="/reports/route-distances/fill" className="btn-primary inline-flex">{tr(locale, "Fill all missing distances in one form", "إدخال كل المسافات الناقصة في نموذج واحد")}</Link></div>
       <p className="mt-1 text-sm text-slate-500">{tr(locale, "Enter each direction separately. Saving a link updates past and future route reports, without changing payroll records.", "أدخل مسافة كل اتجاه بشكل مستقل. الحفظ يحدث تقارير الجولات السابقة والقادمة دون تعديل سجلات المرتبات.")}</p>
       {data.missingLinks.length === 0 ? <div className="mt-4 text-sm text-emerald-700">{tr(locale, "No missing connections in completed routes.", "لا توجد مسافات ناقصة في الجولات المكتملة.")}</div> :
         <div className="mt-4 space-y-3">{data.missingLinks.slice(0, 45).map((link, index) => <div key={index} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
