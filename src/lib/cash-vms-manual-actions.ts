@@ -7,7 +7,7 @@ import { hasAnyRole } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { logActivity } from "@/lib/activity-log";
 import { loadCashVmsWindow } from "@/lib/cash-vms-server";
-import type { CashVmsComparisonSnapshot } from "@/lib/cash-vms-window";
+import { readManualCashComparison, type CashVmsComparisonSnapshot } from "@/lib/cash-vms-window";
 
 function fail(id:string,message:string):never {
   redirect("/cash-collections/compare?collection="+encodeURIComponent(id)+"&error="+encodeURIComponent(message));
@@ -79,6 +79,21 @@ export async function saveOwnerXyCashWindow(formData:FormData) {
     .eq("cash_collection_id",id).eq("machine_id",window.target.machineId)
     .select("cash_collection_id").maybeSingle();
   if(error || !changed)fail(id,"XY comparison could not be saved. No cash amounts were modified.");
+  // Never show a green success banner without reading the comparison back
+  // from the same persisted database record, not just trusting the UPDATE result.
+  const {data:check,error:checkError}=await db.from("cash_collection_machines")
+    .select("expectation_metadata")
+    .eq("cash_collection_id",id).eq("machine_id",window.target.machineId)
+    .maybeSingle();
+  const confirmed=readManualCashComparison(check?.expectation_metadata?.manual_vms_group_comparison);
+  if(checkError || !confirmed ||
+      confirmed.submission_id!==submissionId ||
+      confirmed.end_collection_id!==id ||
+      confirmed.vms_cash_lyd!==saved.vms_cash_lyd ||
+      confirmed.start_at!==saved.start_at ||
+      confirmed.end_at!==saved.end_at) {
+    fail(id,"XY save could not be verified. Check the existing cash record before entering the amount again.");
+  }
   await logActivity({
     profile,action:"manual_vms_group_cash_comparison",entityType:"cash_collection",
     entityId:id,entityLabel:window.target.machineName,

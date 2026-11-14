@@ -36,6 +36,7 @@ import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buckets";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { isUnnumberedCashReference } from "@/lib/cash-handover";
+import { savedOwnerVmsForCollection } from "@/lib/cash-vms-window";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -194,7 +195,7 @@ export default async function CashCollectionDetailPage({
   const [{ data: collection, error: collectionError }, { data: events }, { data: finance }] = await Promise.all([
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, operator_id, collected_at, cash_period_start, cash_period_end, vms_expected_cash, manual_repair_cash_lyd, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, removed_amount_lyd, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, manual_repair_cash_lyd, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .select("id, route_id, machine_id, operator_id, collected_at, cash_period_start, cash_period_end, vms_expected_cash, manual_repair_cash_lyd, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, removed_amount_lyd, interval_start_at, interval_end_at, expectation_status, expectation_source, expectation_metadata, vms_sales_count, manual_repair_cash_lyd, machine:machines(id, name, machine_code, location:locations(id, name)))")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -215,6 +216,7 @@ export default async function CashCollectionDetailPage({
 
   const row: any = collection;
   const machines = (row.machine_links ?? []) as any[];
+  const ownerVms = savedOwnerVmsForCollection(row);
   const summary = machineSummary(machines);
   const verifiedExpectedCash = verifiedCashExpectation(row);
   const variance = verifiedExpectedCash === null || row.variance === null || row.variance === undefined ? null : Number(row.variance);
@@ -245,10 +247,23 @@ export default async function CashCollectionDetailPage({
         title={`Cash Bag ${row.cash_bag_id ?? id.slice(0, 8)}`}
         subtitle={`${summary} removed ${formatDate(row.collected_at)}. Reconciliation is always on the combined batch total.`}
         breadcrumbs={[{ label: "Cash Custody", href: "/cash-collections" }, { label: row.cash_bag_id ?? id.slice(0, 8) }]}
-        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Back</SecondaryButton>{canSeeMoney ? <><SecondaryButton href={`/cash-collections/compare?collection=${id}`}>Enter XY VMS cash total</SecondaryButton><SecondaryButton href={`/cash-collections/interval-comparison?collection=${id}`}>Advanced XY sales by hour</SecondaryButton></> : null}{canResolve && status !== "voided" ? <ConfirmDialog action={voidCashCollection} triggerLabel="Void batch" title="Void this immutable cash batch?" description="Use this only for a duplicate or invalid record. History and evidence remain." confirmLabel="Void batch" buttonClassName="btn-danger" confirmButtonClassName="btn-danger" hiddenFields={[{ name: "id", value: id }]} /> : null}</div>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Back</SecondaryButton>{canSeeMoney ? <><SecondaryButton href={`/cash-collections/compare?collection=${id}`}>{ownerVms ? "View saved XY cash comparison" : "Enter XY VMS cash total"}</SecondaryButton><SecondaryButton href={`/cash-collections/interval-comparison?collection=${id}`}>Advanced XY sales by hour</SecondaryButton></> : null}{canResolve && status !== "voided" ? <ConfirmDialog action={voidCashCollection} triggerLabel="Void batch" title="Void this immutable cash batch?" description="Use this only for a duplicate or invalid record. History and evidence remain." confirmLabel="Void batch" buttonClassName="btn-danger" confirmButtonClassName="btn-danger" hiddenFields={[{ name: "id", value: id }]} /> : null}</div>}
       />
       {messages.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{messages.error}</div> : null}
       {messages.success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{messages.success}</div> : null}
+      {ownerVms ? (
+        <section aria-label="Saved owner-entered XY VMS cash comparison" className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5">
+          <h2 className="font-bold text-emerald-950">XY VMS cash amount saved</h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div><div className="text-xs text-slate-600">XY successful cash sales</div><strong className="text-xl">{money(ownerVms.vms_cash_lyd)}</strong></div>
+            <div><div className="text-xs text-slate-600">Physical cash counted in period</div><strong className="text-xl">{money(ownerVms.physical_cash_lyd)}</strong></div>
+            <div><div className="text-xs text-slate-600">Count minus XY</div><strong className="text-xl">{money(ownerVms.difference_lyd)}</strong></div>
+          </div>
+          <p className="mt-3 text-sm text-slate-700">Recorded period: after {formatDate(ownerVms.start_at)} through {formatDate(ownerVms.end_at)} · {ownerVms.included_collection_ids.length} included removal(s).</p>
+          <p className="mt-1 text-xs text-slate-600">Saved {formatDate(ownerVms.saved_at)} as an owner-entered {ownerVms.quality === "provisional" ? "provisional" : "recorded-window"} report. This is retained in the cash record, but does not automatically complete formal XY reconciliation or resolve custody evidence warnings.</p>
+          <Link href={`/cash-collections/compare?collection=${id}`} className="mt-3 inline-block text-sm font-semibold text-emerald-800 underline">Open or update saved XY comparison</Link>
+        </section>
+      ) : null}
       {alerts.map((alert, index) => <div key={`${alert.label}-${index}`} className={`rounded-lg border p-4 text-sm ${alert.severity === "critical" ? "border-rose-200 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}><div className="font-semibold">{alert.label}</div><p className="mt-1">{alert.detail}</p></div>)}
 
       <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5" aria-label="Identify this cash removal">
