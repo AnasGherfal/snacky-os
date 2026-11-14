@@ -24,7 +24,7 @@ type CollectionChoice = {
   id:string;
   collected_at:string;
   actual_cash_collected:string|number|null;
-  machine: {name:string|null} | null;
+  machine: {name:string|null} | Array<{name:string|null}> | null;
 };
 
 export default async function CompareCashWithXyPage({
@@ -44,7 +44,7 @@ export default async function CompareCashWithXyPage({
     .not("actual_cash_collected","is",null)
     .order("collected_at",{ascending:false}).limit(100);
   if(recentError)return <ErrorState title="Cash records could not be read" body="No XY comparison was changed." />;
-  const choices=(recent??[]) as CollectionChoice[];
+  const choices=(recent??[]) as unknown as CollectionChoice[];
   const chosenId=uuid.test(params.collection??"") ? String(params.collection) : choices[0]?.id;
   if(!chosenId)return <ErrorState title="No counted removals yet" body="Record the physical cash count before comparing XY sales." />;
   let window;
@@ -80,7 +80,7 @@ export default async function CompareCashWithXyPage({
               <Link key={item.id}
                 href={"/cash-collections/compare?collection="+item.id}
                 className={"block rounded-lg border p-3 text-sm "+(item.id===chosenId?"border-emerald-500 bg-emerald-50":"border-slate-200 hover:border-emerald-300")}>
-                <div className="font-semibold">{item.machine?.name??"Machine"}</div>
+                <div className="font-semibold">{(Array.isArray(item.machine)?item.machine[0]?.name:item.machine?.name)??"Machine"}</div>
                 <div className="mt-1 text-xs text-slate-600">{when(item.collected_at)}</div>
                 <div className="mt-1 font-medium">{lyd(Number(item.actual_cash_collected))}</div>
               </Link>
