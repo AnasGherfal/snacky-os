@@ -31,8 +31,13 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   const [reload,setReload]=useState(0);
 
   useEffect(()=>{
-    const linked=new URLSearchParams(window.location.search).get("id");
+    const params=new URLSearchParams(window.location.search);
+    const linked=params.get("id");
     if(linked)setSelected(linked);
+    // This is a suggestion from an owner-reported historical count, NOT a
+    // confirmed count: the authenticated counter must check the real cash.
+    const suggested=params.get("reported_amount");
+    if(suggested && /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(suggested))setAmount(suggested);
   },[]);
   useEffect(()=>{
     let ended=false;
@@ -126,8 +131,17 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         unnumbered
           ? "تم تسجيل استلام الكيس غير المرقم مع تنبيه غياب رقم الختم للمراجعة؛ افتحه وعد النقدية الفعلية."
           : `تم تأكيد استلام الكيس ${box.bag} بصفة مستقلة. افتحه وعدّ النقدية وسجّل الإجمالي.`);
-      setSelected(null);setAmount("");setPhysical(false);setBagId("");setNoPrintedNumber(false);
-      window.history.replaceState(null,"","/cash-handling/receive");
+      if(wasCounted) {
+        setSelected(null);setAmount("");setPhysical(false);setBagId("");setNoPrintedNumber(false);
+        window.history.replaceState(null,"","/cash-handling/receive");
+      } else {
+        // Continue on this SAME box. A successful protected pickup opens the
+        // count form without requiring an unrelated search or new removal.
+        setSelected(box.id);setPhysical(false);setBagId("");setNoPrintedNumber(false);
+        const params=new URLSearchParams(window.location.search);
+        params.set("id",box.id);
+        window.history.replaceState(null,"",`/cash-handling/receive?${params}`);
+      }
       setReload(n=>n+1);
     }catch(e){setError(e instanceof Error?e.message:"لم يكتمل الحفظ.")}
     finally{setBusy(false);}
@@ -206,6 +220,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       </>:<>
         <label className="block space-y-2 text-sm font-semibold">
           <span>مجموع النقدية التي عُدّت فعلياً — دينار ليبي</span>
+          <p className="text-xs font-normal text-amber-900">إذا ظهر مبلغ مقترح من بلاغ سابق، تحقق من النقد الحقيقي وصحّحه إن لزم. لا يُعتمد المبلغ قبل ضغط تأكيد العد.</p>
           <input className="field-input" dir="ltr" type="text" required inputMode="decimal" value={amount}
             onChange={e=>setAmount(e.target.value)} placeholder="0.00"/>
         </label>

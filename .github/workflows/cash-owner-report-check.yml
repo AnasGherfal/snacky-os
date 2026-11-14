@@ -1,0 +1,31 @@
+name: Owner cash count confirmation safety
+on:
+  pull_request:
+    paths:
+      - 'src/lib/cash-custody.ts'
+      - 'src/app/cash-collections/count/page.tsx'
+      - 'src/app/cash-collections/[id]/page.tsx'
+      - 'src/components/cash/CashReceiveWorkspace.tsx'
+      - 'scripts/test-cash-owner-reported-guard.mjs'
+      - '.github/workflows/cash-owner-report-check.yml'
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Cash count UI safety and regression
+        run: |
+          node --experimental-strip-types --test scripts/test-cash-owner-reported-guard.mjs
+          node --experimental-strip-types --test scripts/test-cash-count-current.mjs
+      - name: TypeScript and new code lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/cash-custody.ts src/app/cash-collections/count/page.tsx

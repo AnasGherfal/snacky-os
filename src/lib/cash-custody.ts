@@ -22,6 +22,9 @@ export type CashCustodyAlertInput = {
   storage_seal_condition?: string | null;
   count_seal_condition?: string | null;
   cash_bag_id?: string | null;
+  vms_expected_cash?: number | string | null;
+  expected_source?: string | null;
+  expected_calculated_at?: string | null;
 };
 
 export function denominationKey(denomination: CashDenomination) {
@@ -143,7 +146,19 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
   const status = row.custody_status;
 
   if (row.reconciliation_status === "variance_review") {
-    alerts.push({ severity: "critical", label: "Owner review required", detail: "The combined batch total or custody evidence has an unresolved exception." });
+    // Unnumbered cash bags are deliberately labeled "mismatch" by the handover
+    // workflow because no physical printed number exists. That is a source/
+    // identity evidence gap, NOT proof of a broken seal or missing cash.
+    const unnumberedReferenceOnly =
+      status === "counted"
+      && isUnnumberedCashReference(row.cash_bag_id)
+      && row.storage_seal_condition !== "broken"
+      && row.count_seal_condition !== "broken"
+      && verifiedCashExpectation(row) === null;
+    alerts.push(unnumberedReferenceOnly
+      ? { severity: "warning", label: "Cash counted — unnumbered bag needs evidence review",
+          detail: "The physical count is saved. The electronic bag reference is not a printed seal. This flag alone is not a cash shortage; cash-only XY comparison remains separate." }
+      : { severity: "critical", label: "Owner review required", detail: "The combined batch total or custody evidence has an unresolved exception." });
   }
   if ([row.storage_seal_condition, row.count_seal_condition].some((condition) => condition && condition !== "intact")) {
     if (isUnnumberedCashReference(row.cash_bag_id)
