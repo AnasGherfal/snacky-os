@@ -6,6 +6,7 @@ import { hasAnyRole } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { loadCashVmsWindow } from "@/lib/cash-vms-server";
 import { saveOwnerXyCashWindow } from "@/lib/cash-vms-manual-actions";
+import { savedOwnerVmsForCollection } from "@/lib/cash-vms-window";
 
 export const dynamic="force-dynamic";
 
@@ -25,6 +26,7 @@ type CollectionChoice = {
   collected_at:string;
   actual_cash_collected:string|number|null;
   machine: {name:string|null} | Array<{name:string|null}> | null;
+  machine_links?: unknown;
 };
 
 export default async function CompareCashWithXyPage({
@@ -39,7 +41,7 @@ export default async function CompareCashWithXyPage({
   if(!db)return <ErrorState title="XY cash comparison unavailable" body="The cash ledger connection is unavailable." />;
   const params=await searchParams;
   const {data:recent,error:recentError}=await db.from("cash_collections")
-    .select("id,collected_at,actual_cash_collected,machine:machines(name)")
+    .select("id,collected_at,actual_cash_collected,machine:machines(name),machine_links:cash_collection_machines(expectation_metadata)")
     .is("voided_at",null)
     .not("actual_cash_collected","is",null)
     .order("collected_at",{ascending:false}).limit(100);
@@ -69,8 +71,21 @@ export default async function CompareCashWithXyPage({
         </div>} />
       {params.error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{params.error}</div>:null}
       {params.success ? <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-        XY cash comparison saved as an owner-entered report. No physical cash count, Finance entry or official reconciliation status was changed.
+        {status ? <>XY cash amount <strong>{lyd(status.vms_cash_lyd)}</strong> saved for <strong>{target.machineName}</strong>. This amount will remain visible in this page and the cash-removal record after refresh.</> : "The comparison returned a success message, but the saved amount could not be read back. Refresh and verify before entering anything again."}
       </div>:null}
+      {status ? (
+        <section aria-label="Persisted XY VMS cash amount" className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5">
+          <h2 className="font-bold text-emerald-950">Saved XY VMS cash amount · {target.machineName}</h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div><p className="text-xs text-slate-600">XY successful cash sales</p><strong className="text-2xl">{lyd(status.vms_cash_lyd)}</strong></div>
+            <div><p className="text-xs text-slate-600">Physical cash counted</p><strong className="text-2xl">{lyd(status.physical_cash_lyd)}</strong></div>
+            <div><p className="text-xs text-slate-600">Cash count minus XY</p><strong className="text-2xl">{lyd(status.difference_lyd)}</strong></div>
+          </div>
+          <p className="mt-3 text-sm text-slate-700">Period: after {when(status.start_at)} through {when(status.end_at)} · Saved {when(status.saved_at)}</p>
+          <p className="mt-1 text-xs text-slate-600">Owner-entered {status.quality === "provisional" ? "provisional" : "recorded-window"} comparison; it is saved in the machine cash record, not yet an officially completed VMS reconciliation or proven shortage.</p>
+          <Link href={"#xy-cash-entry"} className="mt-2 inline-block text-sm font-semibold text-emerald-800 underline">Review or edit this XY amount</Link>
+        </section>
+      ) : <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">No owner-entered XY cash total is saved for this selected removal yet.</p>}
       <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
         <aside className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="font-semibold">Choose a counted pickup</h2>
@@ -82,7 +97,8 @@ export default async function CompareCashWithXyPage({
                 className={"block rounded-lg border p-3 text-sm "+(item.id===chosenId?"border-emerald-500 bg-emerald-50":"border-slate-200 hover:border-emerald-300")}>
                 <div className="font-semibold">{(Array.isArray(item.machine)?item.machine[0]?.name:item.machine?.name)??"Machine"}</div>
                 <div className="mt-1 text-xs text-slate-600">{when(item.collected_at)}</div>
-                <div className="mt-1 font-medium">{lyd(Number(item.actual_cash_collected))}</div>
+                <div className="mt-1 font-medium">Cash counted: {lyd(item.actual_cash_collected===null?null:Number(item.actual_cash_collected))}</div>
+                {savedOwnerVmsForCollection(item) ? <p className="mt-1 text-xs font-semibold text-emerald-800">XY saved: {lyd(savedOwnerVmsForCollection(item)?.vms_cash_lyd ?? null)} · owner-entered</p> : null}
               </Link>
             ))}
           </div>
@@ -138,11 +154,11 @@ export default async function CompareCashWithXyPage({
               {provisional?<p className="mt-2 font-medium">You may save an owner-reported amount as provisional, but this is NOT proof of an exact historical opening cash balance or shortage.</p>:null}
             </div>:null}
           </section>
-          <section className="rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="text-lg font-bold">Enter your XY VMS cash total</h3>
+          <section id="xy-cash-entry" className="scroll-mt-6 rounded-xl border border-slate-200 bg-white p-5">
+            <h3 className="text-lg font-bold">{status ? "Review or update your saved XY VMS cash total" : "Enter your XY VMS cash total"}</h3>
             <p className="mt-1 text-sm text-slate-700">The amount must cover the full period above. No file upload and no machine-level split are needed.</p>
             {status?<div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm">
-              <div className="font-bold">Previously saved owner VMS comparison</div>
+              <div className="font-bold">Saved XY cash record (retained after page refresh)</div>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 <div>XY cash: <strong>{lyd(status.vms_cash_lyd)}</strong></div>
                 <div>Physical count: <strong>{lyd(status.physical_cash_lyd)}</strong></div>
