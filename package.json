@@ -76,7 +76,8 @@
     "test:smart-route-unified-editor": "node --experimental-strip-types --test scripts/test-smart-route-unified-editor.mjs",
     "test:xy-stop-quantity-editor": "node --experimental-strip-types --test scripts/test-xy-stop-quantity-editor.mjs",
     "test:xy-live-sales": "node --experimental-strip-types --test scripts/test-xy-live-sales.mjs",
-    "test:xy-operational-alerts": "node --experimental-strip-types --test scripts/test-xy-operational-alerts.mjs"
+    "test:xy-operational-alerts": "node --experimental-strip-types --test scripts/test-xy-operational-alerts.mjs",
+    "test:route-distances": "node --experimental-strip-types --test scripts/test-route-distances.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.105.4",
