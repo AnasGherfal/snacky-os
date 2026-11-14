@@ -53,8 +53,8 @@ export default async function CompareCashWithXyPage({
   try {window=await loadCashVmsWindow(chosenId);}
   catch(e) {return <ErrorState title="The comparison period is unavailable" body={e instanceof Error?e.message:"Could not build a reliable cash comparison."} />;}
 
-  const baseline=window.startReason==="previous_saved_comparison";
-  const noBaseline=window.startReason==="missing";
+  const noPreviousRemoval=window.startReason==="missing";
+  const savedForDifferentPeriod=Boolean(window.existing && !window.existingMatchesCurrentWindow);
   const provisional=window.quality==="provisional";
   const {target}=window;
   const status=window.existing;
@@ -63,7 +63,7 @@ export default async function CompareCashWithXyPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Compare cash with XY VMS"
-        subtitle="One machine, the exact recorded pickup period, and one CASH-only VMS total. No need to upload files."
+        subtitle="One machine, two consecutive cash removal timestamps. Previous counting or VMS comparisons never change the start."
         breadcrumbs={[{label:"Cash Custody",href:"/cash-collections"},{label:"XY comparison"}]}
         action={<div className="flex flex-wrap gap-2">
           <SecondaryButton href={"/cash-collections/"+chosenId}>Original cash removal</SecondaryButton>
@@ -71,17 +71,18 @@ export default async function CompareCashWithXyPage({
         </div>} />
       {params.error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{params.error}</div>:null}
       {params.success ? <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-        {status ? <>XY cash amount <strong>{lyd(status.vms_cash_lyd)}</strong> saved for <strong>{target.machineName}</strong>. This amount will remain visible in this page and the cash-removal record after refresh.</> : "The comparison returned a success message, but the saved amount could not be read back. Refresh and verify before entering anything again."}
+        {status && !savedForDifferentPeriod ? <>XY cash amount <strong>{lyd(status.vms_cash_lyd)}</strong> saved for <strong>{target.machineName}</strong> between its consecutive pickups. The amount will remain visible after refresh.</> : "The saved comparison could not be verified for the currently displayed period. Check the two pickup timestamps and retry."}
       </div>:null}
       {status ? (
-        <section aria-label="Persisted XY VMS cash amount" className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5">
-          <h2 className="font-bold text-emerald-950">Saved XY VMS cash amount · {target.machineName}</h2>
+        <section aria-label="Persisted XY VMS cash amount" className={"rounded-xl border p-4 sm:p-5 "+(savedForDifferentPeriod ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50/50")}>
+          <h2 className="font-bold text-slate-950">{savedForDifferentPeriod ? "Older XY report for a DIFFERENT interval" : "Saved XY VMS cash amount"} · {target.machineName}</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div><p className="text-xs text-slate-600">XY successful cash sales</p><strong className="text-2xl">{lyd(status.vms_cash_lyd)}</strong></div>
             <div><p className="text-xs text-slate-600">Physical cash counted</p><strong className="text-2xl">{lyd(status.physical_cash_lyd)}</strong></div>
             <div><p className="text-xs text-slate-600">Cash count minus XY</p><strong className="text-2xl">{lyd(status.difference_lyd)}</strong></div>
           </div>
-          <p className="mt-3 text-sm text-slate-700">Period: after {when(status.start_at)} through {when(status.end_at)} · Saved {when(status.saved_at)}</p>
+          <p className="mt-3 text-sm text-slate-700">Saved period: after {when(status.start_at)} through {when(status.end_at)} · Saved {when(status.saved_at)}</p>
+          {savedForDifferentPeriod ? <p className="mt-2 text-sm font-semibold text-amber-950">This saved report covers different dates. It was preserved, not silently changed. Recheck XY cash sales for the two consecutive removals below and save the correct figure.</p> : null}
           <p className="mt-1 text-xs text-slate-600">Owner-entered {status.quality === "provisional" ? "provisional" : "recorded-window"} comparison; it is saved in the machine cash record, not yet an officially completed VMS reconciliation or proven shortage.</p>
           <Link href={"#xy-cash-entry"} className="mt-2 inline-block text-sm font-semibold text-emerald-800 underline">Review or edit this XY amount</Link>
         </section>
@@ -112,11 +113,9 @@ export default async function CompareCashWithXyPage({
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-semibold text-slate-600">FROM — after this timestamp</p>
                 <p className="mt-2 text-lg font-bold">{when(window.startAt)}</p>
-                <p className="mt-2 text-xs text-slate-700">{baseline?
-                  "This is the END of the last dated VMS comparison saved for this machine (an official reconciliation or owner-entered comparison)." :
-                  noBaseline?
-                  "No previous full removal or saved comparison found. A reliable start has not been established.":
-                  "First VMS comparison: the previous recorded FULL cash removal. It has NOT already been reconciled to XY."}</p>
+                <p className="mt-2 text-xs text-slate-700">{noPreviousRemoval
+                  ? "No earlier cash removal is recorded for this machine. The interval start is unknown."
+                  : "This is the immediately previous removal from this machine. It sets the start even if it was NOT counted or compared with VMS."}</p>
               </div>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                 <p className="text-xs font-semibold text-emerald-900">UNTIL — through this timestamp</p>
@@ -130,8 +129,8 @@ export default async function CompareCashWithXyPage({
             {selectedTimeUncertain ? <p className="mt-3 text-sm font-semibold text-amber-900">The selected removal timestamp was recorded as approximate, not an independently verified pickup time.</p>:null}
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="text-base font-bold">Cash removals included in this XY period</h3>
-            <p className="mt-1 text-xs text-slate-600">If several cash boxes were collected since the last saved comparison, they are added together once. Each removal remains its own physical count.</p>
+            <h3 className="text-base font-bold">The selected removal’s physical cash count</h3>
+            <p className="mt-1 text-xs text-slate-600">Only this removal is compared with XY. The previous machine removal sets the start even if that earlier removal was not counted or reconciled. No several-pickup sums.</p>
             {window.included.length ? <div className="mt-4 overflow-x-auto">
               <table className="w-full min-w-[500px] text-sm">
                 <thead><tr className="border-b bg-slate-50"><th className="p-2 text-start">Cash removed</th><th className="p-2 text-start">Operator</th><th className="p-2 text-start">Counted cash</th></tr></thead>
@@ -143,7 +142,7 @@ export default async function CompareCashWithXyPage({
               </table>
             </div>:<p className="mt-3 text-sm text-amber-900">No complete pickup interval available.</p>}
             <div className="mt-4 border-t pt-4">
-              <p className="text-sm text-slate-600">Total physical cash counted for this exact window</p>
+              <p className="text-sm text-slate-600">Actual cash counted at this selected removal</p>
               <strong className="mt-1 block text-2xl">{lyd(window.physicalCashTotal)}</strong>
             </div>
             {window.warnings.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -156,7 +155,7 @@ export default async function CompareCashWithXyPage({
           </section>
           <section id="xy-cash-entry" className="scroll-mt-6 rounded-xl border border-slate-200 bg-white p-5">
             <h3 className="text-lg font-bold">{status ? "Review or update your saved XY VMS cash total" : "Enter your XY VMS cash total"}</h3>
-            <p className="mt-1 text-sm text-slate-700">The amount must cover the full period above. No file upload and no machine-level split are needed.</p>
+            <p className="mt-1 text-sm text-slate-700">Enter successful CASH payments only, strictly after the immediately preceding machine removal and up to this one. Do not include sales from older periods.</p>
             {status?<div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm">
               <div className="font-bold">Saved XY cash record (retained after page refresh)</div>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -173,7 +172,7 @@ export default async function CompareCashWithXyPage({
               <label className="block space-y-2 text-sm font-semibold">
                 <span>Successful CASH sales in XY — LYD</span>
                 <input name="xy_cash_lyd" type="number" step="0.01" min="0" max="999999999"
-                  required defaultValue={status?.vms_cash_lyd??""}
+                  required defaultValue={status && !savedForDifferentPeriod ? status.vms_cash_lyd : ""}
                   placeholder="Enter the total from XY for these timestamps"
                   className="field-input text-xl font-semibold"/>
               </label>
@@ -190,7 +189,7 @@ export default async function CompareCashWithXyPage({
               <button type="submit" className="btn-primary w-full">{provisional?"Save provisional XY comparison":"Save XY cash comparison"}</button>
               <p className="text-xs text-slate-600">Saving records an auditable XY comparison only. Physical cash is already counted separately; no new Finance entry is created.</p>
             </form> : <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-              Comparison entry is unavailable because the opening boundary, all physical counts or full removals are not confirmed. Resolve the issues shown above first; do not guess sales periods.
+              Comparison entry is unavailable because there is no previous removal, this removal has not been counted, or the timestamps conflict. Older uncounted removals still define valid start boundaries.
             </div>}
           </section>
         </div>
