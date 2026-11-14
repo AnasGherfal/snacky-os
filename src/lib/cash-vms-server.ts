@@ -99,10 +99,6 @@ export async function loadCashVmsWindow(collectionId: string) {
       machineCode:machine.machine_code,removedAt:collection.collected_at,
       removedBy:collection.operator_id ? byTeam.get(collection.operator_id) ?? null : null,
       custodyStatus:collection.custody_status,removalType:line.removal_type,
-      officialComparison:["matched","resolved"].includes(String(collection.reconciliation_status)) &&
-        ["vms_exact","manual_override"].includes(String(collection.expected_source)) &&
-        Boolean(collection.expected_calculated_at && Number.isFinite(Date.parse(collection.expected_calculated_at))) &&
-        collection.vms_expected_cash !== null,
       compartments,countedAmount:count,timeUncertain,fullClearanceUnverified,comparison:manual,
     });
   }
