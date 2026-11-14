@@ -6,6 +6,7 @@ import {hasAnyRole} from "@/lib/authz";
 import {lyd} from "@/lib/format";
 import {verifiedCashExpectation} from "@/lib/cash-custody";
 import {currentLibyaCashMonth} from "@/lib/cash-current-period";
+import {savedOwnerVmsForCollection} from "@/lib/cash-vms-window";
 import {getXyLiveSalesConfig} from "@/lib/xy-live-sales-sync";
 import {CASH_ELIGIBLE_VMS_BATCH_STATUSES} from "@/lib/vms-cash-source";
 
@@ -21,12 +22,13 @@ function ageDays(value:unknown){
  return Math.max(0,Math.floor((Date.now()-t)/86400000));
 }
 function actionFor(row:any){
+ const ownerXY=savedOwnerVmsForCollection(row);
  if(row.reconciliation_status==="variance_review")return verifiedCashExpectation(row)===null
-  ? {key:"variance",label:"Verify expected cash before owner decision",tone:"amber"}
+  ? {key:"variance",label:ownerXY?"XY cash entered · custody/source review still pending":"Verify expected cash before owner decision",tone:"amber"}
   : {key:"variance",label:"Owner variance decision",tone:"rose"};
  if(row.custody_status==="removed")return {key:"receive",label:"Receive into storage",tone:"amber"};
  if(row.custody_status==="in_storage")return {key:"count",label:"Count stored cash",tone:"amber"};
- if(row.custody_status==="counted"&&row.reconciliation_status==="pending")return {key:"vms",label:"Compare with VMS",tone:"sky"};
+ if(row.custody_status==="counted"&&row.reconciliation_status==="pending")return {key:"vms",label:ownerXY?"XY cash entered · formal verification pending":"Compare with VMS",tone:"sky"};
  return {key:"other",label:"Review",tone:"slate"};
 }
 function money(value:unknown){return value===null||value===undefined?"-":lyd(Number(value));}
@@ -40,7 +42,7 @@ export default async function CashActionQueuePage(){
  const cutoff=currentLibyaCashMonth().startTimestamp;
  const liveSalesConfig=getXyLiveSalesConfig();
  const {data,error,count}=await db.from("cash_collections")
-  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
+  .select("id,cash_bag_id,collected_at,custody_status,reconciliation_status,review_status,actual_cash_collected,vms_expected_cash,expected_source,expected_calculated_at,variance,operator:team_members!cash_collections_operator_id_fkey(full_name),machine_links:cash_collection_machines(expectation_metadata,machine:machines(name,machine_code,location:locations(name)))",{count:"exact"})
   .is("voided_at",null)
   .gte("collected_at",cutoff)
   .or("custody_status.in.(removed,in_storage,counted),reconciliation_status.eq.variance_review")
@@ -111,17 +113,19 @@ export default async function CashActionQueuePage(){
   <section className="surface-card" id="all-current">
    <div className="mb-4"><h2 className="text-lg font-semibold">Current actions</h2><p className="mt-1 text-sm text-slate-500">Current month, oldest first. Use Count current cash to save actual money to existing removal; XY may be reviewed later.</p></div>
    {!actionable.length?<EmptyState title={incompleteRead?"Loaded cash slice has no actions":"Current cash is clear"} body={incompleteRead?"The full queue could not be verified; review the full cash custody list.":"No unresolved cash from this month's removals requires action."}/>:
-   <DataTable headers={["Age","Bag","Collector","Stage","Counted","Expected","Variance","Next action"]}>{actionable.map((row:any)=>{
+   <DataTable headers={["Age","Bag","Collector","Stage","Counted","XY cash entered","Official expected","Difference / review","Next action"]}>{actionable.map((row:any)=>{
     const machines=(row.machine_links??[]).map((x:any)=>x.machine?.location?.name??x.machine?.name??x.machine?.machine_code).filter(Boolean);
+    const ownerXY=savedOwnerVmsForCollection(row);
     return <tr key={row.id} id={row.action.key}>
       <td className={Number(row.age_days??0)>=3?"font-semibold text-rose-700":""}>{row.age_days===null?"-":row.age_days+"d"}</td>
       <td><div className="font-semibold">{row.cash_bag_id??row.id.slice(0,8)}</div><div className="max-w-xs text-xs text-slate-500">{machines.length?machines.join(" · "):"Cash batch"} · {fmt(row.collected_at)}</div></td>
       <td>{row.operator?.full_name??"-"}</td>
       <td><div className="flex flex-wrap gap-1"><StatusBadge status={row.custody_status}/><StatusBadge status={row.reconciliation_status}/></div></td>
       <td>{money(row.actual_cash_collected)}</td>
-      <td>{verifiedCashExpectation(row)===null?"Unverified":money(verifiedCashExpectation(row))}</td>
-      <td className={verifiedCashExpectation(row)!==null&&Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{verifiedCashExpectation(row)===null?"—":row.variance===null||row.variance===undefined?"—":money(row.variance)}</td>
-      <td><div className="space-y-2"><div className="text-sm font-semibold">{row.action.label}</div><Link href={"/cash-collections/"+row.id} className="btn-primary inline-flex px-3 py-2">Open & complete</Link></div></td>
+      <td>{ownerXY?<div><Link href={"/cash-collections/compare?collection="+row.id} className="font-semibold text-emerald-800 underline">{money(ownerXY.vms_cash_lyd)}</Link><div className="text-xs text-slate-600">Owner-entered · {ownerXY.quality==="provisional"?"provisional":"recorded window"}</div></div>:"Not entered"}</td>
+      <td>{verifiedCashExpectation(row)===null?"Not formally verified":money(verifiedCashExpectation(row))}</td>
+      <td className={verifiedCashExpectation(row)!==null&&Number(row.variance??0)!==0?"font-semibold text-rose-700":""}>{verifiedCashExpectation(row)===null?(ownerXY?<span>{money(ownerXY.difference_lyd)} <span className="text-xs text-slate-600">(owner report, not proven shortage)</span></span>:"—"):row.variance===null||row.variance===undefined?"—":money(row.variance)}</td>
+      <td><div className="space-y-2"><div className="text-sm font-semibold">{row.action.label}</div>{ownerXY?<Link href={"/cash-collections/compare?collection="+row.id} className="text-sm font-semibold text-emerald-800 underline">View saved XY comparison</Link>:null}<Link href={"/cash-collections/"+row.id} className="btn-primary inline-flex px-3 py-2">Open & complete</Link></div></td>
     </tr>})}</DataTable>}
   </section>
 
