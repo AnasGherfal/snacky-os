@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getCurrentProfile } from "@/lib/auth";
+import { canManagePayroll } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
 
 type Locale = "ar" | "en";
@@ -8,6 +10,7 @@ const tr = (locale: Locale, en: string, ar: string) => locale === "ar" ? ar : en
 
 export default async function ReportsPage() {
   await requireCurrentProfileForPath("/reports");
+  const canSeeRouteKm = canManagePayroll(await getCurrentProfile());
   const { locale } = await getServerI18n();
   const groups = [
     {
@@ -15,6 +18,7 @@ export default async function ReportsPage() {
       description: tr(locale, "Routes, operators, refills, and field exceptions.", "الجولات والمشغلون والتعبئة والاستثناءات الميدانية."),
       reports: [
         { title: tr(locale, "Monthly Operations", "التقرير التشغيلي الشهري"), href: "/reports/route-performance", description: tr(locale, "Routes, machines filled, units, operator performance, daily activity, and exceptions.", "الجولات والأجهزة المعبأة والوحدات وأداء المشغلين والنشاط اليومي والاستثناءات."), featured: true },
+        ...(canSeeRouteKm ? [{ title: tr(locale, "Route Distances", "مسافات الجولات"), href: "/reports/route-distances", description: tr(locale, "Private route-by-route, monthly, and all-time KM per operator, with missing road links.", "مسافات الجولات والشهر والإجمالي لكل مشغل، مع كشف المسافات الناقصة. الإدارة فقط.") }] : []),
         { title: tr(locale, "Route Product Activity", "نشاط منتجات الجولات"), href: "/reports/route-product-activity", description: tr(locale, "Manual sales, damaged products, machine returns, missing products, and safety proof.", "المبيعات اليدوية والمنتجات التالفة والمرتجعات والنواقص وإثبات السلامة.") },
         { title: tr(locale, "Inventory Adjustments", "تعديلات المخزون"), href: "/reports/inventory-adjustments", description: tr(locale, "Damaged stock, returned machine items, and route-scoped adjustment history.", "المخزون التالف ومرتجعات الأجهزة وسجل تعديلات الجولات.") },
       ],
