@@ -125,3 +125,27 @@ export function readManualCashComparison(value: unknown): CashVmsComparisonSnaps
       !Array.isArray(v.included_collection_ids)) return null;
   return value as CashVmsComparisonSnapshot;
 }
+
+
+/**
+ * The owner-entered XY cash total is deliberately a separate audit record,
+ * NOT the formal single-bag VMS expected_cash_lyd. Read it consistently in
+ * Cash Custody, the cash bag detail, and the action queue.
+ * A grouped, multi-machine bag cannot safely show one machine's XY total.
+ */
+export function savedOwnerVmsForCollection(row: {
+  id: string;
+  machine_links?: unknown;
+}): CashVmsComparisonSnapshot | null {
+  const links = row.machine_links;
+  if (!Array.isArray(links) || links.length !== 1) return null;
+  const link: unknown = links[0];
+  if (!link || typeof link !== "object" || Array.isArray(link)) return null;
+  const meta: unknown = (link as Record<string, unknown>).expectation_metadata;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const saved = readManualCashComparison((meta as Record<string, unknown>).manual_vms_group_comparison);
+  if (!saved || saved.end_collection_id !== row.id) return null;
+  // Prevent an inconsistent or stale metadata value from displaying as a valid
+  // comparison on a different collection.
+  return saved;
+}
