@@ -126,3 +126,38 @@ export async function saveBulkMissingRouteDistances(form: FormData) {
   revalidatePath("/reports/route-distances/fill");
   redirect("/reports/route-distances/fill?saved=" + entries.length);
 }
+
+/**
+ * Only the existing Elite Future School return rule is editable here.
+ * Keep it separate from the ordinary machine-to-machine road distance matrix.
+ */
+export async function saveSchoolReturnDistance(form: FormData) {
+  const db = await adminClient();
+  const ruleId = String(form.get("rule_id") ?? "").trim();
+  const raw = String(form.get("distance_km") ?? "").trim();
+  if (!uuidPattern.test(ruleId) || !/^\d+(?:\.\d{1,2})?$/.test(raw)) {
+    redirect("/reports/route-distances?error=" + encodeURIComponent("Enter a valid school return distance (km)."));
+  }
+  const km = Number(raw);
+  if (!Number.isFinite(km) || km < 0 || km >= 10000) {
+    redirect("/reports/route-distances?error=" + encodeURIComponent("Return distance must be between 0 and 9,999.99 km."));
+  }
+  const { data: rule, error: ruleError } = await db.from("route_return_distance_rules")
+    .select("id,from_machine_id").eq("id", ruleId).maybeSingle();
+  if (ruleError || !rule) {
+    redirect("/reports/route-distances?error=" + encodeURIComponent("School return rule not found."));
+  }
+  const { data: school, error: machineError } = await db.from("machines")
+    .select("id,name").eq("id", rule.from_machine_id).maybeSingle();
+  if (machineError || school?.name !== "Elite Future School") {
+    redirect("/reports/route-distances?error=" + encodeURIComponent("Only the school return distance may be changed here."));
+  }
+  const { data: updated, error } = await db.from("route_return_distance_rules")
+    .update({ distance_km: Math.round(km * 100) / 100, updated_at: new Date().toISOString() })
+    .eq("id", ruleId).select("id").maybeSingle();
+  if (error || !updated) {
+    redirect("/reports/route-distances?error=" + encodeURIComponent("Could not save school return distance."));
+  }
+  revalidatePath("/reports/route-distances");
+  redirect("/reports/route-distances?returnSaved=1#school-return-distance");
+}

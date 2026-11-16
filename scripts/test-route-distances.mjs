@@ -26,7 +26,7 @@ const distances = indexRouteDistanceEdges([
   edge(ids.khalij, ids.school, 22), edge(ids.school, ids.khalij, 20),
   edge(ids.att, ids.hospital, 10),
 ]);
-function route(id, machines, { status = "completed", month = "2026-11", operatorId = "noury", statuses = [] } = {}) {
+function route(id, machines, { status = "completed", month = "2026-11", operatorId = "noury", statuses = [], schoolReturnKm = null } = {}) {
   return calculateRouteDistance({
     route: { id, route_date: month + "-10", operator_id: operatorId, status },
     stops: machines.map((machine_id, index) => ({
@@ -34,6 +34,7 @@ function route(id, machines, { status = "completed", month = "2026-11", operator
       machine_id, status: statuses[index] ?? "completed",
     })),
     machineNames: names, operatorName: "Noury", storageLocationId: storage, storageName: "MAIN", edges: distances,
+    returnToStorageKmByMachineId: schoolReturnKm === null ? undefined : new Map([[ids.school, schoolReturnKm]]),
   });
 }
 
@@ -86,4 +87,76 @@ test("owner-only server and UI code do not expose the distance matrix to operato
   assert.doesNotMatch(operatorPage, /route-distances/);
   assert.match(page, /All-time km/);
   assert.match(page, /مسافات الجولات/);
+});
+
+test("school as sole final stop includes 25 km return to MAIN without adding a visit", () => {
+  const result = route("school-alone", [ids.school], { schoolReturnKm: 25 });
+  assert.equal(result.knownKm, 64); // Storage -> school 39 + school -> storage 25
+  assert.equal(result.totalKm, 64);
+  assert.equal(result.stopCount, 1);
+  assert.equal(result.legs.length, 2);
+  assert.deepEqual(result.legs.map((leg) => [leg.legKind, leg.km, leg.fromName, leg.toName]), [
+    ["visit", 39, "MAIN", "school"],
+    ["return_to_storage", 25, "school", "MAIN"],
+  ]);
+});
+
+test("multi-stop route ending at the school gets return exactly once", () => {
+  const result = route("end-school", [ids.khalij, ids.school], { schoolReturnKm: 25 });
+  assert.equal(result.stopCount, 2);
+  assert.equal(result.totalKm, 69); // 22 + 22 + 25
+  assert.equal(result.legs.filter((leg) => leg.legKind === "return_to_storage").length, 1);
+});
+
+test("school before another stop gets no return and no double-counted travel", () => {
+  const result = route("school-first", [ids.school, ids.khalij], { schoolReturnKm: 25 });
+  assert.equal(result.totalKm, 59); // 39 + 20, no 25
+  assert.equal(result.legs.filter((leg) => leg.legKind === "return_to_storage").length, 0);
+});
+
+test("non-school routes and incomplete or skipped school visits get no return", () => {
+  const other = route("not-school", [ids.khalij], { schoolReturnKm: 25 });
+  assert.equal(other.totalKm, 22);
+  assert.equal(other.legs.length, 1);
+
+  const active = route("school-active", [ids.school], { status: "pickup_confirmed", schoolReturnKm: 25 });
+  assert.equal(active.totalKm, 39);
+  assert.equal(active.legs.length, 1);
+
+  const skippedSchool = route("school-skipped", [ids.khalij, ids.school], { statuses: ["completed", "skipped"], schoolReturnKm: 25 });
+  assert.equal(skippedSchool.totalKm, 22);
+});
+
+test("configured return distance may be edited and unknown outbound legs stay unknown", () => {
+  assert.equal(route("edit-return", [ids.school], { schoolReturnKm: 30 }).totalKm, 69);
+  assert.equal(route("zero-return", [ids.school], { schoolReturnKm: 0 }).totalKm, 39);
+  const unknown = route("missing-middle", [ids.mall, ids.school], { schoolReturnKm: 25 });
+  assert.equal(unknown.knownKm, 28.5);
+  assert.equal(unknown.totalKm, null);
+  assert.equal(unknown.missingLegCount, 1);
+});
+
+test("school return changes historical/monthly operator totals but not route counts", () => {
+  const school = route("school-october", [ids.school], { month: "2026-10", schoolReturnKm: 25 });
+  const ordinary = route("other-november", [ids.khalij], { schoolReturnKm: 25 });
+  assert.equal(sumOperatorRouteDistances([school, ordinary], "2026-10").confirmedKm, 64);
+  assert.equal(sumOperatorRouteDistances([school, ordinary], "2026-11").confirmedKm, 22);
+  assert.equal(sumOperatorRouteDistances([school, ordinary]).confirmedKm, 86);
+  assert.equal(sumOperatorRouteDistances([school, ordinary]).completedRoutes, 2);
+});
+
+test("school return settings are admin-only, scoped and visible in route detail", () => {
+  const server = read("src/lib/route-distance-server.ts");
+  const page = read("src/app/reports/route-distances/page.tsx");
+  const action = read("src/lib/route-distance-actions.ts");
+  const migration = read("supabase/migrations/20261117005500_school_return_distance_rule.sql");
+  assert.ok(server.includes('from("route_return_distance_rules")'));
+  assert.ok(server.includes("returnToStorageKmByMachineId"));
+  assert.ok(page.includes("school-return-distance"));
+  assert.ok(page.includes('legKind === "return_to_storage"'));
+  assert.ok(action.includes("canManagePayroll(profile)"));
+  assert.ok(action.includes('school?.name !== "Elite Future School"'));
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /revoke all.*anon, authenticated/i);
+  assert.ok(migration.includes("25.00"));
 });

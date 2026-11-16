@@ -1,7 +1,8 @@
 /**
  * Admin-only operational route distance calculations.
  * Source of truth: ordered route_stops + directional, manually verified edge distances.
- * Never add a return-to-storage leg or invent unknown road distances.
+ * Return-to-storage is excluded by default. An explicitly configured return
+ * from the FINAL completed stop is allowed for one-off sites such as the school.
  * This module contains no user/permission or database access so it can be tested directly.
  */
 export type DistanceEdgeRow = {
@@ -31,6 +32,7 @@ export type DistanceStopRow = {
 export type RouteDistanceLeg = {
   stopId: string;
   stopOrder: number;
+  legKind: "visit" | "return_to_storage";
   fromKind: "storage" | "machine";
   fromId: string | null;
   fromName: string;
@@ -85,6 +87,7 @@ export function calculateRouteDistance(input: {
   storageLocationId: string | null;
   storageName?: string | null;
   edges: Map<string, number>;
+  returnToStorageKmByMachineId?: ReadonlyMap<string, number>;
 }): CalculatedRouteDistance {
   const { route, machineNames, storageLocationId, edges } = input;
   const completed = isCompletedDistanceRoute(route.status);
@@ -115,6 +118,7 @@ export function calculateRouteDistance(input: {
     legs.push({
       stopId: stop.id,
       stopOrder: Number(stop.stop_order ?? 0),
+      legKind: "visit",
       fromKind,
       fromId,
       fromName,
@@ -127,6 +131,31 @@ export function calculateRouteDistance(input: {
     fromName = toName;
   }
 
+  // Return trips are deliberately exceptional. Only completed routes whose
+  // last *completed* machine stop has an explicit return rule add a return leg.
+  // If the route continues from school to another machine, no school return is added.
+  const finalStop = completed ? stops[stops.length - 1] : undefined;
+  const returnKm = finalStop?.machine_id
+    ? input.returnToStorageKmByMachineId?.get(finalStop.machine_id)
+    : undefined;
+  if (finalStop?.machine_id && storageLocationId &&
+      returnKm !== undefined && Number.isFinite(returnKm) && returnKm >= 0) {
+    const verifiedReturnKm = roundKm(returnKm);
+    const fromMachineName = machineNames.get(finalStop.machine_id) || "Unmapped machine";
+    legs.push({
+      stopId: route.id + ":return-to-storage",
+      stopOrder: Number(finalStop.stop_order ?? 0) + 1,
+      legKind: "return_to_storage",
+      fromKind: "machine",
+      fromId: finalStop.machine_id,
+      fromName: fromMachineName,
+      toId: storageLocationId,
+      toName: input.storageName || "Storage",
+      km: verifiedReturnKm,
+    });
+    knownKm += verifiedReturnKm;
+  }
+
   knownKm = roundKm(knownKm);
   return {
     routeId: route.id,
@@ -136,10 +165,10 @@ export function calculateRouteDistance(input: {
     status: route.status,
     completed,
     legs,
-    stopCount: legs.length,
+    stopCount: stops.length,
     knownKm,
-    totalKm: legs.length > 0 && missingLegCount === 0 ? knownKm : null,
-    missingLegCount: missingLegCount + (legs.length === 0 ? 1 : 0),
+    totalKm: stops.length > 0 && missingLegCount === 0 ? knownKm : null,
+    missingLegCount: missingLegCount + (stops.length === 0 ? 1 : 0),
   };
 }
 

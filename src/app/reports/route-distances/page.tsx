@@ -4,7 +4,7 @@ import { PageHeader, EmptyState, ErrorState } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
-import { deleteRouteDistanceEdge, saveRouteDistanceEdge } from "@/lib/route-distance-actions";
+import { deleteRouteDistanceEdge, saveRouteDistanceEdge, saveSchoolReturnDistance } from "@/lib/route-distance-actions";
 import { loadAdminRouteDistances } from "@/lib/route-distance-server";
 import { sumOperatorRouteDistances, type CalculatedRouteDistance } from "@/lib/route-distance";
 
@@ -30,7 +30,7 @@ function routeDistanceLabel(route: CalculatedRouteDistance, locale: Locale) {
 export default async function RouteDistancesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; operator?: string; route?: string; page?: string; saved?: string; error?: string }>;
+  searchParams: Promise<{ month?: string; operator?: string; route?: string; page?: string; saved?: string; returnSaved?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canManagePayroll(profile)) redirect("/unauthorized");
@@ -47,6 +47,12 @@ export default async function RouteDistancesPage({
   }
 
   const completedRoutes = data.routes.filter((route) => route.completed);
+  const schoolMachineId = data.machines.find((machine) => machine.name === "Elite Future School")?.id;
+  const schoolReturnRule = data.returnRules.find((rule) => rule.from_machine_id === schoolMachineId);
+  const schoolReturnLegs = completedRoutes.flatMap((route) =>
+    route.legs.filter((leg) => leg.legKind === "return_to_storage" && leg.fromId === schoolMachineId),
+  );
+  const schoolReturnKm = schoolReturnLegs.reduce((total, leg) => total + (leg.km ?? 0), 0);
   const months = [...new Set(completedRoutes.map((route) => (route.routeDate ?? "").slice(0, 7)).filter(isMonth))].sort().reverse();
   const requestedMonth = params.month || currentTripoliMonth();
   const month = requestedMonth === "all" || isMonth(requestedMonth) ? requestedMonth : currentTripoliMonth();
@@ -87,14 +93,15 @@ export default async function RouteDistancesPage({
     <PageHeader
       title={tr(locale, "Route distances / مسافات الجولات", "مسافات الجولات / Route distances")}
       subtitle={tr(locale,
-        "Private owner/admin travel distances from storage, then between stops in saved order. Covers all historic completed routes.",
-        "مسافات الجولات للإدارة فقط، من المخزن ثم بين المواقع حسب ترتيبها المحفوظ، وتشمل الجولات السابقة.")}
+        "Private owner/admin road distances from storage, through saved stops, plus a configured school-only return when the school is the final stop.",
+        "مسافات الجولات للإدارة فقط، من المخزن ثم بين المواقع حسب ترتيبها. تُضاف عودة المدرسة للمخزن فقط إذا كانت آخر محطة.")}
       breadcrumbs={[{ label: tr(locale, "Reports", "التقارير"), href: "/reports" }, { label: tr(locale, "Route distances", "مسافات الجولات") }]}
       action={<Link href="/routes" className="btn-secondary">{tr(locale, "All routes", "جميع الجولات")}</Link>}
     />
 
     {params.saved ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">{tr(locale, "Distance saved. All historical route totals have been recalculated.", "تم حفظ المسافة وإعادة حساب جميع الجولات السابقة.")}</div> : null}
     {params.error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{params.error}</div> : null}
+    {params.returnSaved ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">{tr(locale, "School-only return distance saved; historical route totals updated.", "تم حفظ مسافة عودة المدرسة فقط وإعادة حساب الجولات السابقة.")}</div> : null}
     <section className="surface-card p-5">
       <form method="get" className="flex flex-wrap items-end gap-4">
         <label className="block min-w-44 flex-1 text-sm font-medium">
@@ -115,8 +122,8 @@ export default async function RouteDistancesPage({
         <button type="submit" className="btn-primary">{tr(locale, "Show distances", "عرض المسافات")}</button>
       </form>
       <p className="mt-3 text-xs leading-5 text-slate-500">{tr(locale,
-        "Routes are grouped by their saved business date. Only completed routes count toward operator totals. No return-to-storage leg is assumed; missing links are never treated as zero.",
-        "التجميع حسب تاريخ الجولة المحفوظ، وتُحسب الجولات المكتملة فقط. لا تُضاف رحلة العودة للمخزن تلقائياً، ولا تُعامل المسافات المجهولة على أنها صفر.")}</p>
+        "Routes are grouped by saved business date. Completed routes count toward totals. Return-to-storage applies only when Elite Future School is the final completed stop; unknown legs are never zero.",
+        "التجميع حسب تاريخ الجولة المحفوظ. تُضاف عودة المخزن فقط عندما تكون مدرسة النخبة آخر محطة مكتملة؛ المسافات المجهولة لا تُعتبر صفرًا.")}</p>
     </section>
 
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -125,6 +132,40 @@ export default async function RouteDistancesPage({
       <div className="surface-card"><div className="text-sm text-slate-500">{tr(locale, "Completed routes · selected period", "الجولات المكتملة · الفترة")}</div><div className="mt-2 text-3xl font-semibold">{monthSummary.completedRoutes}</div></div>
       <div className="surface-card"><div className="text-sm text-slate-500">{tr(locale, "Incomplete route distances", "جولات مسافاتها ناقصة")}</div><div className="mt-2 text-3xl font-semibold text-amber-700">{monthSummary.incompleteRoutes}</div><div className="mt-1 text-xs text-slate-500">{monthSummary.missingLegCount} {tr(locale, "unresolved legs", "مسافات غير محددة")}</div></div>
     </section>
+
+    {schoolReturnRule ? <section className="surface-card p-5" id="school-return-distance">
+      <h2 className="text-lg font-semibold">{tr(locale, "School-only return to storage", "عودة المدرسة فقط إلى المخزن")}</h2>
+      <p className="mt-1 text-sm leading-6 text-slate-600">
+        {tr(locale,
+          "Add a one-way return from Elite Future School back to MAIN storage only if the school is the LAST completed stop. No other site gets an automatic return.",
+          "تُضاف مسافة العودة من مدرسة النخبة إلى مخزن MAIN فقط إذا كانت المدرسة آخر محطة مكتملة في الجولة. لا تُضاف عودة تلقائية لأي موقع آخر.")}
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-slate-50 p-4">
+          <div className="text-xs text-slate-500">{tr(locale, "Completed school-ending routes", "الجولات التي انتهت في المدرسة")}</div>
+          <div className="mt-2 text-2xl font-semibold">{schoolReturnLegs.length}</div>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-4">
+          <div className="text-xs text-slate-500">{tr(locale, "Return KM added to historical totals", "مسافة العودة المضافة للإجمالي التاريخي")}</div>
+          <div className="mt-2 text-2xl font-semibold">{kmLabel(schoolReturnKm)}</div>
+        </div>
+      </div>
+      <form action={saveSchoolReturnDistance} className="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="rule_id" value={schoolReturnRule.id} />
+        <label className="min-w-[180px] flex-1 text-sm font-medium">
+          {tr(locale, "School → MAIN storage (one way, approximate km)", "المدرسة ← المخزن MAIN (كم باتجاه واحد، تقريبية)")}
+          <input name="distance_km" type="number" min="0" max="9999.99" step="0.01"
+            required defaultValue={Number(schoolReturnRule.distance_km)}
+            className="field-input mt-1" />
+        </label>
+        <button type="submit" className="btn-secondary">{tr(locale, "Update school return", "تحديث مسافة العودة")}</button>
+      </form>
+      <p className="mt-3 text-xs text-slate-500">
+        {tr(locale,
+          "The return is a manual approximate road distance, not GPS. It is a distinct leg, not an extra machine visit, and payroll remains unchanged.",
+          "المسافة تقديرية وليست تتبع GPS، وتُحسب كمقطع عودة مستقل وليس زيارة جهاز إضافية. لا تتغير الرواتب.")}
+      </p>
+    </section> : null}
 
     <section className="surface-card p-5">
       <h2 className="text-lg font-semibold">{tr(locale, "Distance by operator · monthly and all time", "المسافة حسب المشغل · الشهري والإجمالي")}</h2>
@@ -163,7 +204,7 @@ export default async function RouteDistancesPage({
         <th className="p-3">{tr(locale, "Stop", "الترتيب")}</th><th className="p-3">{tr(locale, "From", "من")}</th>
         <th className="p-3">{tr(locale, "To", "إلى")}</th><th className="p-3">{tr(locale, "Distance", "المسافة")}</th>
       </tr></thead><tbody>{selectedRoute.legs.map((leg) => <tr key={leg.stopId} className="border-b border-slate-100">
-        <td className="p-3">{leg.stopOrder}</td><td className="p-3">{leg.fromName}</td><td className="p-3">{leg.toName}</td>
+        <td className="p-3">{leg.legKind === "return_to_storage" ? tr(locale, "Return", "العودة") : leg.stopOrder}</td><td className="p-3">{leg.fromName}</td><td className="p-3">{leg.toName}</td>
         <td className="p-3">{leg.km === null ? <span className="font-medium text-amber-700">{tr(locale, "Not entered", "غير محددة")}</span> : kmLabel(leg.km)}</td>
       </tr>)}</tbody></table></div>
     </section> : null}
