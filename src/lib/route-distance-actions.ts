@@ -135,7 +135,7 @@ export async function saveSchoolReturnDistance(form: FormData) {
   const db = await adminClient();
   const ruleId = String(form.get("rule_id") ?? "").trim();
   const raw = String(form.get("distance_km") ?? "").trim();
-  if (!uuidPattern.test(ruleId) || !/^\\d+(?:\\.\\d{1,2})?$/.test(raw)) {
+  if (!uuidPattern.test(ruleId) || !/^\d+(?:\.\d{1,2})?$/.test(raw)) {
     redirect("/reports/route-distances?error=" + encodeURIComponent("Enter a valid school return distance (km)."));
   }
   const km = Number(raw);
