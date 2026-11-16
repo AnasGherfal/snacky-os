@@ -10,6 +10,13 @@ import {
 } from "@/lib/route-distance";
 
 export type RouteDistanceMachine = { id: string; name: string | null };
+export type RouteReturnDistanceRule = {
+  id: string;
+  from_machine_id: string;
+  to_storage_location_id: string;
+  distance_km: number | string;
+  notes?: string | null;
+};
 export type RouteDistanceStorage = { id: string; name: string | null; active: boolean | null };
 export type RouteDistanceOperator = { id: string; full_name: string | null };
 export type MissingRouteDistanceLink = {
@@ -25,6 +32,7 @@ export type MissingRouteDistanceLink = {
 export type LoadedRouteDistances = {
   routes: CalculatedRouteDistance[];
   edges: DistanceEdgeRow[];
+  returnRules: RouteReturnDistanceRule[];
   machines: RouteDistanceMachine[];
   storages: RouteDistanceStorage[];
   operators: RouteDistanceOperator[];
@@ -54,7 +62,7 @@ export async function loadAdminRouteDistances(): Promise<LoadedRouteDistances> {
   const db = getSupabaseAdminClient();
   if (!db) throw new Error("Supabase admin client is not configured.");
 
-  const [routes, stops, machines, storages, operators, edges] = await Promise.all([
+  const [routes, stops, machines, storages, operators, edges, returnRules] = await Promise.all([
     fetchEveryRow<DistanceRouteRow>((a, b) => db.from("routes")
       .select("id,route_date,status,operator_id").order("route_date", { ascending: false }).order("id").range(a, b)),
     fetchEveryRow<DistanceStopRow>((a, b) => db.from("route_stops")
@@ -67,6 +75,8 @@ export async function loadAdminRouteDistances(): Promise<LoadedRouteDistances> {
       .select("id,full_name").order("full_name").range(a, b)),
     fetchEveryRow<DistanceEdgeRow>((a, b) => db.from("route_distance_edges")
       .select("id,from_machine_id,from_storage_location_id,to_machine_id,distance_km,notes").order("created_at").range(a, b)),
+    fetchEveryRow<RouteReturnDistanceRule>((a, b) => db.from("route_return_distance_rules")
+      .select("id,from_machine_id,to_storage_location_id,distance_km,notes").order("created_at").range(a, b)),
   ]);
 
   const activeStorages = storages.filter((storage) => storage.active);
@@ -83,6 +93,12 @@ export async function loadAdminRouteDistances(): Promise<LoadedRouteDistances> {
   const machineNames = new Map(machines.map((machine) => [machine.id, machine.name || "Unnamed machine"]));
   const operatorNames = new Map(operators.map((operator) => [operator.id, operator.full_name || "Unnamed operator"]));
   const indexedEdges = indexRouteDistanceEdges(edges);
+  const returnToStorageKmByMachineId = new Map(
+    returnRules
+      .filter((rule) => rule.to_storage_location_id === activeStorage?.id)
+      .filter((rule) => Number.isFinite(Number(rule.distance_km)) && Number(rule.distance_km) >= 0)
+      .map((rule) => [rule.from_machine_id, Number(rule.distance_km)]),
+  );
   const calculated = routes
     .filter((route) => !["cancelled", "canceled"].includes(String(route.status ?? "").toLowerCase()))
     .map((route) => calculateRouteDistance({
@@ -93,6 +109,7 @@ export async function loadAdminRouteDistances(): Promise<LoadedRouteDistances> {
       storageLocationId: activeStorage?.id ?? null,
       storageName: activeStorage?.name ?? "Storage not configured",
       edges: indexedEdges,
+      returnToStorageKmByMachineId,
     }));
 
   const missing = new Map<string, MissingRouteDistanceLink & { routeIds: Set<string> }>();
@@ -119,6 +136,7 @@ export async function loadAdminRouteDistances(): Promise<LoadedRouteDistances> {
   return {
     routes: calculated,
     edges,
+    returnRules,
     machines,
     storages: activeStorages,
     operators,
