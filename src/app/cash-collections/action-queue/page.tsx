@@ -24,7 +24,7 @@ function ageDays(value:unknown){
 function actionFor(row:any){
  const ownerXY=savedOwnerVmsForCollection(row);
  if(row.reconciliation_status==="variance_review")return verifiedCashExpectation(row)===null
-  ? {key:"variance",label:ownerXY?"XY cash entered · custody/source review still pending":"Verify expected cash before owner decision",tone:"amber"}
+  ? {key:"source",label:ownerXY?"Counted cash · XY owner report entered; source/bag evidence pending":"Counted cash · XY source/bag evidence pending",tone:"amber"}
   : {key:"variance",label:"Owner variance decision",tone:"rose"};
  if(row.custody_status==="removed")return {key:"receive",label:"Receive into storage",tone:"amber"};
  if(row.custody_status==="in_storage")return {key:"count",label:"Count stored cash",tone:"amber"};
@@ -70,16 +70,18 @@ export default async function CashActionQueuePage(){
  const rawCashSourceFreshness = recentPaymentTime.error || recentDeliveryTime.error ? "unverified"
   : (recentPaymentTime.data?.length || recentDeliveryTime.data?.length) ? "recent" : "stale";
  const rows=(data??[]).map((row:any)=>({...row,action:actionFor(row),age_days:ageDays(row.collected_at)}));
- const actionable=rows.filter((row:any)=>["receive","count","vms","variance"].includes(row.action.key));
+ const actionable=rows.filter((row:any)=>["receive","count","vms","variance","source"].includes(row.action.key));
  const buckets={
   receive:actionable.filter((r:any)=>r.action.key==="receive"),
   count:actionable.filter((r:any)=>r.action.key==="count"),
   vms:actionable.filter((r:any)=>r.action.key==="vms"),
   variance:actionable.filter((r:any)=>r.action.key==="variance"),
+  source:actionable.filter((r:any)=>r.action.key==="source"),
   overdue:actionable.filter((r:any)=>Number(r.age_days??0)>=3),
  };
  const visibleCards=[
-  ["Variance and source reviews",buckets.variance.length,"#variance"],
+  ["Verified variance / physical exception",buckets.variance.length,"#variance"],
+  ["Counted · XY/bag evidence needed",buckets.source.length,"#source"],
   ["Waiting for physical count",buckets.count.length,"#count"],
   ["Waiting for storage receipt",buckets.receive.length,"#receive"],
   ["Waiting for VMS comparison",buckets.vms.length,"#vms"],
@@ -129,6 +131,10 @@ export default async function CashActionQueuePage(){
     </tr>})}</DataTable>}
   </section>
 
-  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Variance and source checks</strong><p className="mt-1 text-sm text-rose-800">Check the expected-cash source first. Historical variance flags may lack a dated XY comparison and are not proof of loss. Do not classify current records as legacy without reviewing their evidence.</p></section>:null}
+  {buckets.source.length?<section className="rounded-xl border border-amber-200 bg-amber-50 p-4" id="source">
+   <strong className="text-amber-950">Already counted · source or bag-ID evidence still to verify</strong>
+   <p className="mt-1 text-sm text-amber-900">These physical cash counts are already recorded. A legacy variance flag without a dated verified expected amount is not a shortage. A digital UNNUMBERED bag reference is not proof of a damaged seal. Do not count the same cash a second time.</p>
+  </section>:null}
+  {buckets.variance.length?<section className="rounded-xl border border-rose-200 bg-rose-50 p-4" id="variance"><strong className="text-rose-900">Verified variance or material custody exception</strong><p className="mt-1 text-sm text-rose-800">Review the dated expected-cash source and any actual physical seal damage before approving a resolution. Do not assume a shortage from old unsourced flags.</p></section>:null}
  </div>;
 }

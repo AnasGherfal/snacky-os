@@ -155,10 +155,21 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
       && row.storage_seal_condition !== "broken"
       && row.count_seal_condition !== "broken"
       && verifiedCashExpectation(row) === null;
+    const physicalSealException =
+      [row.storage_seal_condition, row.count_seal_condition].some((condition) =>
+        condition && condition !== "intact"
+        && (!isUnnumberedCashReference(row.cash_bag_id) || condition === "broken"));
+    const unsourcedLegacyReview = status === "counted"
+      && verifiedCashExpectation(row) === null
+      && !physicalSealException
+      && !unnumberedReferenceOnly;
     alerts.push(unnumberedReferenceOnly
       ? { severity: "warning", label: "Cash counted — unnumbered bag needs evidence review",
           detail: "The physical count is saved. The electronic bag reference is not a printed seal. This flag alone is not a cash shortage; cash-only XY comparison remains separate." }
-      : { severity: "critical", label: "Owner review required", detail: "The combined batch total or custody evidence has an unresolved exception." });
+      : unsourcedLegacyReview
+      ? { severity: "warning", label: "Cash counted — VMS/source not verified",
+          detail: "This old variance-review label has no dated verified expected-cash source. The recorded count is preserved. No missing-cash amount can be concluded from this flag." }
+      : { severity: "critical", label: "Owner review required", detail: "The combined batch total or physical seal evidence has an unresolved verified or material exception." });
   }
   if ([row.storage_seal_condition, row.count_seal_condition].some((condition) => condition && condition !== "intact")) {
     if (isUnnumberedCashReference(row.cash_bag_id)
@@ -179,11 +190,18 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
   if (threshold) {
     const age = hoursSince(threshold.date, now);
     if (age !== null && age >= threshold.hours) {
-      alerts.push({
-        severity: status === "removed" ? "critical" : "warning",
-        label: threshold.label,
-        detail: `This stage has been open for ${ageLabel(age)}; target is ${threshold.hours} hours.`,
-      });
+      const unlinkedHistoricalRemoval = status === "removed"
+        && age >= 24 * 30 && !row.cash_bag_id;
+      alerts.push(unlinkedHistoricalRemoval
+        ? {
+            severity: "warning", label: "Historical removal — final count not linked",
+            detail: "This old ledger row has no printed bag reference or recorded count. It may overlap other counted history; do not treat it as current physical cash or add money to Finance without matching evidence.",
+          }
+        : {
+            severity: status === "removed" ? "critical" : "warning",
+            label: threshold.label,
+            detail: `This stage has been open for ${ageLabel(age)}; target is ${threshold.hours} hours.`,
+          });
     }
   }
 
