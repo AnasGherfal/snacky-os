@@ -34,11 +34,16 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
     const linked=params.get("id");
-    if(linked)setSelected(linked);
     // This is a suggestion from an owner-reported historical count, NOT a
     // confirmed count: the authenticated counter must check the real cash.
     const suggested=params.get("reported_amount");
-    if(suggested && /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(suggested))setAmount(suggested);
+    // Initialize from the browser URL after mount rather than synchronously
+    // dispatching React updates during the effect's render lifecycle.
+    const init=window.setTimeout(()=>{
+      if(linked)setSelected(linked);
+      if(suggested && /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(suggested))setAmount(suggested);
+    },0);
+    return()=>window.clearTimeout(init);
   },[]);
   useEffect(()=>{
     let ended=false;
