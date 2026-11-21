@@ -55,3 +55,16 @@ test("Existing physical cash-and-Finance integrity remains server-side and idemp
  assert.doesNotMatch(api,/\.from\(['"]financial_transactions['"]\)\.insert/);
  assert.doesNotMatch(api,/service_role|set_config\('request\.jwt/);
 });
+
+
+test("A rejected stale request is replaced only AFTER a live custody-stage read, uncertain retries remain intact",()=>{
+ const ui=read("src/components/cash/CashReceiveWorkspace.tsx");
+ assert.match(ui,/async function verifyCurrentBoxStatus/);
+ assert.match(ui,/\/api\/cash-handling\?id=\$\{encodeURIComponent\(selected\)\}&status=all/);
+ assert.match(ui,/latest\.actions\.includes\(previousAction\) && wasDefinitivelyRejected/);
+ assert.match(ui,/sessionStorage\.removeItem\(requestKey\(selected,previousAction\)\)/);
+ assert.match(ui,/const wasDefinitivelyRejected=\["denied","invalid","conflict","photo"\]/);
+ assert.match(ui,/else if\(latest\.actions\.includes\("count"\)\)/);
+ assert.match(ui,/else if\(latest\.state==="counted"\)/);
+ assert.match(ui,/void verifyCurrentBoxStatus\(\)/);
+});
