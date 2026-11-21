@@ -37,7 +37,7 @@ export default async function OwnerReportedCashCountPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Finish Anas's reported cash counts"
-        subtitle="The amounts were reported as physically counted from storage. Link each one to its EXISTING operator removal and confirm through the signed-in owner cash workflow. No re-entry or duplicate sales."
+        subtitle="Previously reported physical cash counts from November 2026. Confirm each existing operator removal using your signed-in owner account; original pickup dates remain unchanged, and Finance posts once."
         breadcrumbs={[{label:"Cash Custody",href:"/cash-collections"},{label:"Owner-reported counts"}]}
         action={<SecondaryButton href="/cash-collections/count">Regular cash counting</SecondaryButton>} />
       {params.message?<div role="status" className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">{params.message}</div>:null}
@@ -56,7 +56,7 @@ export default async function OwnerReportedCashCountPage({
         </div>
       </section>
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-        <strong>Important:</strong> These cash amounts came from your earlier statement, not from XY sales.
+        <strong>Important:</strong> These cash amounts came from your earlier statements and recovered physical count notes, not from XY sales.
         Recording them updates each physical cash count and posts one matching Finance entry.
         No VMS reconciliation is implied. For unnumbered bags, the system preserves the identification review and does not pretend a printed seal exists.
       </div>
@@ -68,7 +68,7 @@ export default async function OwnerReportedCashCountPage({
       {pending.length?<form action={confirmOwnerReportedCashCounts} className="space-y-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-lg font-bold">Previously counted — ready for owner confirmation</h2>
-          <p className="mt-1 text-sm text-slate-600">All eight values below were already provided as physically counted by Anas. They remain associated with their original operator and pickup timestamp.</p>
+          <p className="mt-1 text-sm text-slate-600">These values were reported from your earlier messages and recovered November 16–18 notes as physically counted by Anas. Confirm the selected bag against its original machine, pickup time and photos before posting.</p>
           <div className="mt-4 divide-y divide-slate-200">
             {pending.map((row)=>(
               <label key={row.id} className="flex cursor-pointer items-start gap-3 py-4">
@@ -90,7 +90,7 @@ export default async function OwnerReportedCashCountPage({
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-6">
           <label className="flex items-start gap-3 text-sm leading-6 text-slate-900">
             <input type="checkbox" name="owner_attestation" value="yes" required className="mt-1 h-5 w-5 accent-emerald-700"/>
-            <span>I confirm that Anas physically received these exact cash collections from storage and counted the amounts listed above. I am confirming previously completed physical counts, not reporting a new cash removal. The original physical count dates were not provided.</span>
+            <span>I confirm that Anas physically received these exact cash collections from storage and counted the amounts listed above. I am confirming previously completed physical counts, not reporting a new cash removal. The original physical count clock times were not provided. The current signed-in confirmation time is not being represented as the earlier physical count time.</span>
           </label>
           <button type="submit" className="btn-primary mt-4 w-full text-lg">
             Confirm selected counts and post once to Finance

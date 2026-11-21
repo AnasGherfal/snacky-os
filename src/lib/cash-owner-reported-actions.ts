@@ -6,20 +6,23 @@ import { getAuthenticatedSupabaseServerClient,getCurrentProfile } from "@/lib/au
 import { hasAnyRole } from "@/lib/authz";
 import { loadOwnerReportedCountRows } from "@/lib/cash-owner-reported";
 import { logActivity } from "@/lib/activity-log";
-import { validateCashCommand, cashReceiptMatches, type CashCommand,type CashWorkspace } from "@/lib/cash-handover";
+import { validateCashCommand, cashReceiptMatches, isUnnumberedCashReference, type CashCommand,type CashWorkspace } from "@/lib/cash-handover";
 
 function redirectBack(message:string):never {
   redirect("/cash-collections/owner-reported?message="+encodeURIComponent(message));
 }
 
 function receiptCommand(id:string, revision:number, action:"pickup"|"direct_pickup", bag:string):CashCommand {
+  const noPrintedReference=isUnnumberedCashReference(bag);
   return validateCashCommand({
     request_id:crypto.randomUUID(), collection_id:id,action,revision,
     payload:{
-      // An electronic UNNUMBERED reference is NOT a physical printed seal;
-      // "mismatch" records missing seal verification without claiming damage.
+      // Without independent physical-seal verification, retain an evidence
+      // exception. Do not allege damage or invent printed seal numbers.
       confirm_bag_id:bag,seal_condition:"mismatch",
-      notes:"OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas reports this existing unnumbered cash bag was taken from storage, identified by machine and photos, and physically counted before this digital confirmation. No printed seal number; no damage alleged. Pickup event timestamp is confirmation time, not original historical pickup time.",
+      notes:noPrintedReference
+        ? "UNNUMBERED CASH BAG. OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas reports this existing cash bag was taken from storage and physically counted; compare machine, time and both photos. Electronic ID is not a printed seal. No damage alleged. Recorded pickup time is digital confirmation time."
+        : "UNNUMBERED CASH BAG deposit protocol flag, NOT a claim that the recorded ID was physically unprinted. OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas confirms this physical cash bag matches the existing operator removal and was counted. The recorded reference is not independently verified as a tamper-proof seal; no damage is alleged. Confirm machine, time and photos. Recorded pickup time is digital confirmation time.",
     },
   });
 }
@@ -39,7 +42,7 @@ export async function confirmOwnerReportedCashCounts(formData:FormData) {
   if(!profile || profile.active_status!=="active" || !profile.team_member_id ||
      !hasAnyRole(profile,["owner","admin"]))redirect("/unauthorized");
   if(String(formData.get("owner_attestation")??"")!=="yes")
-    redirectBack("Please confirm the eight owner-reported physical cash counts first.");
+    redirectBack("Please confirm the selected owner-reported physical cash counts first.");
   const ids=[...new Set(formData.getAll("collection_ids").map(v=>String(v)))];
   if(!ids.length || ids.length>20 || ids.some(id=>!/^[0-9a-f-]{36}$/i.test(id)))
     redirectBack("Select the original cash collections to confirm.");
