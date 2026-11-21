@@ -22,7 +22,7 @@ function receiptCommand(id:string, revision:number, action:"pickup"|"direct_pick
       confirm_bag_id:bag,seal_condition:"mismatch",
       notes:noPrintedReference
         ? "UNNUMBERED CASH BAG. OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas reports this existing cash bag was taken from storage and physically counted; compare machine, time and both photos. Electronic ID is not a printed seal. No damage alleged. Recorded pickup time is digital confirmation time."
-        : "OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas confirms this physical cash bag matches the existing operator removal and was counted. The recorded reference is not independently verified as a tamper-proof seal; no damage is alleged. Confirm machine, time and photos. Recorded pickup time is digital confirmation time.",
+        : "UNNUMBERED CASH BAG deposit protocol flag, NOT a claim that the recorded ID was physically unprinted. OWNER CONFIRMATION OF EARLIER PHYSICAL RECEIPT: Anas confirms this physical cash bag matches the existing operator removal and was counted. The recorded reference is not independently verified as a tamper-proof seal; no damage is alleged. Confirm machine, time and photos. Recorded pickup time is digital confirmation time.",
     },
   });
 }
