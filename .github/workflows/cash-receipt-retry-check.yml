@@ -1,0 +1,31 @@
+name: Cash receipt retry and rejection safety
+on:
+  pull_request:
+    paths:
+      - 'src/app/api/cash-handling/route.ts'
+      - 'src/components/cash/CashReceiveWorkspace.tsx'
+      - 'scripts/test-cash-receipt-clear-errors.mjs'
+      - '.github/workflows/cash-receipt-retry-check.yml'
+permissions:
+  contents: read
+jobs:
+  cash-receipt-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Receipt rejection, owner count and no duplicates
+        run: |
+          node --test scripts/test-cash-receipt-clear-errors.mjs
+          node --test scripts/test-cash-owner-reported-guard.mjs
+          node --test scripts/test-cash-handling-current.mjs
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs
+      - name: Verify types
+        run: npm run typecheck
+      - name: Focused lint
+        run: npx eslint src/app/api/cash-handling/route.ts src/components/cash/CashReceiveWorkspace.tsx

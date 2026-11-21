@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect,useMemo,useState,type FormEvent } from "react";
-import { cashReceiptMatches,validateCashCommand,isUnnumberedCashReference,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
+import { cashReceiptMatches,cashError,validateCashCommand,isUnnumberedCashReference,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
 
 const fmt=(d:string)=>new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Tripoli",dateStyle:"short",timeStyle:"short"}).format(new Date(d));
 function monthKey(date:Date|string){
@@ -18,6 +18,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   const [busy,setBusy]=useState(false);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
+  const [saveProblemCode,setSaveProblemCode]=useState<string|null>(null);
   const [success,setSuccess]=useState("");
   const [selected,setSelected]=useState<string|null>(null);
   const [showHistory,setShowHistory]=useState(false);
@@ -33,11 +34,16 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
     const linked=params.get("id");
-    if(linked)setSelected(linked);
     // This is a suggestion from an owner-reported historical count, NOT a
     // confirmed count: the authenticated counter must check the real cash.
     const suggested=params.get("reported_amount");
-    if(suggested && /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(suggested))setAmount(suggested);
+    // Initialize from the browser URL after mount rather than synchronously
+    // dispatching React updates during the effect's render lifecycle.
+    const init=window.setTimeout(()=>{
+      if(linked)setSelected(linked);
+      if(suggested && /^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$/.test(suggested))setAmount(suggested);
+    },0);
+    return()=>window.clearTimeout(init);
   },[]);
   useEffect(()=>{
     let ended=false;
@@ -78,10 +84,47 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
     setCashLocation(defaultSafeLabel);setPhysical(false);setError("");setSuccess("");
     window.history.replaceState(null,"",`/cash-handling/receive?id=${encodeURIComponent(id)}`);
   }
+  async function verifyCurrentBoxStatus(){
+    if(!selected || busy) return;
+    setBusy(true);
+    try{
+      // Read the authoritative custody stage before ever considering a new
+      // request reference. A previously committed pickup would have changed
+      // stage/revision, and a counted box must never be counted twice.
+      const response=await fetch(`/api/cash-handling?id=${encodeURIComponent(selected)}&status=all`,{cache:"no-store"});
+      const value:unknown=await response.json();
+      if(!response.ok || !value || typeof value!=="object" || !("ok" in value)
+         || (value as {ok:unknown}).ok!==true) {
+        throw Error("تعذر التحقق من حالة الكيس. المرجع السابق ما زال محفوظاً. افتح السجل الأصلي وتأكد قبل إعادة المحاولة.");
+      }
+      const latest=(value as {data?:CashWorkspace}).data?.rows?.find(row=>row.id===selected);
+      if(!latest)throw Error("الكيس غير ظاهر في قائمة الإجراءات الحالية. راجع السجل الأصلي دون إنشاء سحب جديد.");
+      const previousAction=action;
+      const wasDefinitivelyRejected=["denied","invalid","conflict","photo"].includes(saveProblemCode??"");
+      if(previousAction && latest.actions.includes(previousAction) && wasDefinitivelyRejected) {
+        // Only on an explicit REJECTION + verified unchanged available stage
+        // may we discard an old rejected request. Never clear an uncertain key.
+        try{sessionStorage.removeItem(requestKey(selected,previousAction));}
+        catch{throw Error("تعذر تحديث مرجع المحاولة المحفوظة. لا تحذف بيانات الهاتف أو تكرر العد.");}
+        setError("تحققنا من السجل: لم تُعتمد هذه الخطوة والكيس ما زال ينتظرها. يمكنك التأكد من بياناته وإعادة المحاولة بمرجع جديد.");
+        setSaveProblemCode(null);
+      } else if(latest.actions.includes("count")){
+        setError("سجل النظام أن الكيس استُلم بالفعل. أكمل العدّ على نفس الكيس؛ لا تُعد تسجيل الاستلام.");
+        setSaveProblemCode(null);
+      } else if(latest.state==="counted"){
+        setError("النقدية موجودة في السجل كمعدودة. لا تدخل مبلغها مرة ثانية. افتح سجل السحب للمراجعة.");
+        setSaveProblemCode(null);
+      } else {
+        setError("تم فحص الحالة الحالية. لا تنشئ سحباً جديداً؛ استخدم نفس مرجع الطلب المحفوظ عند إعادة المحاولة.");
+      }
+      setView(previous=>previous?{...previous,rows:previous.rows.map(row=>row.id===selected?latest:row)}:previous);
+    }catch(e){setError(e instanceof Error?e.message:"تعذر التحقق من المرحلة الحالية؛ لا تكرر العملية.");}
+    finally{setBusy(false);}
+  }
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
     if(!box||!action||busy)return;
-    setBusy(true);setError("");setSuccess("");
+    setBusy(true);setError("");setSuccess("");setSaveProblemCode(null);
     const key=requestKey(box.id,action);
     try{
       if(!physical)throw Error("تأكد من وجود الكيس واستلامه فعلياً قبل المتابعة.");
@@ -114,17 +157,46 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
         try{sessionStorage.setItem(key,JSON.stringify(command));}
         catch{throw Error("تعذر حفظ مرجع الطلب على الهاتف. حاول بعد تفعيل التخزين.");}
       }
-      const res=await fetch("/api/cash-handling",{
-        method:"POST",headers:{"content-type":"application/json"},
-        cache:"no-store",body:JSON.stringify(command),signal:AbortSignal.timeout(40000),
-      });
-      const result=await res.json();
-      if(!res.ok||!cashReceiptMatches(command,result)) {
-        const retryable=result.retryable!==false;
-        if(retryable)throw Error("الحفظ غير مؤكد. أعد المحاولة بنفس المرجع؛ لا تكرر استلام الكيس أو عدّه.");
-        throw Error("تعذّر اعتماد الخطوة. حدّث الصفحة وتحقق من نفس سجل السحب والصورة قبل إعادة المحاولة.");
+      // Every retry keeps exactly the same command and request_id. The server
+      // resolves recorded receipts first and rejects duplicate financial posts.
+      const submitSameRequest=async():Promise<{status:number;body:Record<string,unknown>}>=>{
+        const res=await fetch("/api/cash-handling",{
+          method:"POST",headers:{"content-type":"application/json"},
+          cache:"no-store",body:JSON.stringify(command),signal:AbortSignal.timeout(40000),
+        });
+        let body:Record<string,unknown>={code:"uncertain",retryable:true};
+        try{
+          const value:unknown=await res.json();
+          if(value&&typeof value==="object"&&!Array.isArray(value))
+            body=value as Record<string,unknown>;
+        }catch{/* Possible proxy/network error: retain saved request reference. */}
+        return {status:res.status,body};
+      };
+      let reply=await submitSameRequest();
+      const firstCode=typeof reply.body.code==="string" ? reply.body.code : "uncertain";
+      // The older API forgot retryable:false for denial/conflict. Don't replay
+      // explicit 400/403/409, even if a response lacks retryable.
+      const definitelyRejected=["denied","conflict","invalid","photo"].includes(firstCode)
+        || [400,403,409].includes(reply.status);
+      if(!definitelyRejected && !cashReceiptMatches(command,reply.body)
+         && reply.body.retryable!==false) {
+        try{reply=await submitSameRequest();}catch{/* keep original unresolved response */}
+      }
+      const result=reply.body;
+      if(reply.status!==200 || !cashReceiptMatches(command,result)) {
+        const code=typeof result.code==="string" ? result.code : "uncertain";
+        setSaveProblemCode(code);
+        if(code==="denied" || reply.status===403)
+          throw Error("تم رفض استلام الكيس. تأكد أنك داخل Snacky OS بحساب المالك وأن الصفحة من نفس رابط الموقع. " + cashError("denied",true));
+        if(code==="conflict" || reply.status===409)
+          throw Error("سجل الكيس تغير أو مرجع المحاولة قديم. لا تسجل سحبًا جديدًا: حدّث حالة نفس الكيس أولًا. " + cashError("conflict",true));
+        if(code==="invalid" || reply.status===400)
+          throw Error("رفض النظام بيانات الاستلام. راجع الكيس والختم وملاحظات الاستلام. " + cashError("invalid",true));
+        if(code==="photo")throw Error(cashError("photo",true));
+        throw Error("تعذر تأكيد الحفظ. احتفظنا بنفس مرجع الطلب لتفادي تكرار العد. " + cashError(code,true));
       }
       try{sessionStorage.removeItem(key);}catch{/* committed */}
+      setSaveProblemCode(null);
       const wasCounted=action==="count";
       setSuccess(wasCounted?
         "تم تسجيل العد الفعلي للكيس؛ يُدخل المبلغ مرة واحدة في السجل المالي، وتظل التسوية منفصلة إذا كانت XY غير مؤكدة أو الكيس غير مرقم.":
@@ -170,7 +242,20 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       <div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><div className="text-sm text-sky-900">استلمت ولم تُعدّ بعد</div><b className="text-2xl">{toCount.length}</b></div>
     </div>
     {loading?<p className="rounded-xl border bg-white p-4">جارٍ تحميل سجلات الخزنة...</p>:null}
-    {error?<div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm font-semibold text-rose-950">{error}</div>:null}
+    {error?<div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm font-semibold text-rose-950">
+      <p>{error}</p>
+      <p className="mt-2 text-xs font-normal">لا تنشئ عملية سحب أخرى ولا تدخل مبلغًا في Finance يدويًا. المرجع الأصلي محفوظ ويمكن فحص حالته بأمان.</p>
+      {selected?<div className="mt-3 flex flex-wrap gap-3">
+        <button type="button" className="rounded-lg border border-rose-500 bg-white px-3 py-2 text-rose-900"
+          onClick={()=>{void verifyCurrentBoxStatus();}}>
+          تحقّق من حالة الكيس الحالية
+        </button>
+        <Link href={`/cash-collections/${selected}`} className="rounded-lg border border-rose-500 bg-white px-3 py-2 text-rose-900">
+          افتح سجل السحب والصور
+        </Link>
+      </div>:null}
+      {saveProblemCode?<p className="mt-2 text-xs font-normal">رمز المشكلة: <bdi>{saveProblemCode}</bdi>. لا تغير رقم الكيس أو مرجع المحاولة دون التحقق من السجل.</p>:null}
+    </div>:null}
     {success?<div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">{success}</div>:null}
     {box&&action?<form onSubmit={submit} className="space-y-4 rounded-2xl border-2 border-emerald-300 bg-white p-5">
       <div className="flex flex-wrap justify-between gap-2">
