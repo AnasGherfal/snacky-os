@@ -28,7 +28,7 @@ test("Cash Custody does not paint amber evidence warnings as red on mobile or de
  assert.match(cash,/alerts\.some\(\(alert\) => alert\.severity === "critical"\) \? "text-rose-700" : "text-amber-800"/);
  assert.match(cash,/counted cash record/);
  assert.match(cash,/does NOT prove a shortage/);
- assert.match(cash,/Historical cash evidence review/);
+ assert.match(cash,/Review historical cash evidence/);
  assert.match(cash,/Formal VMS review pending/);
  assert.match(cash,/needsCheckCount \? "text-amber-700"/);
 });
