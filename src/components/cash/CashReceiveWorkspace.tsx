@@ -79,6 +79,43 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
     setCashLocation(defaultSafeLabel);setPhysical(false);setError("");setSuccess("");
     window.history.replaceState(null,"",`/cash-handling/receive?id=${encodeURIComponent(id)}`);
   }
+  async function verifyCurrentBoxStatus(){
+    if(!selected || busy) return;
+    setBusy(true);
+    try{
+      // Read the authoritative custody stage before ever considering a new
+      // request reference. A previously committed pickup would have changed
+      // stage/revision, and a counted box must never be counted twice.
+      const response=await fetch(`/api/cash-handling?id=${encodeURIComponent(selected)}&status=all`,{cache:"no-store"});
+      const value:unknown=await response.json();
+      if(!response.ok || !value || typeof value!=="object" || !("ok" in value)
+         || (value as {ok:unknown}).ok!==true) {
+        throw Error("تعذر التحقق من حالة الكيس. المرجع السابق ما زال محفوظاً. افتح السجل الأصلي وتأكد قبل إعادة المحاولة.");
+      }
+      const latest=(value as {data?:CashWorkspace}).data?.rows?.find(row=>row.id===selected);
+      if(!latest)throw Error("الكيس غير ظاهر في قائمة الإجراءات الحالية. راجع السجل الأصلي دون إنشاء سحب جديد.");
+      const previousAction=action;
+      const wasDefinitivelyRejected=["denied","invalid","conflict","photo"].includes(saveProblemCode??"");
+      if(previousAction && latest.actions.includes(previousAction) && wasDefinitivelyRejected) {
+        // Only on an explicit REJECTION + verified unchanged available stage
+        // may we discard an old rejected request. Never clear an uncertain key.
+        try{sessionStorage.removeItem(requestKey(selected,previousAction));}
+        catch{throw Error("تعذر تحديث مرجع المحاولة المحفوظة. لا تحذف بيانات الهاتف أو تكرر العد.");}
+        setError("تحققنا من السجل: لم تُعتمد هذه الخطوة والكيس ما زال ينتظرها. يمكنك التأكد من بياناته وإعادة المحاولة بمرجع جديد.");
+        setSaveProblemCode(null);
+      } else if(latest.actions.includes("count")){
+        setError("سجل النظام أن الكيس استُلم بالفعل. أكمل العدّ على نفس الكيس؛ لا تُعد تسجيل الاستلام.");
+        setSaveProblemCode(null);
+      } else if(latest.state==="counted"){
+        setError("النقدية موجودة في السجل كمعدودة. لا تدخل مبلغها مرة ثانية. افتح سجل السحب للمراجعة.");
+        setSaveProblemCode(null);
+      } else {
+        setError("تم فحص الحالة الحالية. لا تنشئ سحباً جديداً؛ استخدم نفس مرجع الطلب المحفوظ عند إعادة المحاولة.");
+      }
+      setView(previous=>previous?{...previous,rows:previous.rows.map(row=>row.id===selected?latest:row)}:previous);
+    }catch(e){setError(e instanceof Error?e.message:"تعذر التحقق من المرحلة الحالية؛ لا تكرر العملية.");}
+    finally{setBusy(false);}
+  }
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
     if(!box||!action||busy)return;
@@ -205,7 +242,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       <p className="mt-2 text-xs font-normal">لا تنشئ عملية سحب أخرى ولا تدخل مبلغًا في Finance يدويًا. المرجع الأصلي محفوظ ويمكن فحص حالته بأمان.</p>
       {selected?<div className="mt-3 flex flex-wrap gap-3">
         <button type="button" className="rounded-lg border border-rose-500 bg-white px-3 py-2 text-rose-900"
-          onClick={()=>{setReload(n=>n+1);setError("");setSaveProblemCode(null);}}>
+          onClick={()=>{void verifyCurrentBoxStatus();}}>
           تحقّق من حالة الكيس الحالية
         </button>
         <Link href={`/cash-collections/${selected}`} className="rounded-lg border border-rose-500 bg-white px-3 py-2 text-rose-900">
