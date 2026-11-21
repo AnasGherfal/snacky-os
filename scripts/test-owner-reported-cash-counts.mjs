@@ -46,3 +46,26 @@ test("cash lists link directly to existing owner report confirmation",()=>{
   assert.match(read(file),/\/cash-collections\/owner-reported/);
  }
 });
+
+
+test("recovered November 16–18 notes are eligible for signed-in owner confirmation only with matching collector, counter and original pickup",()=>{
+ const source=read("src/lib/cash-owner-reported.ts");
+ assert.match(source,/owner_notes_message_2026_11_22/);
+ assert.match(source,/owner_reported_as_physically_counted===true/);
+ assert.match(source,/physical_counter_team_member_id==="bef7c60f-2040-451f-9ea0-a1799964360b"/);
+ assert.match(source,/original_collector_team_member_id===row.operator_id/);
+ assert.match(source,/original_pickup_at_utc/);
+ assert.match(source,/Math\.abs\(Date\.parse/);
+ assert.match(source,/isOriginal\|\|isNewOwnerNotes/);
+ assert.doesNotMatch(source,/\.update\(|\.insert\(|\.delete\(/);
+});
+
+test("numbered school bag cannot be misrepresented as an unnumbered physical bag",()=>{
+ const action=read("src/lib/cash-owner-reported-actions.ts");
+ assert.match(action,/isUnnumberedCashReference\(bag\)/);
+ assert.match(action,/notes:noPrintedReference/);
+ assert.match(action,/UNNUMBERED CASH BAG/);
+ assert.match(action,/no damage is alleged/);
+ assert.match(action,/snacky_cash_handover_command_v1/);
+ assert.doesNotMatch(action,/service_role|request\.jwt\.claim|DISABLE TRIGGER/);
+});
