@@ -1,0 +1,31 @@
+name: Cash source warning and reported count visibility
+on:
+  pull_request:
+    paths:
+      - 'src/lib/cash-custody.ts'
+      - 'src/app/cash-collections/page.tsx'
+      - 'src/app/cash-collections/action-queue/page.tsx'
+      - 'scripts/test-cash-review-warning-clarity.mjs'
+      - '.github/workflows/cash-source-warning-clarity.yml'
+permissions:
+  contents: read
+jobs:
+  cash-warning-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Cash review and owner reported count display tests
+        run: |
+          node --test scripts/test-cash-review-warning-clarity.mjs
+          node --test scripts/test-cash-owner-reported-guard.mjs
+          node --test scripts/test-cash-action-queue.mjs
+      - name: TypeScript safety
+        run: npm run typecheck
+      - name: Focused lint
+        run: npx eslint src/lib/cash-custody.ts
