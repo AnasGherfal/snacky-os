@@ -102,11 +102,6 @@ export default async function CashCollectionsPage({ searchParams }: { searchPara
       <div className="space-y-6">
         <PageHeader title="Cash Storage Handoffs" subtitle="Current removals first. Older handoffs remain available in history without being treated as today's bags." action={<SecondaryButton href={defaultCurrentMonth ? "/cash-collections?scope=all" : "/cash-collections"}>{defaultCurrentMonth ? "Older / all records" : "This month"}</SecondaryButton>} />
         {defaultCurrentMonth ? <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Showing {period.label} removals only. Historical cash records were not deleted.</p> : null}
-        {unsourcedReviewCount > 0 ? <div role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-        <strong>{unsourcedReviewCount} counted cash record{unsourcedReviewCount === 1 ? "" : "s"} flagged for source review without a verified XY cash expectation.</strong>
-        <p className="mt-1">These cash amounts are already counted. This does NOT prove a shortage. An unnumbered electronic bag ID is not a damaged physical seal, and a missing XY source does not mean missing money. True verified discrepancies and physical printed-seal exceptions stay red.</p>
-        <Link href="/operations-health" className="mt-2 inline-block font-semibold text-emerald-800 underline">Review historical cash evidence</Link>
-      </div> : null}
       {errorMessage ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMessage}</div> : null}
         {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{successMessage}</div> : null}
         <div className="grid gap-4 sm:grid-cols-3">
