@@ -3,6 +3,7 @@ import "server-only";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 
 export const OWNER_COUNT_REPORT_SOURCE = "owner_message_2026_11_14";
+export const OWNER_NOTE_COUNT_REPORT_SOURCE = "owner_notes_message_2026_11_22";
 
 type RawCashCollection = {
   id: string;
@@ -52,8 +53,17 @@ export async function loadOwnerReportedCountRows():Promise<OwnerCountReport[]> {
     const report=line.expectation_metadata?.owner_reported_cash_count_pending_confirmation;
     if(!report || typeof report!=="object" || Array.isArray(report))continue;
     const fields=report as Record<string,unknown>;
-    if(fields.source!==OWNER_COUNT_REPORT_SOURCE || fields.physical_counter_name!=="Anas" ||
-       fields.owner_reports_cash_received_from_storage!==true)continue;
+    // The original eight owner reports are historical (Nov 14). Four later
+    // notes were recovered for Nov 16–18 and recorded on EXISTING removals;
+    // keep the sources distinct and never accept unverified arbitrary metadata.
+    const isOriginal=fields.source===OWNER_COUNT_REPORT_SOURCE
+      && fields.owner_reports_cash_received_from_storage===true;
+    const isNewOwnerNotes=fields.source===OWNER_NOTE_COUNT_REPORT_SOURCE
+      && fields.owner_reported_as_physically_counted===true
+      && fields.physical_counter_team_member_id==="bef7c60f-2040-451f-9ea0-a1799964360b"
+      && fields.original_collector_team_member_id===row.operator_id
+      && String(fields.original_pickup_at_utc??"")===row.collected_at;
+    if(fields.physical_counter_name!=="Anas" || !(isOriginal||isNewOwnerNotes))continue;
     const amount=Number(fields.amount_lyd);
     if(!Number.isFinite(amount) || amount<0 || amount>1000000 || Math.round(amount*100)!==amount*100)
       throw new Error("An owner-reported cash amount is invalid. Do not invent a count.");
