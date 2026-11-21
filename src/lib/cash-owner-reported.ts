@@ -62,7 +62,9 @@ export async function loadOwnerReportedCountRows():Promise<OwnerCountReport[]> {
       && fields.owner_reported_as_physically_counted===true
       && fields.physical_counter_team_member_id==="bef7c60f-2040-451f-9ea0-a1799964360b"
       && fields.original_collector_team_member_id===row.operator_id
-      && String(fields.original_pickup_at_utc??"")===row.collected_at;
+      && Number.isFinite(Date.parse(String(fields.original_pickup_at_utc??"")))
+      && Number.isFinite(Date.parse(row.collected_at))
+      && Math.abs(Date.parse(String(fields.original_pickup_at_utc))-Date.parse(row.collected_at))<1000;
     if(fields.physical_counter_name!=="Anas" || !(isOriginal||isNewOwnerNotes))continue;
     const amount=Number(fields.amount_lyd);
     if(!Number.isFinite(amount) || amount<0 || amount>1000000 || Math.round(amount*100)!==amount*100)
