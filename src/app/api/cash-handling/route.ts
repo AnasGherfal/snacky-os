@@ -9,7 +9,7 @@ import { readCompanyBody } from '@/lib/company-request';
 import { cashHandlingRoles, cashUuid, cashSameOrigin, validateCashCommand, cashReceiptMatches, isUnnumberedCashReference, type CashCommand, type CashWorkspace } from '@/lib/cash-handover';
 export const dynamic = 'force-dynamic';
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
-const denied = () => json({ ok: false, code: 'denied' }, 403);
+const denied = () => json({ ok: false, code: 'denied', retryable: false }, 403);
 async function context() {
   const profile = await getCurrentProfile();
   if (!profile || profile.active_status !== 'active' || !profile.team_member_id || !hasAnyRole(profile, cashHandlingRoles)) return null;
@@ -19,7 +19,7 @@ async function context() {
 function rpcFailure(error: { code?: string }, read = false) {
   const code = error.code === '42501' ? 'denied' : ['40001', '23505'].includes(error.code ?? '') ? 'conflict'
     : ['22023', '22P02', '23514', '23502', '23503'].includes(error.code ?? '') ? 'invalid' : read ? 'unavailable' : 'uncertain';
-  return json({ ok: false, code, retryable: code === 'uncertain' }, code === 'denied' ? 403 : code === 'conflict' ? 409 : code === 'invalid' ? 400 : 503);
+  return json({ ok: false, code, retryable: code === 'uncertain' || code === 'unavailable' }, code === 'denied' ? 403 : code === 'conflict' ? 409 : code === 'invalid' ? 400 : 503);
 }
 export async function GET(request: Request) {
   try {
@@ -51,7 +51,13 @@ export async function GET(request: Request) {
   } catch { return json({ ok: false, code: 'unavailable' }, 503); }
 }
 export async function POST(request: Request) {
-  if (!cashSameOrigin(request)) return denied();
+  if (!cashSameOrigin(request)) {
+    console.warn('[cash-handling] Cash command rejected: browser origin does not match request origin.', {
+      hasOrigin: Boolean(request.headers.get('origin')),
+      fetchSite: request.headers.get('sec-fetch-site') ?? 'absent',
+    });
+    return denied();
+  }
   let command: CashCommand;
   let photo: FormDataEntryValue | null = null;
   const ctx = await context(); if (!ctx) return denied();
@@ -69,7 +75,10 @@ export async function POST(request: Request) {
   try {
     // Resolve committed retries before uploading or checking the current stage.
     const saved = await ctx.db.rpc('snacky_cash_handover_receipt_v1', { p_command: command });
-    if (saved.error) return rpcFailure(saved.error);
+    if (saved.error) {
+      console.warn('[cash-handling] Existing request lookup refused.', { code: saved.error.code ?? 'unknown' });
+      return rpcFailure(saved.error);
+    }
     if (saved.data) return cashReceiptMatches(command, saved.data) ? json(saved.data) : json({ ok: false, code: 'uncertain', retryable: true }, 503);
     // A generated tracking reference cannot prove the physical bag is sealed.
     // The dedicated unnumbered flows always flag the exception and require
@@ -110,7 +119,15 @@ export async function POST(request: Request) {
     const { data, error } = await ctx.db.rpc('snacky_cash_handover_command_v1', { p_command: command, p_evidence_path: path });
     // Do not delete evidence after an ambiguous transport failure: the database
     // may have committed and a retry must recover the same recorded handover.
-    if (error) return rpcFailure(error);
+    if (error) {
+      // Report only the PostgreSQL error code, not identifiers, cash amounts,
+      // user identities or raw database error strings.
+      console.warn('[cash-handling] Cash command was not committed.', {
+        action: command.action,
+        errorCode: error.code ?? 'unknown',
+      });
+      return rpcFailure(error);
+    }
     if (!cashReceiptMatches(command, data)) return json({ ok: false, code: 'uncertain', retryable: true }, 503);
     // Once an independent physical count is committed, calculate the exact
     // cash-only XY interval when the actor is allowed to review financials.
@@ -128,5 +145,10 @@ export async function POST(request: Request) {
       }
     }
     return json(data);
-  } catch { return json({ ok: false, code: 'uncertain', retryable: true }, 503); }
+  } catch (error) {
+    console.error('[cash-handling] Unexpected cash command failure.', {
+      errorType: error instanceof Error ? error.name : 'unknown',
+    });
+    return json({ ok: false, code: 'uncertain', retryable: true }, 503);
+  }
 }
