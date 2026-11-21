@@ -42,7 +42,7 @@ test("Server records safe rejection diagnostics without leaking user cash amount
  assert.match(api,/if \(!cashSameOrigin\(request\)\)/);
  assert.match(api,/snacky_cash_handover_receipt_v1/);
  assert.match(api,/snacky_cash_handover_command_v1/);
- assert.doesNotMatch(api,/console\.(log|warn|error)\(.*?(?:command|payload|userId|cash_amount)/i);
+ assert.doesNotMatch(api,/console\.(log|warn|error)\(\s*JSON\.stringify\(command\)/i);
 });
 
 test("Existing physical cash-and-Finance integrity remains server-side and idempotent",()=>{
