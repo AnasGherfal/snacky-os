@@ -1,3 +1,4 @@
+import { optionalSameOrigin } from "./request-origin.ts";
 export const stocktakeUuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const stocktakeActions=['create','save','add_product','submit','recount','approve','cancel'] as const;
 export type StocktakeAction=typeof stocktakeActions[number];
@@ -34,8 +35,7 @@ export function validateStocktakeCommand(value:unknown):StocktakeCommand{
  return command;
 }
 export function stocktakeSameOrigin(request:Request){
- const origin=request.headers.get('origin');if(!origin)return true;
- try{return new URL(origin).origin===new URL(request.url).origin;}catch{return false;}
+ return optionalSameOrigin(request);
 }
 export function stocktakeReceiptMatches(command:StocktakeCommand,result:unknown){
  if(!result||typeof result!=='object')return false;
