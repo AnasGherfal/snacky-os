@@ -135,8 +135,34 @@ export function cashReceiptMatches(command: CashCommand, value: unknown): value 
   try { return r.finance_posted === true && typeof r.amount === 'string' && cashCents(r.amount) === cashCents(String(command.payload.amount)); }
   catch { return false; }
 }
+/**
+ * Require the browser's exact public origin, never a cross-site Origin. Behind
+ * Railway's reverse proxy the Next.js request URL can use an internal HTTP
+ * origin while the real browser sees HTTPS at the public Host header.
+ * Compare against that externally routed Host + trusted proxy protocol, too;
+ * never simply allow all requests from a Railway deployment.
+ */
 export function cashSameOrigin(request: Request) {
-  return request.headers.get('origin') === new URL(request.url).origin && request.headers.get('sec-fetch-site') !== 'cross-site';
+  const originHeader = request.headers.get('origin');
+  if (!originHeader || originHeader === 'null' ||
+      request.headers.get('sec-fetch-site') === 'cross-site') return false;
+  let origin: URL;
+  try { origin = new URL(originHeader); } catch { return false; }
+  if (origin.origin !== originHeader ||
+      (origin.protocol !== 'https:' && origin.protocol !== 'http:') ||
+      origin.pathname !== '/' || origin.search || origin.hash ||
+      origin.username || origin.password) return false;
+
+  if (origin.origin === new URL(request.url).origin) return true;
+
+  // Host must be the public host of THIS request, not an unrelated origin.
+  // A browser cannot supply an attacker-selected Host for a fetch to Snacky.
+  const host = request.headers.get('host')?.trim().toLowerCase();
+  const forwardedProtocol = request.headers.get('x-forwarded-proto')?.trim().toLowerCase();
+  if (!host || !forwardedProtocol || host.includes(',') ||
+      !['http', 'https'].includes(forwardedProtocol)) return false;
+  return origin.host.toLowerCase() === host &&
+         origin.protocol === forwardedProtocol + ':';
 }
 export const cashActionLabels: Record<CashAction, [string, string]> = {
   enable: ['Pilot setting', 'إعداد التشغيل'], counter: ['Counting permission', 'صلاحية عد النقد'],
