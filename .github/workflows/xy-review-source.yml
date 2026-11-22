@@ -1,0 +1,25 @@
+name: XY review source and verification
+on:
+  push:
+    branches: [feat/xy-evidence-route-review-20261122]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive repository source for isolated read-only review
+        run: |
+          mkdir -p review-artifacts
+          git archive --format=tar.gz --output=review-artifacts/source.tar.gz HEAD
+          git rev-parse HEAD > review-artifacts/commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xy-review-source-${{ github.sha }}
+          path: review-artifacts/
+          retention-days: 3
