@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "./request-origin.ts";
 /** Shared validation and navigation only. Never place employee/company documents in this file. */
 export const companyHubEnabled =
   process.env.NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED !== 'false';
@@ -262,12 +263,7 @@ export function validCompanyCommand(input: unknown): CompanyCommand {
   };
 }
 export function companySameOrigin(request: Request): boolean {
-  const origin = request.headers.get('origin');
-  return Boolean(
-    origin &&
-      origin === new URL(request.url).origin &&
-      request.headers.get('sec-fetch-site') !== 'cross-site',
-  );
+  return strictSameOrigin(request);
 }
 
 /** Human-readable choices; stored values remain the canonical existing routes. */
