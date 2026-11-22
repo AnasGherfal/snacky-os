@@ -62,7 +62,14 @@ test("unattended XY sync evaluates refill needs without creating or assigning ro
   assert.doesNotMatch(refillAutomationSource, /\.from\("route_stops"\)[\s\S]{0,400}\.insert\(/);
   assert.match(cronSource, /export const POST = refreshXy/);
   assert.doesNotMatch(cronSource, /syncXyAll\(\)/);
-  assert.deepEqual(vercelConfig.crons, [{ path: "/api/cron/xy-vms", schedule: "0 4 * * *" }]);
+  // The application now runs on Railway. Keep Vercel disabled to avoid
+  // duplicate XY machine jobs and billing; Supabase pg_cron remains the
+  // authenticated scheduler pointed at Railway through its Vault URL.
+  assert.equal("crons" in vercelConfig, false);
+  assert.deepEqual(vercelConfig.git.deploymentEnabled, {"*": false});
+  const railwayCutover = fs.readFileSync(new URL("./sql/railway-staging-supabase-vault-url-cutover.sql", import.meta.url), "utf8");
+  assert.match(railwayCutover, /xy_vms_scheduler_url/);
+  assert.match(railwayCutover, /snacky-os-staging-staging[.]up[.]railway[.]app\/api\/cron\/xy-vms/);
   assert.match(schedulerMigration, /vault\.decrypted_secrets/);
   assert.match(schedulerMigration, /snacky-xy-vms-hourly/);
   assert.match(schedulerMigration, /'7 \* \* \* \*'/);
