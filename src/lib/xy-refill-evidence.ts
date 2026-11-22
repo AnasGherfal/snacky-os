@@ -108,7 +108,7 @@ export function calculateXyRefillEvidence(input: {
   for(const productId of productIds){
    const obs=observations.get(key(machineId,productId));
    const selected=groupedPlan.get(productId)??0;
-   const xyKnown=Boolean(obs&&!obs.invalid&&productId!=='unmapped'&&ageHours!==null&&ageHours<=24&&ageHours>=-.1);
+   const xyKnown=Boolean(obs&&!obs.invalid&&obs.issues.length===0&&productId!=='unmapped'&&ageHours!==null&&ageHours<=24&&ageHours>=-.1);
    const xyCurrent=xyKnown?obs!.current:null;
    const xyCapacity=xyKnown?obs!.capacity:null;
    const xyMissing=xyKnown?obs!.capacity-obs!.current:null;
@@ -122,7 +122,7 @@ export function calculateXyRefillEvidence(input: {
    if(available!==null&&(routeTotalByProduct.get(productId)??0)>available)
       issues.push(`Across all selected machines, ${routeTotalByProduct.get(productId)} units are planned but unreserved MAIN has only ${available}.`);
    if(available===null&&selected>0)issues.push('Available storage balance could not be verified.');
-   const blocked=selected>0&&(available===null||(routeTotalByProduct.get(productId)??0)>available||!xyKnown&&ageHours===null);
+   const blocked=selected>0&&(available===null||(routeTotalByProduct.get(productId)??0)>available||!xyKnown);
    lines.push({machineId,productId,productName:known.get(productId)?.name??'Unmapped XY product',sku:known.get(productId)?.sku??null,
     xyCurrent,xyCapacity,xyMissing,selectedQty:selected,
     extraAboveXy:xyMissing===null?null:Math.max(0,selected-xyMissing),
@@ -137,7 +137,7 @@ export function calculateXyRefillEvidence(input: {
   const trusted=machineIssues.length===0;
   const totalMissing=trusted&&[...observations.values()].every(o=>!o.invalid)
     ? [...observations.values()].reduce((n,o)=>n+o.capacity-o.current,0):null;
-  const state: XyRefillMachine['status']=machineIssues.some(x=>x.startsWith('XY snapshot unavailable')||x.startsWith('No verified'))||lines.some(x=>x.status==='blocked')
+  const state: XyRefillMachine['status']=missingLanes.length>0||duplicate.size>0||invalidLines.size>0||machineIssues.some(x=>x.startsWith('XY snapshot unavailable')||x.startsWith('No verified'))||lines.some(x=>x.status==='blocked')
     ? 'blocked':machineIssues.length||lines.some(x=>x.status==='review')?'review':'verified';
   all.push({machineId,latestStockAt,ageHours,status:state,totalMissing,
     plannedTotal:[...groupedPlan.values()].reduce((s,v)=>s+v,0),missingLanes,lines,warnings:machineIssues});
