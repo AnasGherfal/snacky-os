@@ -1,0 +1,68 @@
+name: XY evidence integration and release gate
+on:
+  push:
+    branches: [feat/xy-evidence-route-review-20261122]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: xy-evidence-integrate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/xy-evidence-route-review-20261122
+          persist-credentials: true
+      - name: Unpack and apply exact patch; no production credentials
+        run: |
+          mkdir -p xy-evidence-logs
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,gzip,hashlib
+          encoded=Path('.xy-review-patch.b64').read_text().strip()
+          data=gzip.decompress(base64.b64decode(encoded,validate=True))
+          print('Patch SHA256:',hashlib.sha256(data).hexdigest())
+          Path('/tmp/xy-review.patch').write_bytes(data)
+          PY
+          git apply --check /tmp/xy-review.patch
+          git apply /tmp/xy-review.patch
+          git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: XY evidence unit and integration tests
+        run: npm run test:xy-refill-review > xy-evidence-logs/new-tests.log 2>&1 || { tail -n 100 xy-evidence-logs/new-tests.log; exit 1; }
+      - name: Existing route/permissions/stock tests
+        run: |
+          npm run test:smart-route-planner > xy-evidence-logs/smart-plan.log 2>&1 || { tail -n 90 xy-evidence-logs/smart-plan.log; exit 1; }
+          npm run test:authz-permissions > xy-evidence-logs/permissions.log 2>&1 || { tail -n 90 xy-evidence-logs/permissions.log; exit 1; }
+          npm run test:route-ledger-core > xy-evidence-logs/ledger.log 2>&1 || { tail -n 90 xy-evidence-logs/ledger.log; exit 1; }
+      - name: Types, changed-source lint, then production build
+        run: |
+          npm run typecheck > xy-evidence-logs/typecheck.log 2>&1 || { tail -n 90 xy-evidence-logs/typecheck.log; exit 1; }
+          npx eslint src/lib/xy-refill-evidence.ts src/app/api/routes/xy-review/route.ts src/app/routes/new/XyRefillReview.tsx src/app/routes/new/RouteCreateForm.tsx src/lib/smart-route-planner.ts > xy-evidence-logs/lint.log 2>&1 || { tail -n 90 xy-evidence-logs/lint.log; exit 1; }
+          npm run build > xy-evidence-logs/build.log 2>&1 || { tail -n 120 xy-evidence-logs/build.log; exit 1; }
+      - name: Commit only verified application changes on feature branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json src scripts
+          git commit -m 'Add auditable XY missing-versus-extra review to smart route creation'
+          git push origin HEAD:refs/heads/feat/xy-evidence-route-review-20261122
+          git rev-parse HEAD > xy-evidence-logs/verified-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xy-evidence-verification-${{ github.run_id }}
+          path: xy-evidence-logs/
+          retention-days: 7
