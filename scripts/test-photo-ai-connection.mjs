@@ -76,7 +76,7 @@ test('Railway HTTPS reverse proxy preserves same-origin photo permission without
   const form=new FormData();
   form.set('photo',new File([new Uint8Array(4)],'test.jpg',{type:'image/jpeg'}));
   return new Request('http://internal:8080/api/admin/xy-photo-gallery-test',{
-   method:'POST',headers:{origin,host:'snacky-os-staging-staging.up.railway.app','x-forwarded-proto':'https','sec-fetch-site':'same-origin'},body:form,
+   method:'POST',headers:{'x-vercel-oidc-token':token,origin,host:'snacky-os-staging-staging.up.railway.app','x-forwarded-proto':'https','sec-fetch-site':'same-origin'},body:form,
   });
  };
  assert.equal((await h.POST(requestFor('https://evil.example'))).status,403);
