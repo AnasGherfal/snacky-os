@@ -29,6 +29,8 @@ jobs:
           echo '=== Hardcoded production URLs in runtime src ==='
           grep -RInE -n -i 'https?://[^ \\"\x27<>]*(vercel\\.app|railway\\.app|snacky)' src || true
           echo '=== Potential public-origin compare in APIs ==='
-          grep -RInE -n -i -e 'request\\.url.*host' -e 'origin.*request\\.url' -e 'x-forwarded-proto' -e 'new URL\\(origin' src/app/api src/lib || true
+          grep -RInF -e 'new URL(request.url)' -e 'originHeader' -e 'cashSameOrigin' -e 'sec-fetch-site' src/app/api src/lib | head -n 160 || true
+          echo '=== Archived / scripts / migrations Vercel references ==='
+          grep -RInE -i -e 'snacky-os\\.vercel\\.app' -e 'vercel\\.app' -e 'vercel' scripts docs supabase | head -n 150 || true
           echo '=== Status of other Vercel-specific workflow files ==='
           grep -RInE -n -i 'vercel' .github/workflows || true
