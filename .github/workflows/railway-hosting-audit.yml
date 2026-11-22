@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/railway-hosting-audit.yml'
       - 'src/**'
+      - 'scripts/test-railway-origin-surface.mjs'
       - 'scripts/**'
       - 'deployment/**'
       - 'next.config.ts'
@@ -23,8 +24,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Assert all runtime hosting and Railway migration invariants
-        run: node --test scripts/test-railway-hosting-migration.mjs
+      - run: npm ci --ignore-scripts
+      - name: Assert runtime hosting, proxy origin, and Railway migration invariants
+        run: |
+          node --experimental-strip-types --test scripts/test-railway-hosting-migration.mjs scripts/test-railway-origin-surface.mjs
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs scripts/test-photo-ai-connection.mjs scripts/test-shared-buying.mjs scripts/test-pwa-push.mjs
+      - name: Confirm TypeScript and API security
+        run: npm run typecheck
       - name: Inventory hosting references in application code
         shell: bash
         run: |
