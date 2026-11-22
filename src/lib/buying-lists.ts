@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "./request-origin.ts";
 import type {MarketChecklistItem} from './market-checklist';
 export const buyingRoles = ['owner','admin','supervisor','warehouse','purchasing','finance'] as const;
 export const buyingPlannerRoles = ['owner','admin','supervisor','warehouse','purchasing'] as const;
@@ -42,7 +43,7 @@ export function buyingReceiptMatches(c:BuyingCommand,value:unknown):boolean {
  if(!value||typeof value!=='object')return false;const r=value as Record<string,unknown>;
  return r.ok===true&&r.request_id===c.request_id&&r.list_id===c.list_id&&r.revision===c.revision+1;
 }
-export function buyingSameOrigin(request:Request){return request.headers.get('origin')===new URL(request.url).origin&&request.headers.get('sec-fetch-site')!=='cross-site';}
+export function buyingSameOrigin(request:Request){return strictSameOrigin(request);}
 export function buyingTotals(items:BuyingItem[]) {
  return items.reduce((s,i)=>({boxes:s.boxes+i.planned_boxes,units:s.units+i.planned_boxes*i.units_per_box,bought:s.bought+i.bought_boxes,
   checked:s.checked+(i.outcome!=='pending'?1:0),estimate:s.estimate+(i.unit_cost===null?0:Number(i.unit_cost)*i.planned_boxes*i.units_per_box),missing:s.missing+(i.unit_cost===null?1:0)}),{boxes:0,units:0,bought:0,checked:0,estimate:0,missing:0});

@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { strictSameOrigin,optionalSameOrigin } from "../src/lib/request-origin.ts";
 import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = relativePath => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -49,6 +50,7 @@ test("private material never enters browser code or configuration responses", ()
 });
 // Retain the executable Topbar/authorization regression coverage from before this change.
 function loadModule(source, imports = {}, globals = {}) {
+  imports={'./request-origin.ts':{strictSameOrigin,optionalSameOrigin},'@/lib/request-origin':{strictSameOrigin,optionalSameOrigin},...imports};
   const exports = {};
   const output = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(output, {...globals,exports,require(name){assert.ok(name in imports,`Unexpected import: ${name}`);return imports[name];}});

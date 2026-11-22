@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import * as connection from '../src/lib/photo-ai-connection.ts';
 import * as gallery from '../src/lib/xy-photo-gallery-test.ts';
+import { cashSameOrigin } from '../src/lib/cash-handover.ts';
 const {resolvePhotoAiConnection,publicPhotoAiConnection,photoAiFailure}=connection;
 const headers = token => new Headers(token ? {'x-vercel-oidc-token':token} : {});
 const oidcEnv={VERCEL:'1'};
@@ -50,7 +51,7 @@ const endpoint=fs.readFileSync(new URL('../src/app/api/admin/xy-photo-gallery-te
 function harness({env=oidcEnv,role='owner',status=200,providerBody,productError=null}={}){
  const outbound=[];const reads=[];
  const q={select(){return q;},eq(){return q;},order(){return q;},limit:async()=>({data:[{id:'snack',name:'Snickers',active:true}],error:productError})};
- const imports={NextResponse:{json:(payload,init)=>new Response(JSON.stringify(payload),init)},getCurrentProfile:async()=>role?{id:'test-user',role,active_status:'active'}:null,hasRole:(p,r)=>p.role===r,getSupabaseAdminClient:()=>({from:table=>{reads.push(table);return q;}}),...connection,...gallery,process:{env},console:{warn(){}},fetch:async(url,options)=>{outbound.push({url,options});return new Response(JSON.stringify(providerBody??{output_text:JSON.stringify({photoQuality:'good',observations:[{rowNumber:1,positionNumber:1,productId:'snack',confidence:'high',visualEvidence:'Visible Snickers label'}]})}),{status});}};
+ const imports={NextResponse:{json:(payload,init)=>new Response(JSON.stringify(payload),init)},getCurrentProfile:async()=>role?{id:'test-user',role,active_status:'active'}:null,hasRole:(p,r)=>p.role===r,getSupabaseAdminClient:()=>({from:table=>{reads.push(table);return q;}}),...connection,...gallery,cashSameOrigin,process:{env},console:{warn(){}},fetch:async(url,options)=>{outbound.push({url,options});return new Response(JSON.stringify(providerBody??{output_text:JSON.stringify({photoQuality:'good',observations:[{rowNumber:1,positionNumber:1,productId:'snack',confidence:'high',visualEvidence:'Visible Snickers label'}]})}),{status});}};
  const source=stripTypeScriptTypes(endpoint).replace(/^import[\s\S]*?;\s*$/gm,'').replace(/\bexport /g,'');
  const api=new Function(...Object.keys(imports),source+'\nreturn {GET,POST};')(...Object.values(imports));
  return {...api,outbound,reads};
@@ -68,6 +69,20 @@ test('anonymous and nonowner users cannot use the billed AI endpoint',async()=>{
 });
 test('cross-site photo requests are rejected before provider access',async()=>{
  const h=harness();assert.equal((await h.POST(request({origin:'https://attacker.invalid'}))).status,403);assert.equal(h.outbound.length,0);
+});
+test('Railway HTTPS reverse proxy preserves same-origin photo permission without allowing hostile origin',async()=>{
+ const h=harness();
+ const requestFor=(origin)=> {
+  const form=new FormData();
+  form.set('photo',new File([new Uint8Array(4)],'test.jpg',{type:'image/jpeg'}));
+  return new Request('http://internal:8080/api/admin/xy-photo-gallery-test',{
+   method:'POST',headers:{'x-vercel-oidc-token':token,origin,host:'snacky-os-staging-staging.up.railway.app','x-forwarded-proto':'https','sec-fetch-site':'same-origin'},body:form,
+  });
+ };
+ assert.equal((await h.POST(requestFor('https://evil.example'))).status,403);
+ assert.equal(h.outbound.length,0);
+ assert.equal((await h.POST(requestFor('https://snacky-os-staging-staging.up.railway.app'))).status,200);
+ assert.equal(h.outbound.length,1);
 });
 test('successful OIDC photo request uses OpenAI through Gateway once, with no writes',async()=>{
  const h=harness();const r=await h.POST(request());const body=await r.json();assert.equal(r.status,200);assert.equal(body.ok,true);assert.equal(body.connectionVerified,true);assert.equal(body.observations[0].productName,'Snickers');assert.deepEqual(h.reads,['products']);assert.equal(h.outbound.length,1);

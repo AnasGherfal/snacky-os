@@ -1,0 +1,48 @@
+name: Audit hosting and URL references after Railway migration
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/railway-hosting-audit.yml'
+      - 'src/**'
+      - 'scripts/test-railway-origin-surface.mjs'
+      - 'scripts/**'
+      - 'deployment/**'
+      - 'next.config.ts'
+      - '.env.example'
+      - 'vercel.json'
+      - 'supabase/migrations/20261122091500_railway_notification_dispatch_vault_url.sql'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - name: Assert runtime hosting, proxy origin, and Railway migration invariants
+        run: |
+          node --experimental-strip-types --test scripts/test-railway-hosting-migration.mjs scripts/test-railway-origin-surface.mjs
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs scripts/test-photo-ai-connection.mjs scripts/test-shared-buying.mjs scripts/test-pwa-push.mjs
+      - name: Confirm TypeScript and API security
+        run: npm run typecheck
+      - name: Inventory hosting references in application code
+        shell: bash
+        run: |
+          echo '=== Runtime source: Vercel, Railway, hardcoded sites, app origins ==='
+          grep -RInE -n -i -e 'vercel' -e 'railway' -e 'NEXT_PUBLIC_APP_URL' -e 'VERCEL_URL' -e 'APP_URL' -e 'up\\.railway\\.app' src next.config.ts package.json vercel.json || true
+          echo '=== Framework hosting config and infrastructure ==='
+          grep -RInE -n -i -e 'vercel' -e 'railway' -e 'https?://[^ \\"\x27<>]{1,120}' -e 'deploy' deployment .env.example README.md .github/workflows | head -n 300 || true
+          echo '=== Hardcoded production URLs in runtime src ==='
+          grep -RInE -n -i 'https?://[^ \\"\x27<>]*(vercel\\.app|railway\\.app|snacky)' src || true
+          echo '=== Potential public-origin compare in APIs ==='
+          grep -RInF -e 'new URL(request.url)' -e 'originHeader' -e 'cashSameOrigin' -e 'sec-fetch-site' src/app/api src/lib | head -n 160 || true
+          echo '=== Archived / scripts / migrations Vercel references ==='
+          grep -RInE -i -e 'snacky-os\\.vercel\\.app' -e 'vercel\\.app' -e 'vercel' scripts docs supabase | head -n 150 || true
+          echo '=== Status of other Vercel-specific workflow files ==='
+          grep -RInE -n -i 'vercel' .github/workflows || true

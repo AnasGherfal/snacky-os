@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import React from 'react';
+import { strictSameOrigin,optionalSameOrigin } from '../src/lib/request-origin.ts';
 import * as jsx from 'react/jsx-runtime';
 import {renderToStaticMarkup} from 'react-dom/server';
 const read=p=>fs.readFileSync(p,'utf8');
-function load(file,imports,globals={}){const exports={};const code=ts.transpileModule(read(file),{fileName:file,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;vm.runInNewContext(code,{exports,console,URL,URLSearchParams,Intl,Date,TextDecoder,Uint8Array,process:{env:{}},...globals,require:n=>{assert.ok(n in imports,`Unknown import ${n}`);return imports[n];}});return exports;}
+function load(file,imports,globals={}){imports={'@/lib/request-origin':{strictSameOrigin,optionalSameOrigin},'./request-origin.ts':{strictSameOrigin,optionalSameOrigin},...imports};const exports={};const code=ts.transpileModule(read(file),{fileName:file,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;vm.runInNewContext(code,{exports,console,URL,URLSearchParams,Intl,Date,TextDecoder,Uint8Array,process:{env:{}},...globals,require:n=>{assert.ok(n in imports,`Unknown import ${n}`);return imports[n];}});return exports;}
 const domain=load('src/lib/crm-workspace.ts',{}),focus=load('src/lib/crm-lead-focus.ts',{'./crm-workspace':domain}),helpers=load('src/lib/crm-lead-list.ts',{'./crm-workspace':domain});
 const id='11111111-1111-4111-8111-111111111111',person='22222222-2222-4222-8222-222222222222';
 const command=()=>({request_id:id,action:'set',items:[{id,version:'2026-09-19 10:00:00+00',focus_revision:0}],assigned_to:person,until:'2026-09-25',next_action:'Find the decision-maker'});

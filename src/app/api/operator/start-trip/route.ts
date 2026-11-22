@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import { StartTripError, startRequiredTrip, startTripAvailability } from '@/lib/smart-work-start-trip-server';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,8 +12,7 @@ export async function GET() {
   catch (error) { return errorResponse(error); }
 }
 export async function POST(request: Request) {
-  const origin = request.headers.get('origin');
-  if (!origin || origin !== new URL(request.url).origin || request.headers.get('sec-fetch-site') === 'cross-site') {
+  if (!strictSameOrigin(request)) {
     return Response.json({ error: 'Same-origin request required.' }, { status: 403, headers });
   }
   if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {

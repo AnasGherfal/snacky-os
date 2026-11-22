@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import { NextResponse } from 'next/server';
 import { productPlanChoices, previewRequiredProducts, ProductPlanError } from '@/lib/smart-work-products-server';
 export const dynamic='force-dynamic';
@@ -5,8 +6,7 @@ const headers={'Cache-Control':'private, no-store, max-age=0'};
 function errorResponse(error:unknown){return NextResponse.json({error:error instanceof ProductPlanError?error.message:'Product planning is unavailable. No stock was reserved.'},{status:error instanceof ProductPlanError?error.status:503,headers});}
 export async function GET(){try{return NextResponse.json(await productPlanChoices(),{headers});}catch(e){return errorResponse(e);}}
 export async function POST(request:Request){
-  const origin=request.headers.get('origin');
-  if(!origin || origin!==new URL(request.url).origin || request.headers.get('sec-fetch-site')==='cross-site')return NextResponse.json({error:'Cross-origin requests are not allowed.'},{status:403,headers});
+  if(!strictSameOrigin(request))return NextResponse.json({error:'Cross-origin requests are not allowed.'},{status:403,headers});
   if(!request.headers.get('content-type')?.toLowerCase().startsWith('application/json'))return NextResponse.json({error:'JSON request required.'},{status:415,headers});
   try{
     const reader=request.body?.getReader();if(!reader)throw new ProductPlanError('Empty request.',400);

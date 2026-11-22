@@ -1,3 +1,4 @@
+import { optionalSameOrigin } from "./request-origin.ts";
 /** Only accept known browser push services; subscriptions must never become an SSRF proxy. */
 export function isPushEndpoint(value: unknown): value is string {
   if (typeof value !== "string" || value.length > 4096) return false;
@@ -35,9 +36,7 @@ export function parseDeviceSubscription(value: unknown): DeviceSubscription | nu
 }
 
 export function isSameOriginRequest(request: Request) {
-  const origin = request.headers.get("origin");
-  // Older clients/non-browser API callers can omit Origin; cookie-authenticated
-  // cross-site browser requests always supply it or Sec-Fetch-Site.
-  if (request.headers.get("sec-fetch-site") === "cross-site") return false;
-  return !origin || origin === new URL(request.url).origin;
+  // Legacy API callers may omit Origin; present browser Origin must exactly
+  // match Railway's public host, not an internal proxy request URL.
+  return optionalSameOrigin(request);
 }

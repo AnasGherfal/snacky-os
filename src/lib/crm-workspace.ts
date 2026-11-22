@@ -1,3 +1,4 @@
+import { optionalSameOrigin } from "./request-origin.ts";
 export type CrmKind = 'lead'|'issue'|'location'|'contact'|'task'|'obligation';
 export type CrmSection = CrmKind|'work'|'search'|'management';
 export const crmKinds:CrmKind[]=['lead','issue','location','contact','task','obligation'];
@@ -49,4 +50,4 @@ export function crmPayload(values:Record<string,string>):Record<string,unknown> 
  return out;
 }
 export function crmOverdue(date:string|null,time:string|null,today:string,clock:string,status:string):boolean {return Boolean(date&&!['completed','resolved','paid','not_applicable','cancelled','rejected','machine_placed'].includes(status)&&(date<today||(date===today&&time!==null&&time<clock)));}
-export function crmSameOrigin(request:Request):boolean {const origin=request.headers.get('origin');return !origin||origin===new URL(request.url).origin;}
+export function crmSameOrigin(request:Request):boolean {return optionalSameOrigin(request);}

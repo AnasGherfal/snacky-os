@@ -1,4 +1,37 @@
-# Snacky OS Starter
+# Snacky OS
+
+## Current hosting (November 22, 2026)
+
+The connected web application is on **Railway** (project `snacky-os-migration-staging`, environment `staging`), at
+`https://snacky-os-staging-staging.up.railway.app`. The name `staging` is meaningful:
+this should **not** be assumed to be a separately verified production environment.
+Vercel is a **legacy host**, not the deployment target.
+
+Public application metadata should use `NEXT_PUBLIC_APP_URL` set to the exact
+HTTPS Railway hostname. Do not use `snacky-os.vercel.app` as a browser/login/callback
+URL. Railway builds are sourced from `AnasGherfal/snacky-os` on `master`.
+Supabase remains the underlying database, auth and cron scheduler.
+
+**Critical migration tasks:** Set `XY_VMS_MERCHANT_ID`, `XY_VMS_KEY`,
+`XY_VMS_SECRET` and any required `XY_VMS_BASE_URL` in Railway's private
+service variables; do not send them in chat or commit them. These are
+**not** included in `NEXT_PUBLIC_` variables. XY live sales may additionally
+require separate `XY_WEB_*` session credentials. In Supabase Vault,
+`xy_vms_scheduler_url` must point to the Railway
+`/api/cron/xy-vms` endpoint; `snacky_assignment_dispatch_url` must point
+to Railway `/api/notifications/dispatch`. The token secrets already held in
+Vault must be preserved, not rotated or copied to source. See the tracked
+migration `supabase/migrations/20261122091500_railway_notification_dispatch_vault_url.sql`
+and the operator-approved cutover reference in
+`scripts/sql/railway-staging-supabase-vault-url-cutover.sql`.
+
+**Do not confuse hosting with third-party providers.** Vercel Blob remains an
+optional *storage provider* supported by the server's private
+`BLOB_READ_WRITE_TOKEN`. Vercel AI Gateway is an optional *AI vendor* and
+needs an explicit server-side key when the app is on Railway. Neither service
+means the Snacky web application is hosted on Vercel.
+
+
 
 This is the first technical skeleton for Snacky OS: a vending operating system for machines, products, storage, VMS stock snapshots, refill recommendations, operator workflow, cash reconciliation, and issues.
 

@@ -1,3 +1,4 @@
+import { optionalSameOrigin } from "./request-origin.ts";
 export const crmDispatchActions=['accept','en_route','start','block','fix','needs_technician','needs_part','machine_offline'] as const;
 export type CrmDispatchAction=typeof crmDispatchActions[number];
 export type CrmDispatchState='available'|'assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed'|'needs_technician'|'needs_part'|'machine_offline';
@@ -44,7 +45,7 @@ export function validateCrmDispatchCommand(value:unknown):CrmDispatchCommand{
  if(['block','fix','needs_technician','needs_part','machine_offline'].includes(action)&&String(note??'').trim().length<3)throw Error('invalid');
  return {request_id,task_id,action,version,...(note===undefined?{}:{note})};
 }
-export function crmDispatchSameOrigin(request:Request){const origin=request.headers.get('origin');if(!origin)return true;try{return new URL(origin).origin===new URL(request.url).origin;}catch{return false;}}
+export function crmDispatchSameOrigin(request:Request){return optionalSameOrigin(request);}
 export function crmDispatchReceiptMatches(command:CrmDispatchCommand,result:unknown){
  if(!result||typeof result!=='object')return false;
  const row=result as Record<string,unknown>;

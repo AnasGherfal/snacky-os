@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import {NextResponse} from 'next/server';
 import {revalidatePath} from 'next/cache';
 import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from '@/lib/auth';
@@ -10,7 +11,7 @@ const month=/^\d{4}-(0[1-9]|1[0-2])$/;
 const fail=(code:string,status:number,message?:string)=>NextResponse.json({ok:false,code,message},{status,headers});
 
 export async function POST(request:Request){
- if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')return fail('denied',403);
+ if(!strictSameOrigin(request))return fail('denied',403);
  const profile=await getCurrentProfile();
  if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,['owner','admin']))return fail('denied',403);
  let body:any;

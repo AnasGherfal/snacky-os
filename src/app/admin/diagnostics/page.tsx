@@ -19,7 +19,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 function environmentName() {
-  return process.env.VERCEL_ENV || process.env.NEXT_PUBLIC_APP_ENV || process.env.NODE_ENV || "unknown";
+  return process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || process.env.NEXT_PUBLIC_APP_ENV || process.env.NODE_ENV || "unknown";
 }
 
 function publicSupabaseHost() {

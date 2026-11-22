@@ -6,6 +6,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import {createHash} from 'node:crypto';
 import * as planner from '../src/lib/smart-work-product-plan.ts';
 import * as authz from '../src/lib/authz.ts';
+import { strictSameOrigin } from '../src/lib/request-origin.ts';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const profile={id:id(100),team_member_id:id(1),role:'operator',active_status:'active',must_change_password:false};
 const person=(n=1,role='operator')=>({id:id(n),auth_user_id:id(100),role,roles:[role],active:true,active_status:'active'});
@@ -24,7 +25,7 @@ async function harness({rows=fixture(),actor=profile,fail=null,onSecondActor=nul
     eq(k,v){filters.push(r=>r[k]===v);return q;},neq(k,v){filters.push(r=>r[k]!==v);return q;},in(k,vs){filters.push(r=>vs.includes(r[k]));return q;},
     then(resolve,reject){let data=(rows[table]??[]).filter(r=>filters.every(f=>f(r)));for(const key of [...orders].reverse())data.sort((a,b)=>String(a[key]).localeCompare(String(b[key])));return Promise.resolve(table===fail?{data:null,error:{message:'denied'}}:{data:data.slice(from,to+1),error:null}).then(resolve,reject);},
   };for(const write of ['insert','update','delete','upsert','rpc'])q[write]=()=>{throw new Error('WRITE ATTEMPT');};return q;},rpc(){throw new Error('RPC WRITE ATTEMPT');}};
-  const dependencies={'server-only':{},'node:crypto':{createHash},'@/lib/auth':{getCurrentProfile:async()=>{actorCalls++;if(actorCalls===2&&onSecondActor)onSecondActor(rows);return actor;}},'@/lib/authz':authz,'@/lib/supabase-server':{getSupabaseAdminClient:()=>db},'@/lib/route-workflow':{ROUTE_RESERVATION_STATUSES:['draft','assigned','in_progress','pickup_confirmed'],isRouteStopDoneStatus:s=>['completed','skipped'].includes(s)},'@/lib/smart-work-product-plan':planner,'next/server':{NextResponse:{json:(body,opts)=>Response.json(body,opts)}}};
+  const dependencies={'@/lib/request-origin':{strictSameOrigin},'server-only':{},'node:crypto':{createHash},'@/lib/auth':{getCurrentProfile:async()=>{actorCalls++;if(actorCalls===2&&onSecondActor)onSecondActor(rows);return actor;}},'@/lib/authz':authz,'@/lib/supabase-server':{getSupabaseAdminClient:()=>db},'@/lib/route-workflow':{ROUTE_RESERVATION_STATUSES:['draft','assigned','in_progress','pickup_confirmed'],isRouteStopDoneStatus:s=>['completed','skipped'].includes(s)},'@/lib/smart-work-product-plan':planner,'next/server':{NextResponse:{json:(body,opts)=>Response.json(body,opts)}}};
   const context=vm.createContext({Date,Intl,console,URL,TextDecoder,Uint8Array});
   async function module(path){const mod=new vm.SourceTextModule(stripTypeScriptTypes(fs.readFileSync(path,'utf8'),{mode:'transform'}),{context});await mod.link(async name=>{const values=dependencies[name];assert.ok(values,'unmocked '+name);return new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});});await mod.evaluate();return mod.namespace;}
   const server=await module('src/lib/smart-work-products-server.ts');dependencies['@/lib/smart-work-products-server']=server;
