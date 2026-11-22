@@ -207,17 +207,13 @@ test("Smart Pickup apply is atomic planning only and leaves storage deduction to
 });
 
 
-test("Smart Route can re-merchandise a proven weak partially depleted lane", () => {
-  assert.match(planner, /const strongerLocalSeller = Boolean/);
-  assert.match(planner, /strongestAlternative\.machineSalesUnits >= 6/);
-  assert.match(planner, /strongestAlternative\.machineSalesUnits >= exactMachineSales \* 2\.5/);
-  assert.match(planner, /strongestAlternative\.score >= originalCandidate\.score \+ 10/);
-  assert.match(planner, /currentQty <= transitionFloorQty/);
-  assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
-  assert.match(planner, /candidates\.filter\(\(candidate\) => !candidate\.original\)/);
-  // Assortment changes are operational substitutions, not error warnings.
-  assert.match(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
-  assert.match(planner, /Approved merchandising changes appear in substitutions, not warnings/);
+test("Smart Route will not re-merchandise occupied lanes without an explicit owner action", () => {
+  assert.match(planner, /if \(!explicitAllowed && !historicallySeen\) return null/);
+  assert.match(planner, /const stockoutReplaceNow = false/);
+  assert.match(planner, /const mixReplaceNow = false/);
+  assert.match(planner, /if \(currentQty === 0\) warnings\.push/);
+  assert.match(planner, /historically_seen_exact_slot/);
+  assert.doesNotMatch(planner, /const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller/);
 });
 
 test("Smart Route evaluates full lanes but only creates work when refill or replacement is justified", () => {
