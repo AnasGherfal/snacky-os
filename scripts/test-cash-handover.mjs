@@ -74,8 +74,32 @@ test('cross-origin, missing-origin and mismatched-host writes are rejected', () 
   const request = headers => new Request('https://snacky.example/api/cash-handling', { method: 'POST', headers });
   assert.equal(cashSameOrigin(request({ Origin: 'https://snacky.example' })), true);
   assert.equal(cashSameOrigin(request({})), false);
+  assert.equal(cashSameOrigin(request({ Origin: 'null' })), false);
   assert.equal(cashSameOrigin(request({ Origin: 'https://evil.example' })), false);
   assert.equal(cashSameOrigin(request({ Origin: 'https://snacky.example', 'Sec-Fetch-Site': 'cross-site' })), false);
+});
+
+test('Railway HTTPS proxy origin is accepted ONLY when browser origin exactly equals public Host and forwarded protocol', () => {
+  const request = (headers, url = 'http://internal:8080/api/cash-handling') =>
+    new Request(url, { method:'POST', headers });
+  const good = {
+    Origin: 'https://snacky-os-staging-staging.up.railway.app',
+    Host: 'snacky-os-staging-staging.up.railway.app',
+    'X-Forwarded-Proto': 'https',
+    'Sec-Fetch-Site': 'same-origin',
+  };
+  assert.equal(cashSameOrigin(request(good)), true);
+  assert.equal(cashSameOrigin(request({...good, Origin:'https://evil.example'})), false);
+  assert.equal(cashSameOrigin(request({...good, 'X-Forwarded-Proto':'http'})), false);
+  assert.equal(cashSameOrigin(request({...good, 'X-Forwarded-Proto':'https,http'})), false);
+  assert.equal(cashSameOrigin(request({...good, Host:'evil.example'})), false);
+  assert.equal(cashSameOrigin(request({...good, Host:'snacky-os-staging-staging.up.railway.app,evil.example'})), false);
+  assert.equal(cashSameOrigin(request({...good, 'Sec-Fetch-Site':'cross-site'})), false);
+  assert.equal(cashSameOrigin(request({...good, Origin:'https://snacky-os-staging-staging.up.railway.app.evil.example'})), false);
+  assert.equal(cashSameOrigin(request({...good, Origin:'https://snacky-os-staging-staging.up.railway.app/' })), false);
+  assert.equal(cashSameOrigin(request({...good, Origin:'https://snacky-os-staging-staging.up.railway.app:8443' })), false);
+  assert.equal(cashSameOrigin(request({...good, 'X-Forwarded-Proto':undefined})), false);
+  assert.equal(cashSameOrigin(request({...good, Host:undefined})), false);
 });
 test('all new state is private and opt-in; there is no historical backfill or role migration', () => {
   for (const name of ['settings', 'counters', 'requests', 'events']) assert.match(sql, new RegExp(`alter table snacky_private.cash_handover_${name} enable row level security`));
