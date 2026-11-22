@@ -9,6 +9,7 @@ on:
       - 'next.config.ts'
       - '.env.example'
       - 'vercel.json'
+      - 'supabase/migrations/20261122091500_railway_notification_dispatch_vault_url.sql'
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,6 +20,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Assert all runtime hosting and Railway migration invariants
+        run: node --test scripts/test-railway-hosting-migration.mjs
       - name: Inventory hosting references in application code
         shell: bash
         run: |
