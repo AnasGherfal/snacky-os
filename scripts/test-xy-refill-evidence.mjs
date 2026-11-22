@@ -5,7 +5,14 @@ const m='m',p='water';const base={machineIds:[m],products:[{id:p,name:'Water'}],
  layout:[{machine_id:m,slot_code:'001',product_id:p,capacity:8,active:true}],
  availableByProduct:new Map([[p,100]]),at:'2026-11-22T02:00:00.000Z',planned:[{machineId:m,productId:p,quantity:7}]};
 test('exact XY gap is separate from selected, not an invented take quantity',()=>{const d=calc(base).machines[0];assert.equal(d.lines[0].xyMissing,7);assert.equal(d.lines[0].extraAboveXy,0);assert.equal(d.status,'verified')});
-test('owner 95 waters vs XY gap 24 is shown as 71 extra not auto-filled',()=>{const input={...base,planned:[{machineId:m,productId:p,quantity:95}],history:[{machine_id:m,product_id:p,planned_quantity:95,filled_quantity:null,created_at:'2026-11-21T20:00:00Z',updated_at:'2026-11-22T00:20:00Z',route_date:'2026-11-22',route_status:'assigned'}]};const x=calc(input).machines[0].lines[0];assert.equal(x.extraAboveXy,88);assert.equal(x.previousPlanned,95);assert.equal(x.previousEdited,true);assert.equal(x.previousIsCompleted,false);assert.equal(x.status,'review');});
+test('owner 95 waters vs XY gap 24 is shown as 71 extra not auto-filled',()=>{
+ const slots=['001','002','003'].map(slot_code=>({...base.slots[0],slot_code,current_qty:0,capacity:8}));
+ const layout=['001','002','003'].map(slot_code=>({...base.layout[0],slot_code,capacity:8}));
+ const input={...base,slots,layout,planned:[{machineId:m,productId:p,quantity:95}],
+  history:[{machine_id:m,product_id:p,planned_quantity:95,filled_quantity:null,created_at:'2026-11-21T20:00:00Z',updated_at:'2026-11-22T00:20:00Z',route_date:'2026-11-22',route_status:'assigned'}]};
+ const x=calc(input).machines[0].lines[0];assert.equal(x.xyMissing,24);assert.equal(x.extraAboveXy,71);
+ assert.equal(x.previousPlanned,95);assert.equal(x.previousEdited,true);assert.equal(x.previousIsCompleted,false);assert.equal(x.status,'review');
+});
 test('missing XY slot never becomes zero stock',()=>{const a=calc({...base,slots:[]}).machines[0];assert.equal(a.totalMissing,null);assert.equal(a.lines[0].xyMissing,null);assert.equal(a.status,'blocked');});
 test('stale or mismatched slot cannot be silently considered fresh',()=>{const a=calc({...base,at:'2026-11-24T00:00:00Z'}).machines[0];assert.equal(a.lines[0].xyMissing,null);assert.equal(a.status,'blocked');});
 test('partly occupied unavailable lane is not a safe replacement suggestion',()=>{const a=calc({...base,availableByProduct:new Map([[p,0]])}).machines[0].lines[0];assert.equal(a.status,'blocked');assert.ok(a.issues.some(x=>x.includes('unreserved MAIN')));});
