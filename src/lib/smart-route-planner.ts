@@ -5,8 +5,6 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
 import { ensureFreshXyLiveSales } from "@/lib/xy-live-sales-sync";
 
-type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
-
 type SmartPlanInput = {
   machineIds: string[];
   routeDate: string;
@@ -1009,15 +1007,15 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
   const serviceIntervals = serviceIntervalDaysMap(routeFillHistoryRows);
 
   const storageByProduct = new Map<string, number>();
-  (storageResult.data ?? []).forEach((row: any) => {
+  (storageResult.data ?? []).forEach((row: {product_id?:unknown;quantity_on_hand?:unknown}) => {
     const productId = String(row.product_id ?? "");
     if (productId) storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + signed(row.quantity_on_hand));
   });
   const reservingRouteIds = new Set(
-    (reservingRoutesResult.data ?? []).map((row: any) => String(row.id ?? "")).filter(Boolean),
+    (reservingRoutesResult.data ?? []).map((row: {id?:unknown}) => String(row.id ?? "")).filter(Boolean),
   );
   const reservedByProduct = new Map<string, number>();
-  (reservationsResult.data ?? []).forEach((row: any) => {
+  (reservationsResult.data ?? []).forEach((row: {route_id?:unknown;product_id?:unknown;planned_qty?:unknown;picked_qty?:unknown}) => {
     const routeId = String(row.route_id ?? "");
     if (!routeId || routeId === String(input.excludeRouteId ?? "") || !reservingRouteIds.has(routeId)) return;
     const productId = String(row.product_id ?? "");
@@ -1033,7 +1031,7 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     console.error("[smart-route] Physical lane visibility unavailable", hiddenError);
     throw new Error("Smart Route could not verify which machine lanes physically exist. Retry when the machine layout service is available; no stock was changed.");
   }
-  const hiddenLaneKeys = new Set((physicallyHidden ?? []).map((slot: any) => `${slot.machine_id}:${slot.slot_code}`));
+  const hiddenLaneKeys = new Set((physicallyHidden ?? []).map((slot: {machine_id?:unknown;slot_code?:unknown}) => `${slot.machine_id}:${slot.slot_code}`));
   const stockRows = ((stockResult.data ?? []) as StockRow[])
     .filter((slot) => !hiddenLaneKeys.has(`${slot.machine_id}:${slot.slot_code}`));
   const latestCaptureByMachine = new Map<string, number>();
@@ -1085,9 +1083,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     const expectedDepletionBeforeNextService = Math.max(0, Math.ceil(dailyVelocity * serviceIntervalDays));
     const transitionFloorQty = Math.max(2, Math.ceil(capacity * 0.5));
     const projectedQtyAtNextService = Math.max(0, currentQty - expectedDepletionBeforeNextService);
-    const stockoutReplaceNow = originalAvailableUnits <= 0
-      && currentQty > 0
-      && (currentQty <= transitionFloorQty || projectedQtyAtNextService <= transitionFloorQty);
+    // No automatic removal of existing, saleable stock. An owner may make
+    // an explicit physical replacement at the machine, but XY history alone
+    // must not command a swap in a partly filled lane.
+    const stockoutReplaceNow = false;
 
     // To make this a merchandising AI rather than a refill calculator, fresh transaction
     // data may open compatible alternatives for evaluation even when the old SKU exists.
@@ -1125,6 +1124,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
 
         if (!original) {
           if (!preliminaryAllowSubstitution) return null;
+          // Names, categories and AI guesses are not physical fit evidence.
+          // Only owner-approved slot rules or a recorded previous fit in this
+          // exact machine lane can allow an automatic different-SKU suggestion.
+          if (!explicitAllowed && !historicallySeen) return null;
           if (currentGroup && candidateGroup !== currentGroup && !explicitAllowed && !historicallySeen) return null;
           if (!explicitAllowed && !historicallySeen && candidateFit !== currentFit) return null;
         }
@@ -1201,31 +1204,10 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
       continue;
     }
 
-    const originalCandidate = candidates.find((candidate) => candidate.original) ?? null;
-    const strongestAlternative = candidates.find((candidate) => !candidate.original) ?? null;
-
-    // Data-backed assortment optimization:
-    // - only use fresh real transaction sales
-    // - only re-merchandise a lane that is already at/below the transition floor
-    // - require meaningful exact-machine evidence and a large advantage over the old SKU
-    // - require the candidate score to beat the old SKU despite its continuity bonus
-    const strongerLocalSeller = Boolean(
-      useTransactionSales
-      && currentQty > 0
-      && currentQty <= transitionFloorQty
-      && originalAvailableUnits > 0
-      && originalCandidate
-      && strongestAlternative
-      && strongestAlternative.machineSalesUnits >= 6
-      && (
-        exactMachineSales === 0
-          ? strongestAlternative.machineSalesUnits >= 8
-          : strongestAlternative.machineSalesUnits >= exactMachineSales * 2.5
-      )
-      && strongestAlternative.score >= originalCandidate.score + 10
-    );
-
-    const mixReplaceNow = !stockoutReplaceNow && strongerLocalSeller;
+    // Never tell an operator to remove saleable items just because a model
+    // predicts a different SKU would sell faster. Those are owner-only
+    // merchandising changes requiring a physical visit and approval.
+    const mixReplaceNow = false;
     const transitionMode: PlanTask["transitionMode"] = currentQty === 0
       ? "empty_lane"
       : stockoutReplaceNow || mixReplaceNow
@@ -1246,10 +1228,6 @@ export async function generateSmartRoutePlan(input: SmartPlanInput): Promise<Sma
     if (!taskCandidates.length) {
       if (currentQty === 0) warnings.push(`UNFILLABLE: ${machine.name ?? machine.machine_code ?? machine.id}, lane ${stock.slot_code}: no compatible substitute in storage.`);
       continue;
-    }
-
-    if (mixReplaceNow && strongestAlternative) {
-      // Approved merchandising changes appear in substitutions, not warnings.
     }
 
     tasks.push({

@@ -12,6 +12,8 @@ import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { comparePickupProductRows, groupRouteItemsForDisplay } from "@/lib/route-pickup-checklist";
 import { availableRouteStockForMachine, remainingRouteStock } from "@/lib/route-stock-allocation";
 import { refreshXyRoutePlanningDataAction } from "@/lib/xy-vms-actions";
+import { XyRefillReview } from "./XyRefillReview";
+import type { XyEvidencePlan } from "@/lib/xy-refill-evidence";
 
 type Operator = {
   id: string;
@@ -321,6 +323,7 @@ export function RouteCreateForm({
   const [manualStopItems, setManualStopItems] = useState<ManualStopItem[]>([]);
   const [smartPlanning, setSmartPlanning] = useState(false);
   const [smartPlan, setSmartPlan] = useState<SmartPlanResponse | null>(null);
+  const [xyReviewedFingerprint, setXyReviewedFingerprint] = useState<string | null>(null);
   const [manualMachineId, setManualMachineId] = useState("");
   const [search, setSearch] = useState("");
   const [barcode, setBarcode] = useState("");
@@ -682,6 +685,25 @@ export function RouteCreateForm({
     () => recommendationGroups.filter((group) => group.recommendationKeys.every((key) => recommendationKeys.includes(key))),
     [recommendationGroups, recommendationKeys],
   );
+
+  // Review the entire proposed route, including any manual extra taken ABOVE the
+  // measured XY gap. Updating one quantity invalidates the previous approval.
+  const xyReviewPlannedItems = useMemo((): XyEvidencePlan[] => {
+    const quantities = new Map<string, XyEvidencePlan>();
+    const add = (machineId: string, productId: string, quantity: number) => {
+      if (quantity <= 0) return;
+      const key = `${machineId}:${productId}`;
+      const prior = quantities.get(key);
+      quantities.set(key, { machineId, productId, quantity: (prior?.quantity ?? 0) + unitQuantity(quantity) });
+    };
+    manualStopItems.forEach(item => add(item.machineId, item.productId, item.quantity));
+    selectedRecommendationGroups.forEach(group => add(group.machineId, group.productId, finalTakeForGroup(group)));
+    return [...quantities.values()].sort((a, b) => (a.machineId + a.productId).localeCompare(b.machineId + b.productId));
+  }, [manualStopItems, selectedRecommendationGroups, finalTakeForGroup]);
+  const xyReviewFingerprint = useMemo(() => JSON.stringify({
+    machines: [...machineIds].sort(),
+    items: xyReviewPlannedItems,
+  }), [machineIds, xyReviewPlannedItems]);
 
   const recommendationQtyByProduct = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -1240,6 +1262,11 @@ export function RouteCreateForm({
   };
 
   const continueFromProducts = () => {
+    if (smartPlan && xyReviewedFingerprint !== xyReviewFingerprint) {
+      return showStepError(tr(locale,
+        "This AI route must be checked against XY missing units, extra quantities, previous plans and unreserved stock before final review.",
+        "لازم تراجع الناقص من XY والكميات الإضافية والخطة السابقة والمخزون المتاح قبل اعتماد الجولة الذكية."));
+    }
     if (!plannedRouteStock.length) return showStepError(tr(locale, "Add at least one product and quantity for this route.", "أضف منتجًا واحدًا على الأقل وكمية لهذه الجولة."));
     if (plannedRouteStock.some((item) => !item.storageKnown)) return showStepError(tr(locale, "Storage quantities must be verified before products can be assigned. Retry the page, or create a stops-only route.", "يجب التحقق من كميات المخزون قبل إضافة المنتجات. أعد تحميل الصفحة أو أنشئ جولة بالمواقع فقط."));
     const issues = validateStock();
@@ -1292,6 +1319,7 @@ export function RouteCreateForm({
   };
 
   const validate = () => {
+    if (smartPlan && xyReviewedFingerprint !== xyReviewFingerprint) return "AI route quantities changed or XY evidence was not reviewed. Return to Products and check XY again before creating the route.";
     if (!routeDate) return "Route date is required.";
     if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
     if (!machineIds.length) return "Choose at least one machine stop for the route plan.";
@@ -1768,6 +1796,29 @@ export function RouteCreateForm({
                 </ul>
               </details>
             ) : null}
+          </div>
+        ) : null}
+        {machineIds.length ? (
+          <div className="space-y-2">
+            <XyRefillReview
+              machineIds={machineIds}
+              plannedItems={xyReviewPlannedItems}
+              fingerprint={xyReviewFingerprint}
+              smartPlanRequired={Boolean(smartPlan)}
+              approvedFingerprint={xyReviewedFingerprint}
+              onApprove={setXyReviewedFingerprint}
+              onUsePrior={(machineId, productId, qty) => {
+                const groupKeys = new Set(selectedRecommendationGroups.filter(g => g.machineId === machineId && g.productId === productId)
+                  .flatMap(g => g.recommendationKeys));
+                if (groupKeys.size) setRecommendationKeys(current => current.filter(k => !groupKeys.has(k)));
+                setDesiredManualQty(machineId, productId, qty);
+                setXyReviewedFingerprint(null);
+              }}
+              disabled={saving}
+            />
+            {smartPlan ? <button type="button" className="btn-secondary text-xs" onClick={() => {
+              setSmartPlan(null);setXyReviewedFingerprint(null);
+            }} disabled={saving}>{tr(locale, "Use manual planning instead (keeps your edited quantities)", "العودة للتخطيط اليدوي (مع الاحتفاظ بكمياتك المعدلة)")}</button> : null}
           </div>
         ) : null}
         <p className="text-sm text-slate-500">{tr(locale, "Review one selected machine at a time. Suggested quantities are already applied when fresh XY data is available, and you can edit them before creating the route.", "راجع جهازًا واحدًا في كل مرة. يتم تطبيق الكميات المقترحة تلقائيًا عندما تكون بيانات XY حديثة، ويمكنك تعديلها قبل إنشاء الجولة.")}</p>
