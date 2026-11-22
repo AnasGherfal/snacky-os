@@ -3,6 +3,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { hasRole } from "@/lib/authz";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { resolvePhotoAiConnection, publicPhotoAiConnection, photoAiFailure } from "@/lib/photo-ai-connection";
+import { cashSameOrigin } from "@/lib/cash-handover";
 import {
   GALLERY_PHOTO_MAX_BYTES,
   GALLERY_PHOTO_MIME_TYPES,
@@ -53,9 +54,11 @@ export async function POST(request: Request) {
   if (!hasRole(profile, "owner")) {
     return json({ ok: false, error: "This photo-library AI test is available only to Snacky owners." }, 403);
   }
-  const origin = request.headers.get("origin");
-  if (request.headers.get("sec-fetch-site") === "cross-site" || (origin && origin !== new URL(request.url).origin)) {
-    return json({ ok: false, error: "Open the photo test from Snacky OS." }, 403);
+  // Railway can forward requests with an internal request.url while the
+  // browser legitimately uses the public HTTPS hostname. Use the same strict
+  // proxy-aware, cross-site-denying guard as the cash endpoints.
+  if (!cashSameOrigin(request)) {
+    return json({ ok: false, error: "Open the photo test from this Snacky OS website." }, 403);
   }
   let connection;
   try {
@@ -64,7 +67,7 @@ export async function POST(request: Request) {
     return json({ ok: false, code: "PHOTO_AI_INVALID_MODEL", error: "The configured photo model is invalid." }, 503);
   }
   if (!connection) {
-    return json({ ok: false, code: "PHOTO_AI_NOT_CONFIGURED", error: "No server AI credential is available. Automatic Vercel OIDC access is not present in this deployment. A project administrator must enable it or configure a server-side API key. Never paste keys into chat." }, 503);
+    return json({ ok: false, code: "PHOTO_AI_NOT_CONFIGURED", error: "No server AI credential is configured for this Railway deployment. Configure a server-side OpenAI or AI Gateway key in the hosting environment. Never paste keys into chat." }, 503);
   }
   const db = getSupabaseAdminClient();
   if (!db) return json({ ok: false, error: "Snacky database is not available." }, 503);
