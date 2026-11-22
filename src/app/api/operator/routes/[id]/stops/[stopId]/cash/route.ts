@@ -5,7 +5,7 @@ import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { uploadCashEvidence, removeCashEvidence } from "@/lib/cash-evidence";
 import { readCompanyBody } from "@/lib/company-request";
-import { systemUnnumberedCashReference, unnumberedCashWarning } from "@/lib/cash-handover";
+import { cashSameOrigin, systemUnnumberedCashReference, unnumberedCashWarning } from "@/lib/cash-handover";
 
 export const dynamic = "force-dynamic";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -56,10 +56,18 @@ const validReasons = new Set(["unsafe", "machine_offline", "cash_access_blocked"
 
 export async function POST(request: Request, { params }: Params) {
   const { id, stopId } = await params;
-  try {
-    const origin = request.headers.get("origin");
-    if (origin && new URL(origin).host !== new URL(request.url).host) return respond(403, { ok: false, error: "Invalid origin." });
-  } catch { return respond(403, { ok: false, error: "Invalid origin." }); }
+  // The Railway public HTTPS host can differ from Next.js's internal HTTP
+  // request.url behind the reverse proxy. Reuse the strict, proxy-aware
+  // same-origin guard used by /api/cash-handling; never loosen CSRF checks.
+  if (!cashSameOrigin(request)) {
+    console.warn("[route-stop-cash] Rejected cash-removal POST at same-origin security guard", {
+      originPresent: Boolean(request.headers.get("origin")),
+      fetchSite: request.headers.get("sec-fetch-site") ?? "absent",
+      forwardedProtocolPresent: Boolean(request.headers.get("x-forwarded-proto")),
+    });
+    return respond(403, { ok: false, code: "invalid_origin", retryable: false,
+      error: "تعذر تأكيد عنوان الموقع. افتح Snacky OS من رابط Railway الأصلي وأعد المحاولة بنفس السحب؛ لا تسحب النقدية مرة ثانية." });
+  }
   const ctx = await scope(id, stopId);
   if (!ctx) return respond(403, { ok: false, error: "Not authorized." });
   if (["completed","cancelled","canceled"].includes(String(ctx.route.status))) {
