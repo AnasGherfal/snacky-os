@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
@@ -24,10 +25,7 @@ function owner(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
     (profile.role === "owner" || profile.roles?.includes("owner"));
 }
 function originValid(request: Request) {
-  try {
-    return request.headers.get("origin") === new URL(request.url).origin &&
-      request.headers.get("sec-fetch-site") !== "cross-site";
-  } catch { return false; }
+  return strictSameOrigin(request);
 }
 function photoPath(path: unknown): path is string {
   if (typeof path !== "string") return false;
