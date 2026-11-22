@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic';
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Page<T> = {data:T[]|null;count:number|null;error:{message:string}|null};
 type ClientPage<T> = (from:number,to:number,signal:AbortSignal)=>PromiseLike<Page<T>>;
-type HistoricalRow = {id:string;machine_id:string;product_id:string;planned_quantity:number;filled_quantity:number|null;created_at:string|null;updated_at:string|null;route:{route_date:string;status:string}[]};
+type HistoricalRouteRef = {route_date:string;status:string};
+type HistoricalRow = {id:string;machine_id:string;product_id:string;planned_quantity:number;filled_quantity:number|null;created_at:string|null;updated_at:string|null;route:HistoricalRouteRef[]|HistoricalRouteRef|null};
 
 /** Use a count verified across pages. A PostgREST row cap is not an empty result. */
 async function loadAll<T>(fetch:ClientPage<T>, identity:(row:T)=>string, signal:AbortSignal, max=20000):Promise<T[]>{
@@ -83,13 +84,13 @@ export async function POST(request:Request){
   for(const r of reservations)stock.set(r.product_id,(stock.get(r.product_id)??0)-Math.max(0,Number(r.planned_qty??0)-Number(r.picked_qty??0)));
   const available=new Map([...stock].map(([id,qty])=>[id,Math.max(0,qty)]));
   // PostgREST may return an object for the joined routes row. Preserve its actual status/date.
-  const history:XyEvidenceHistory[]=historical.map(r=>({
-   machine_id:r.machine_id,product_id:r.product_id,planned_quantity:Number(r.planned_quantity??0),
-   filled_quantity:r.filled_quantity===null?null:Number(r.filled_quantity),
-   created_at:r.created_at,updated_at:r.updated_at,
-   route_date:r.route?.[0]?.route_date??'',
-   route_status:r.route?.[0]?.status??'',
-  }));
+  const history:XyEvidenceHistory[]=historical.map(r=>{
+   const route = Array.isArray(r.route) ? (r.route[0] ?? null) : r.route;
+   return {machine_id:r.machine_id,product_id:r.product_id,planned_quantity:Number(r.planned_quantity??0),
+    filled_quantity:r.filled_quantity===null?null:Number(r.filled_quantity),
+    created_at:r.created_at,updated_at:r.updated_at,
+    route_date:route?.route_date??'',route_status:route?.status??''};
+  });
   const audit=calculateXyRefillEvidence({machineIds,slots:xy,layout,hiddenLanes:hidden,products,
     planned,history,availableByProduct:available});
   return NextResponse.json({audit,machineNames:Object.fromEntries(machines.map(m=>[m.id,m.name]))},
