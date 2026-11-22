@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import React from 'react';
+import { strictSameOrigin,optionalSameOrigin } from '../src/lib/request-origin.ts';
 import * as jsx from 'react/jsx-runtime';
 import {renderToStaticMarkup} from 'react-dom/server';
 
 const read=p=>fs.readFileSync(p,'utf8');
-function load(file,imports){
+function load(file,imports){imports={'@/lib/request-origin':{strictSameOrigin,optionalSameOrigin},'./request-origin.ts':{strictSameOrigin,optionalSameOrigin},...imports};
   const exports={};
   const output=ts.transpileModule(read(file),{fileName:file,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
   vm.runInNewContext(output,{exports,console,URLSearchParams,Intl,Date,require:name=>{assert.ok(name in imports,`Unexpected dependency: ${name}`);return imports[name];}});
