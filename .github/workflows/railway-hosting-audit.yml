@@ -23,12 +23,12 @@ jobs:
         shell: bash
         run: |
           echo '=== Runtime source: Vercel, Railway, hardcoded sites, app origins ==='
-          rg -n -i -e 'vercel' -e 'railway' -e 'NEXT_PUBLIC_APP_URL' -e 'VERCEL_URL' -e 'APP_URL' -e 'up\\.railway\\.app' src next.config.ts package.json vercel.json || true
+          grep -RInE -n -i -e 'vercel' -e 'railway' -e 'NEXT_PUBLIC_APP_URL' -e 'VERCEL_URL' -e 'APP_URL' -e 'up\\.railway\\.app' src next.config.ts package.json vercel.json || true
           echo '=== Framework hosting config and infrastructure ==='
-          rg -n -i -e 'vercel' -e 'railway' -e 'https?://[^ \\"\x27<>]{1,120}' -e 'deploy' deployment .env.example README.md .github/workflows | head -n 300 || true
+          grep -RInE -n -i -e 'vercel' -e 'railway' -e 'https?://[^ \\"\x27<>]{1,120}' -e 'deploy' deployment .env.example README.md .github/workflows | head -n 300 || true
           echo '=== Hardcoded production URLs in runtime src ==='
-          rg -n -i 'https?://[^ \\"\x27<>]*(vercel\\.app|railway\\.app|snacky)' src || true
+          grep -RInE -n -i 'https?://[^ \\"\x27<>]*(vercel\\.app|railway\\.app|snacky)' src || true
           echo '=== Potential public-origin compare in APIs ==='
-          rg -n -i -e 'request\\.url.*host' -e 'origin.*request\\.url' -e 'x-forwarded-proto' -e 'new URL\\(origin' src/app/api src/lib || true
+          grep -RInE -n -i -e 'request\\.url.*host' -e 'origin.*request\\.url' -e 'x-forwarded-proto' -e 'new URL\\(origin' src/app/api src/lib || true
           echo '=== Status of other Vercel-specific workflow files ==='
-          rg -n -i 'vercel' .github/workflows || true
+          grep -RInE -n -i 'vercel' .github/workflows || true
