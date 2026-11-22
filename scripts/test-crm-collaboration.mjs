@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import { strictSameOrigin,optionalSameOrigin } from '../src/lib/request-origin.ts';
 const read=p=>fs.readFileSync(p,'utf8');
-function load(path,imports={}){const exports={};const code=ts.transpileModule(read(path),{fileName:path,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;vm.runInNewContext(code,{exports,console,URL,URLSearchParams,Request,AbortSignal,TextDecoder,Uint8Array,require:n=>{assert.ok(n in imports,'Missing mock '+n);return imports[n];}});return exports;}
+function load(path,imports={}){imports={'@/lib/request-origin':{strictSameOrigin,optionalSameOrigin},'./request-origin.ts':{strictSameOrigin,optionalSameOrigin},...imports};const exports={};const code=ts.transpileModule(read(path),{fileName:path,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;vm.runInNewContext(code,{exports,console,URL,URLSearchParams,Request,AbortSignal,TextDecoder,Uint8Array,require:n=>{assert.ok(n in imports,'Missing mock '+n);return imports[n];}});return exports;}
 const lib=load('src/lib/crm-collaboration.ts'),authz=load('src/lib/authz.ts'),body=load('src/lib/company-request.ts');
 const actor='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222';
 const command=()=>({request_id:actor,id,action:'note.create',revision:0,payload:{body:'Owner decision needed',lead_id:null}});
