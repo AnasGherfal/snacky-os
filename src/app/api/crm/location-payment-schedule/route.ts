@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {NextResponse} from 'next/server';
 import {revalidatePath} from 'next/cache';
@@ -10,7 +11,7 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail=(code:string,status:number)=>NextResponse.json({ok:false,code},{status,headers});
 
 export async function POST(request:Request){
- if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')return fail('denied',403);
+ if(!strictSameOrigin(request))return fail('denied',403);
  const profile=await getCurrentProfile();
  if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,['owner','admin','supervisor']))return fail('denied',403);
  let p:any;
