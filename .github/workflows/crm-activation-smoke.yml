@@ -1,4 +1,4 @@
-name: CRM live activation smoke
+name: CRM Railway activation smoke
 on:
   push:
     branches: [master]
@@ -15,14 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Wait for the public production activation and verify denial without login
+      - name: Wait for the Railway activation and verify denial without login
+        env:
+          SNACKY_ACTIVATION_ORIGIN: ${{ vars.SNACKY_ACTIVATION_ORIGIN || 'https://snacky-os-staging-staging.up.railway.app' }}
         shell: bash
         run: |
           mkdir -p diagnostics
           python - <<'PY'
-          import json, time, urllib.request, urllib.error
+          import json, os, time, urllib.request, urllib.error, urllib.parse
           from pathlib import Path
-          origin = 'https://snacky-os.vercel.app'
+          origin = os.environ['SNACKY_ACTIVATION_ORIGIN'].rstrip('/')
+          parts = urllib.parse.urlsplit(origin)
+          if parts.scheme != 'https' or not parts.netloc or parts.path or parts.query or parts.fragment:
+              raise SystemExit('SNACKY_ACTIVATION_ORIGIN must be the exact public HTTPS app origin, not a path.')
           observations = []
           # Deliberately no cookies, tokens, command ID or valid mutation body.
           # Disabled code returns 503/unavailable before auth; enabled code returns 403/denied.
@@ -49,7 +54,7 @@ jobs:
               if status == 403 and payload.get('code') == 'denied' and payload.get('ok') is False:
                   with urllib.request.urlopen(origin + '/login', timeout=10) as login:
                       if login.status != 200:
-                          raise SystemExit('Production login page did not return 200')
+                          raise SystemExit('Railway login page did not return 200')
                   result = {'activation_visible':True, 'anonymous_denied':True, 'login_status':200, 'observations':observations, 'scope':'No authenticated staff session or business write was exercised.'}
                   Path('diagnostics/activation-smoke.json').write_text(json.dumps(result, indent=2))
                   print('Live activation confirmed; unauthenticated access denied; login page available.')
