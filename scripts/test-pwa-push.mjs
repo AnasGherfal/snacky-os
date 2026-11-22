@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import * as crypto from 'node:crypto';
 import ts from 'typescript';
+import { optionalSameOrigin } from '../src/lib/request-origin.ts';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 function load(path, imports = {}, globals = {}) {
   const exports = {};
@@ -14,7 +15,7 @@ function load(path, imports = {}, globals = {}) {
     }});
   return exports;
 }
-const validation = load('src/lib/push-subscription.ts');
+const validation = load('src/lib/push-subscription.ts', {'./request-origin.ts': { optionalSameOrigin }});
 const ec = crypto.createECDH('prime256v1'); ec.generateKeys();
 const keys = {p256dh:ec.getPublicKey().toString('base64url'),auth:crypto.randomBytes(16).toString('base64url')};
 const device = (name='one') => ({endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
