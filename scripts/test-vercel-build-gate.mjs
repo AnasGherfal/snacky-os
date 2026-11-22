@@ -71,12 +71,10 @@ test("unknown environment and unknown branch fail open rather than blocking a pr
   assert.equal(runGate("unexpected", "feature/test").status, 1);
 });
 
-test("vercel.json preserves production cron, region and branch configuration", () => {
+test("legacy Vercel config explicitly disables new deployments and its cron after Railway cutover", () => {
   const vercel = JSON.parse(readFileSync(resolve(root, "vercel.json"), "utf8"));
   assert.equal(vercel.ignoreCommand, "node scripts/vercel-build-gate.mjs");
-  assert.equal(vercel.git.deploymentEnabled.master, true);
-  assert.equal(vercel.git.deploymentEnabled["*"], false);
-  assert.equal(vercel.git.deploymentEnabled["preview/**"], true);
-  assert.equal(vercel.regions[0], "dub1");
-  assert.deepEqual(vercel.crons, [{ path: "/api/cron/xy-vms", schedule: "0 4 * * *" }]);
+  assert.deepEqual(vercel.git.deploymentEnabled, { "*": false });
+  assert.equal("crons" in vercel, false);
+  assert.equal("regions" in vercel, false);
 });
