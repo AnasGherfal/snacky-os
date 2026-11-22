@@ -1,0 +1,25 @@
+name: Machine-scoped refill pickup integrity
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/20261122105000_pickup_refill_machine_scoped_equality.sql'
+      - 'scripts/test-pickup-refill-machine-match.mjs'
+      - '.github/workflows/pickup-refill-machine-match.yml'
+permissions:
+  contents: read
+jobs:
+  pickup-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify machine scoped refill and route pickup safety
+        run: |
+          node --experimental-strip-types --test scripts/test-pickup-refill-machine-match.mjs
+          node --experimental-strip-types --test scripts/test-route-pickup-refill-allocation.mjs
+          node --experimental-strip-types --test scripts/test-pickup-v3-ledger-integrity.mjs
