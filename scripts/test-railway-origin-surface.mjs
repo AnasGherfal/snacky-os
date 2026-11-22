@@ -33,10 +33,10 @@ test("spoofed host, mixed forwarded protocol and cross-site origin are rejected"
 });
 
 test("Strict actions require Origin; legacy optional actions permit missing origin but not explicit cross-site",()=>{
- const noOrigin=req({origin:undefined});
+ const noOrigin=new Request('http://internal:8080/api/example',{method:'POST',headers:{host:headers.host,'x-forwarded-proto':'https','sec-fetch-site':'same-origin'}});
  assert.equal(strictSameOrigin(noOrigin),false);
  assert.equal(optionalSameOrigin(noOrigin),true);
- assert.equal(optionalSameOrigin(req({origin:undefined,"sec-fetch-site":"cross-site"})),false);
+ assert.equal(optionalSameOrigin(new Request('http://internal:8080/api/example',{method:'POST',headers:{host:headers.host,'x-forwarded-proto':'https','sec-fetch-site':'cross-site'}})),false);
 });
 
 test("All formerly misrouted owner, CRM, operator, buying, push and stocktake APIs use Railway-safe guard",()=>{
