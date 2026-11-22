@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import { NextResponse } from 'next/server';
 import { CoverageInputError } from '@/lib/smart-work-coverage';
 import { coverageActor, CoverageAccessError, loadCoverageSettings, saveCoverageSettings } from '@/lib/smart-work-coverage-server';
@@ -11,8 +12,7 @@ export async function GET() { try {return NextResponse.json(await loadCoverageSe
 export async function PUT(request:Request) {
   try {
     await coverageActor();
-    const origin=request.headers.get('origin');
-    if (!origin || origin!==new URL(request.url).origin || request.headers.get('sec-fetch-site')==='cross-site') {
+    if (!strictSameOrigin(request)) {
       throw new CoverageAccessError('A same-site request is required.',403);
     }
     if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw new CoverageInputError('Send JSON settings.');
