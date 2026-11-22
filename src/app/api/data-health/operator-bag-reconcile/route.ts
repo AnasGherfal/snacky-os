@@ -1,3 +1,4 @@
+import { optionalSameOrigin } from "@/lib/request-origin";
 import {NextResponse} from 'next/server';
 import {getAuthenticatedSupabaseServerClient,getCurrentProfile} from '@/lib/auth';
 import {hasAnyRole} from '@/lib/authz';
@@ -7,8 +8,7 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const json=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 
 export async function POST(request:Request){
- const origin=request.headers.get('origin');
- if(origin){try{if(new URL(origin).origin!==new URL(request.url).origin)return json({ok:false,code:'denied'},403);}catch{return json({ok:false,code:'denied'},403);}}
+ if(!optionalSameOrigin(request))return json({ok:false,code:'denied'},403);
  const profile=await getCurrentProfile();
  if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,['owner','admin']))return json({ok:false,code:'denied'},403);
  let body:any;try{body=await request.json();}catch{return json({ok:false,code:'invalid'},400);}
