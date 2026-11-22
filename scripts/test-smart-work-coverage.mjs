@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {stripTypeScriptTypes} from 'node:module';
 import * as validator from '../src/lib/smart-work-coverage.ts';
+import { strictSameOrigin } from '../src/lib/request-origin.ts';
 const uid='00000000-0000-0000-0000-000000000001',op='00000000-0000-0000-0000-000000000002',machine='00000000-0000-0000-0000-000000000003';
 const value=()=>({primaryId:uid,backupId:op,days:[7,1],accessStart:'08:00',accessEnd:'16:00',travelMinutes:30,serviceMinutes:45,enabled:true});
 const request=()=>({kind:'machine',id:machine,version:0,value:value()});
@@ -34,7 +35,7 @@ test('numeric and boolean coercion is forbidden',()=>{for(const minutes of ['10'
 test('save requires a nonnegative whole revision',()=>{for(const version of [-1,1.5,'1',null,NaN])assert.throws(()=>validator.parseCoverageSave({...request(),version}));});
 async function harness({actor={role:'owner',active_status:'active',must_change_password:false,team_member_id:uid},rpcError=null,readError=false}={}){
  const calls=[];const db={from(table){calls.push(['read',table]);const q={select(){return q;},order(){return q;},limit(){return q;},then(resolve,reject){return Promise.resolve({data:[],error:readError?{message:'internal'}:null}).then(resolve,reject);}};return q;},async rpc(name,args){calls.push(['rpc',name,args]);return {data:rpcError?null:{id:machine,version:1,value:args.p_value},error:rpcError};}};
- const deps={'server-only':{},'@/lib/auth':{getCurrentProfile:async()=>actor},'@/lib/authz':{isOwnerAdminRole:p=>['owner','admin'].includes(p.role),canExecuteRoutes:p=>['owner','admin','operator','supervisor'].includes(p.role)},'@/lib/supabase-server':{getSupabaseAdminClient:()=>db},'@/lib/smart-work-coverage':validator,'next/server':{NextResponse:{json:(body,init)=>new Response(JSON.stringify(body),{...init,headers:{...init?.headers,'Content-Type':'application/json'}})}}};
+ const deps={'@/lib/request-origin':{strictSameOrigin},'server-only':{},'@/lib/auth':{getCurrentProfile:async()=>actor},'@/lib/authz':{isOwnerAdminRole:p=>['owner','admin'].includes(p.role),canExecuteRoutes:p=>['owner','admin','operator','supervisor'].includes(p.role)},'@/lib/supabase-server':{getSupabaseAdminClient:()=>db},'@/lib/smart-work-coverage':validator,'next/server':{NextResponse:{json:(body,init)=>new Response(JSON.stringify(body),{...init,headers:{...init?.headers,'Content-Type':'application/json'}})}}};
  const context=vm.createContext({console,Date,URL,Response,Request});
  const source=p=>stripTypeScriptTypes(fs.readFileSync(p,'utf8'),{mode:'transform'});
  const server=new vm.SourceTextModule(source('src/lib/smart-work-coverage-server.ts'),{context});
