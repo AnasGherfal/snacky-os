@@ -48,7 +48,8 @@ test('owner admin sees a dedicated assignment and period editor',()=>{
 });
 
 test('admin update endpoint is same-origin and owner/admin only',()=>{
-  assert.match(api,/sec-fetch-site/);
+  assert.match(api,/strictSameOrigin\(request\)/);
+  assert.match(fs.readFileSync('src/lib/cash-handover.ts','utf8'),/sec-fetch-site/);
   assert.match(api,/hasAnyRole\(profile,\['owner','admin'\]\)/);
   assert.match(api,/snacky_obligation_admin_update_v1/);
   assert.match(api,/Date\.parse\(version\)/);
