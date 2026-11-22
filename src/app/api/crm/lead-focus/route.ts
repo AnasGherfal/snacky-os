@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import {NextResponse} from 'next/server';
 import {revalidatePath} from 'next/cache';
 import {getCurrentProfile,getAuthenticatedSupabaseServerClient} from '@/lib/auth';
@@ -9,7 +10,7 @@ const headers={'Cache-Control':'private, no-store',Vary:'Cookie'};
 const fail=(code:string,status:number,retryable=false)=>NextResponse.json({ok:false,code,retryable},{status,headers});
 export async function POST(request:Request){
  if(!leadFocusEnabled)return fail('unavailable',503);
- if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')return fail('denied',403);
+ if(!strictSameOrigin(request))return fail('denied',403);
  const profile=await getCurrentProfile();
  if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,['owner','admin','supervisor']))return fail('denied',403);
  let command;
