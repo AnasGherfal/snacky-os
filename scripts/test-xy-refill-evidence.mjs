@@ -16,3 +16,14 @@ test('route-wide shortage is caught even if each machine alone fits warehouse st
  const input={...base,machineIds:['m','n'],planned:[{machineId:'m',productId:'water',quantity:7},{machineId:'n',productId:'water',quantity:7}],slots:[base.slots[0],{...base.slots[0],machine_id:'n'}],layout:[base.layout[0],{...base.layout[0],machine_id:'n'}],availableByProduct:new Map([['water',10]])};
  const audit=calc(input);assert.equal(audit.machines.length,2);assert.ok(audit.machines.every(m=>m.lines[0].status==='blocked'));
 });
+
+test('missing configured lane blocks AI approval even when selected other lanes are mapped',()=>{
+ const audit=calc({...base,layout:[...base.layout,{...base.layout[0],slot_code:'002'}]});
+ assert.equal(audit.machines[0].missingLanes.length,1);assert.equal(audit.machines[0].status,'blocked');
+});
+test('selected product not mapped to a verified XY lane cannot be AI-approved',()=>{
+ const audit=calc({...base,products:[...base.products,{id:'chip',name:'Chips'}],
+  planned:[{machineId:m,productId:'chip',quantity:3}],availableByProduct:new Map([['water',100],['chip',100]])});
+ const line=audit.machines[0].lines.find(x=>x.productId==='chip');
+ assert.equal(line?.status,'blocked');assert.equal(audit.machines[0].status,'blocked');
+});
