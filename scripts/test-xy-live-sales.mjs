@@ -311,7 +311,9 @@ test("hourly live sales cron is authenticated and scheduled through Supabase", (
   assert.match(cronSource, /timingSafeEqual/);
   assert.match(cronSource, /syncXyLiveSales\(\)/);
   assert.match(cronSource, /result\.outcome === "disabled"/);
-  assert.doesNotMatch(JSON.stringify(vercelConfig.crons), /\/api\/cron\/xy-sales/);
+  // Supabase hourly cron now invokes Railway; Vercel cron must remain disabled.
+  assert.equal("crons" in vercelConfig, false);
+  assert.deepEqual(vercelConfig.git.deploymentEnabled, {"*":false});
   assert.match(schedulerMigration, /create or replace function private\.enqueue_xy_sales_sync\(\)/);
   assert.match(schedulerMigration, /xy_vms_scheduler_url/);
   assert.match(schedulerMigration, /\/api\/cron\/xy-sales/);
