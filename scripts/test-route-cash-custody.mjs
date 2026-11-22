@@ -134,3 +134,21 @@ test("a dropped bag with lost response can reuse prior saved seal photo",()=>{
  assert.match(component,/storedPending\(box\.id\)/);
  assert.match(component,/compact=photo\?await prepareCashPhoto/);
 });
+
+
+test("Route stop photo cash removal accepts Railway proxy origin through the shared strict CSRF guard",()=>{
+  const api=read("src/app/api/operator/routes/[id]/stops/[stopId]/cash/route.ts");
+  const shared=read("src/lib/cash-handover.ts");
+  assert.match(api,/cashSameOrigin/);
+  assert.match(api,/if \(!cashSameOrigin\(request\)\)/);
+  assert.match(api,/code: "invalid_origin", retryable: false/);
+  assert.match(api,/same-origin security guard/);
+  assert.match(api,/لا تسحب النقدية مرة ثانية/);
+  assert.doesNotMatch(api,/new URL\(origin\)\.host !== new URL\(request\.url\)\.host/);
+  assert.match(shared,/request\.headers\.get\('x-forwarded-proto'\)/);
+  assert.match(shared,/request\.headers\.get\('host'\)/);
+  assert.match(shared,/request\.headers\.get\('sec-fetch-site'\) === 'cross-site'/);
+  assert.match(api,/route_stop_cash_receipts/);
+  assert.match(api,/p_client_submission_id: requestId/);
+  assert.match(api,/If|Retry|original/);
+});

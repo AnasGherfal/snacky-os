@@ -1,0 +1,29 @@
+name: Operator cash removal Railway origin guard
+on:
+  pull_request:
+    paths:
+      - 'src/app/api/operator/routes/**/cash/route.ts'
+      - 'src/lib/cash-handover.ts'
+      - 'scripts/test-route-cash-custody.mjs'
+      - '.github/workflows/operator-cash-origin-railway.yml'
+permissions:
+  contents: read
+jobs:
+  origin-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Cash-removal and proxy-origin regression tests
+        run: |
+          node --experimental-strip-types --test scripts/test-route-cash-custody.mjs
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Route API lint
+        run: npx eslint 'src/app/api/operator/routes/[id]/stops/[stopId]/cash/route.ts'
