@@ -1,3 +1,4 @@
+import { strictSameOrigin } from "@/lib/request-origin";
 import {NextResponse} from 'next/server';
 import {revalidatePath} from 'next/cache';
 import {getCurrentProfile,getAuthenticatedSupabaseServerClient} from '@/lib/auth';
@@ -20,7 +21,7 @@ export async function GET(request:Request){
  }catch{return fail('unavailable',503);}
 }
 export async function POST(request:Request){
- if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')return fail('denied',403);
+ if(!strictSameOrigin(request))return fail('denied',403);
  try{
   const db=await client();if(!db)return fail('denied',403);
   let command;try{command=validateCollaborationCommand(JSON.parse(new TextDecoder().decode(await readCompanyBody(request,24000))));}catch(error){return fail('invalid',error instanceof CompanyRequestTooLarge?413:400);}
