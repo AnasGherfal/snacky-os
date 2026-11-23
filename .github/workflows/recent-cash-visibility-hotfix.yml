@@ -1,0 +1,31 @@
+name: Recent cash visibility hotfix
+on:
+  push:
+    branches: [fix/recent-cash-count-visibility-20261123]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Recent counted cash UI and ledger visibility regressions
+        run: node --test scripts/test-recent-cash-visibility.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Existing finance visibility checks
+        run: npm run test:finance-ledger
+      - name: Production build
+        run: npm run build

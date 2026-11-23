@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect,useMemo,useState,type FormEvent } from "react";
 import { cashReceiptMatches,cashError,validateCashCommand,isUnnumberedCashReference,type CashWorkspace,type CashBox,type CashCommand } from "@/lib/cash-handover";
 
@@ -14,6 +15,8 @@ function stored(key:string):CashCommand|null{
   catch{return null;}
 }
 export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string}) {
+  const router = useRouter();
+  const [recentCountLink, setRecentCountLink] = useState<string | null>(null);
   const [view,setView]=useState<CashWorkspace|null>(null);
   const [busy,setBusy]=useState(false);
   const [loading,setLoading]=useState(true);
@@ -204,6 +207,8 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
           ? "تم تسجيل استلام الكيس غير المرقم مع تنبيه غياب رقم الختم للمراجعة؛ افتحه وعد النقدية الفعلية."
           : `تم تأكيد استلام الكيس ${box.bag} بصفة مستقلة. افتحه وعدّ النقدية وسجّل الإجمالي.`);
       if(wasCounted) {
+        setRecentCountLink(box.id);
+        router.refresh(); // Refresh the owner-visible "recently counted" receipt history.
         setSelected(null);setAmount("");setPhysical(false);setBagId("");setNoPrintedNumber(false);
         window.history.replaceState(null,"","/cash-handling/receive");
       } else {
@@ -256,7 +261,7 @@ export function CashReceiveWorkspace({defaultSafeLabel}:{defaultSafeLabel:string
       </div>:null}
       {saveProblemCode?<p className="mt-2 text-xs font-normal">رمز المشكلة: <bdi>{saveProblemCode}</bdi>. لا تغير رقم الكيس أو مرجع المحاولة دون التحقق من السجل.</p>:null}
     </div>:null}
-    {success?<div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">{success}</div>:null}
+    {success?<div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950">{success}{recentCountLink ? <div className="mt-3 flex flex-wrap gap-3"><Link className="rounded-lg bg-white px-3 py-2 text-emerald-900 underline" href={`/cash-collections/${recentCountLink}`}>افتح المبلغ المحفوظ والصور</Link><Link className="rounded-lg bg-white px-3 py-2 text-emerald-900 underline" href="/finance/transactions?kind=cash_collection&sort=entered">عرضه في Finance</Link></div> : null}</div>:null}
     {box&&action?<form onSubmit={submit} className="space-y-4 rounded-2xl border-2 border-emerald-300 bg-white p-5">
       <div className="flex flex-wrap justify-between gap-2">
         <h2 className="text-lg font-bold">{unnumbered?"كيس بدون رقم مطبوع":box.bag} — {action==="count"?"عدّ النقدية":"تأكيد استلام الكيس"}</h2>

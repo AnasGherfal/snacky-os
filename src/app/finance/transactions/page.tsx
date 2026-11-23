@@ -44,6 +44,7 @@ type TransactionParams = SearchParamsRecord & {
   group_product_purchases?: string;
   date_from?: string;
   date_to?: string;
+  sort?: string;
   saved?: string;
   error?: string;
 };
@@ -601,7 +602,10 @@ async function loadFinanceTransactions({
     query: supabase
       .from(FINANCE_TRANSACTIONS_TABLE)
       .select(columns.join(", "), { count: "exact" })
-      .order("transaction_date", { ascending: false }),
+      // New physical counts are entered after the original removal date.
+      // Sort by the time actually SAVED, not just the historical cash service date.
+      .order(params.sort === "transaction_date" ? "transaction_date" : "created_at", { ascending: false })
+      .order("id", { ascending: false }),
     params,
     statusFilter,
     search,
@@ -1009,7 +1013,7 @@ export default async function FinanceTransactionsPage({
     <>
       <PageHeader
         title="Financial Transactions"
-        subtitle="Editable money in/out ledger. Only approved active rows affect balance."
+        subtitle="Newest saved transactions first. Cash removals retain their original transaction dates; counting them later does not make the money disappear. Only approved active rows affect balance."
         action={
           canEdit ? (
             <PrimaryButton href="/finance/transactions/new">
@@ -1116,6 +1120,10 @@ export default async function FinanceTransactionsPage({
             <option value="manual_money_out">Manual money out</option>
             <option value="product_purchase">Product purchase</option>
             <option value="cash_collection">Cash collection</option>
+          </select>
+          <select name="sort" defaultValue={params.sort === "transaction_date" ? "transaction_date" : "entered"} className="field-input" aria-label="Transaction sort order">
+            <option value="entered">Recently entered (newest first)</option>
+            <option value="transaction_date">Transaction date (newest first)</option>
           </select>
           <select
             name="group_product_purchases"
